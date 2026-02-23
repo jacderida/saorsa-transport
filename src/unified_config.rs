@@ -347,6 +347,10 @@ pub enum ConfigError {
     #[error("Invalid timeout: {0}")]
     InvalidTimeout(String),
 
+    /// Invalid max message size
+    #[error("max_message_size must be at least 1")]
+    InvalidMaxMessageSize,
+
     /// PQC configuration error
     #[error("PQC configuration error: {0}")]
     PqcError(String),
@@ -663,6 +667,14 @@ impl P2pConfigBuilder {
             return Err(ConfigError::InvalidMaxConnections);
         }
 
+        // Validate max_message_size
+        let max_message_size = self
+            .max_message_size
+            .unwrap_or(P2pConfig::DEFAULT_MAX_MESSAGE_SIZE);
+        if max_message_size == 0 {
+            return Err(ConfigError::InvalidMaxMessageSize);
+        }
+
         // v0.13.0+: No role validation - all nodes are symmetric
         // Nodes can operate without known peers (they can be connected to by others)
 
@@ -682,9 +694,7 @@ impl P2pConfigBuilder {
             data_channel_capacity: self
                 .data_channel_capacity
                 .unwrap_or(P2pConfig::DEFAULT_DATA_CHANNEL_CAPACITY),
-            max_message_size: self
-                .max_message_size
-                .unwrap_or(P2pConfig::DEFAULT_MAX_MESSAGE_SIZE),
+            max_message_size,
         })
     }
 }
@@ -886,6 +896,40 @@ mod tests {
         let result = P2pConfig::builder().max_connections(0).build();
 
         assert!(matches!(result, Err(ConfigError::InvalidMaxConnections)));
+    }
+
+    #[test]
+    fn test_invalid_max_message_size() {
+        let result = P2pConfig::builder().max_message_size(0).build();
+
+        assert!(matches!(result, Err(ConfigError::InvalidMaxMessageSize)));
+    }
+
+    #[test]
+    fn test_max_message_size_default() {
+        let config = P2pConfig::default();
+        assert_eq!(config.max_message_size, P2pConfig::DEFAULT_MAX_MESSAGE_SIZE);
+    }
+
+    #[test]
+    fn test_max_message_size_builder() {
+        let config = P2pConfig::builder()
+            .max_message_size(4 * 1024 * 1024)
+            .build()
+            .expect("Failed to build config");
+
+        assert_eq!(config.max_message_size, 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_max_message_size_propagates_to_nat_config() {
+        let config = P2pConfig::builder()
+            .max_message_size(2 * 1024 * 1024)
+            .build()
+            .expect("Failed to build config");
+
+        let nat_config = config.to_nat_config();
+        assert_eq!(nat_config.max_message_size, 2 * 1024 * 1024);
     }
 
     #[test]

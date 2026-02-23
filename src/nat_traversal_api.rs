@@ -446,7 +446,12 @@ pub struct NatTraversalConfig {
     /// message of this size can be transmitted without flow-control rejection.
     ///
     /// Default: [`P2pConfig::DEFAULT_MAX_MESSAGE_SIZE`] (1 MiB).
+    #[serde(default = "default_max_message_size")]
     pub max_message_size: usize,
+}
+
+fn default_max_message_size() -> usize {
+    crate::unified_config::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE
 }
 
 // v0.13.0: EndpointRole enum has been removed.
@@ -2494,9 +2499,17 @@ impl NatTraversalEndpoint {
             transport_config.max_idle_timeout(Some(crate::VarInt::from_u32(30000).into()));
 
             // Derive QUIC stream receive window from max_message_size
-            transport_config.stream_receive_window(
-                VarInt::from_u64(config.max_message_size as u64).unwrap_or(VarInt::MAX),
-            );
+            let window = match VarInt::from_u64(config.max_message_size as u64) {
+                Ok(v) => v,
+                Err(_) => {
+                    warn!(
+                        max_message_size = config.max_message_size,
+                        "max_message_size exceeds VarInt::MAX, clamping stream receive window"
+                    );
+                    VarInt::MAX
+                }
+            };
+            transport_config.stream_receive_window(window);
 
             // v0.13.0+: All nodes use ServerSupport for full P2P capabilities
             // Per draft-seemann-quic-nat-traversal-02, all nodes can coordinate
@@ -2564,9 +2577,17 @@ impl NatTraversalEndpoint {
             transport_config.max_idle_timeout(Some(crate::VarInt::from_u32(30000).into()));
 
             // Derive QUIC stream receive window from max_message_size
-            transport_config.stream_receive_window(
-                VarInt::from_u64(config.max_message_size as u64).unwrap_or(VarInt::MAX),
-            );
+            let window = match VarInt::from_u64(config.max_message_size as u64) {
+                Ok(v) => v,
+                Err(_) => {
+                    warn!(
+                        max_message_size = config.max_message_size,
+                        "max_message_size exceeds VarInt::MAX, clamping stream receive window"
+                    );
+                    VarInt::MAX
+                }
+            };
+            transport_config.stream_receive_window(window);
 
             // v0.13.0+: All nodes use ServerSupport for full P2P capabilities
             // Per draft-seemann-quic-nat-traversal-02, all nodes can coordinate

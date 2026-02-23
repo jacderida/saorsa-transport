@@ -105,6 +105,7 @@ mod nat_traversal_api_tests {
             enable_relay_service: true,
             allow_ipv4_mapped: true,
             transport_registry: None,
+            max_message_size: 1024 * 1024,
         };
 
         assert_eq!(config.known_peers.len(), 1);
@@ -239,6 +240,7 @@ mod functional_tests {
             enable_relay_service: true,
             allow_ipv4_mapped: true,
             transport_registry: None,
+            max_message_size: 1024 * 1024,
         };
 
         // May fail due to zero values or other validation
@@ -263,6 +265,7 @@ mod functional_tests {
             enable_relay_service: true,
             allow_ipv4_mapped: true,
             transport_registry: None,
+            max_message_size: 1024 * 1024,
         };
 
         let result = NatTraversalEndpoint::new(valid_config, None, None).await;
@@ -447,6 +450,7 @@ mod performance_tests {
                 enable_relay_service: true,
                 allow_ipv4_mapped: true,
                 transport_registry: None,
+                max_message_size: 1024 * 1024,
             };
 
             // Use the config to prevent optimization
@@ -515,6 +519,7 @@ mod relay_functionality_tests {
             enable_relay_service: true,
             allow_ipv4_mapped: true,
             transport_registry: None,
+            max_message_size: 1024 * 1024,
         };
 
         // This might be accepted or rejected depending on implementation
