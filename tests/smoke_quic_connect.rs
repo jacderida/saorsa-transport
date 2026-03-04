@@ -4,11 +4,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use saorsa_transport::{
     config::{ClientConfig, ServerConfig},
     high_level::Endpoint,
 };
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};
@@ -86,7 +86,7 @@ async fn connect_classical_tls_loopback() {
 
 #[tokio::test]
 async fn pqc_capability_plus_connection_smoke() {
-    use ant_quic::crypto::pqc::{MlDsa65, MlDsaOperations, MlKem768, MlKemOperations};
+    use saorsa_transport::crypto::pqc::{MlDsa65, MlDsaOperations, MlKem768, MlKemOperations};
 
     // Exercise PQC primitives quickly (keygen + one op each)
     let kem = MlKem768::new();

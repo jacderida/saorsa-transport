@@ -2,7 +2,7 @@
 
 ## Overview
 
-The ant-quic CI/CD pipeline is designed as a modular, extensible system that ensures code quality, security, and compatibility across multiple platforms.
+The saorsa-transport CI/CD pipeline is designed as a modular, extensible system that ensures code quality, security, and compatibility across multiple platforms.
 
 ## Pipeline Flow
 

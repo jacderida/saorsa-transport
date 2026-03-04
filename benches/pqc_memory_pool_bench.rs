@@ -2,9 +2,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::crypto::pqc::memory_pool::{PoolConfig, PqcMemoryPool};
+use saorsa_transport::crypto::pqc::memory_pool::{PoolConfig, PqcMemoryPool};
 
-use ant_quic::crypto::pqc::types::*;
+use saorsa_transport::crypto::pqc::types::*;
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 

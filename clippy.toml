@@ -1,4 +1,4 @@
-# Clippy configuration for ant-quic
+# Clippy configuration for saorsa-transport
 # Realistic settings that focus on meaningful issues while allowing common patterns
 
 # Allow panic-prone operations in specific contexts

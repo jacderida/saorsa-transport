@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! ant-quic: QUIC transport protocol with advanced NAT traversal for P2P networks
+//! saorsa-transport: QUIC transport protocol with advanced NAT traversal for P2P networks
 #![allow(elided_lifetimes_in_paths)]
 #![allow(missing_debug_implementations)]
 #![allow(clippy::manual_is_multiple_of)]
@@ -222,7 +222,7 @@ pub mod chat;
 // P2P API
 // ============================================================================
 
-/// P2P endpoint - the primary API for ant-quic
+/// P2P endpoint - the primary API for saorsa-transport
 ///
 /// This module provides the main API for P2P networking with NAT traversal,
 /// connection management, and secure communication.

@@ -1,7 +1,7 @@
 // Copyright 2024 Saorsa Labs Ltd.
 // Licensed under GPL v3. See LICENSE-GPL.
 
-//! Simple P2P Example - Demonstrates the ant-quic API
+//! Simple P2P Example - Demonstrates the saorsa-transport API
 //!
 //! v0.13.0+: All nodes are symmetric P2P nodes - no roles needed.
 //! This example shows how to use `P2pEndpoint` to create a P2P node
@@ -9,7 +9,7 @@
 //!
 //! Run with: `cargo run --example simple_p2p`
 
-use ant_quic::{P2pConfig, P2pEndpoint, P2pEvent};
+use saorsa_transport::{P2pConfig, P2pEndpoint, P2pEvent};
 use std::time::Duration;
 
 #[tokio::main]

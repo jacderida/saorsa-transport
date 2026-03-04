@@ -18,7 +18,7 @@
 //! # Zero Configuration
 //!
 //! ```rust,ignore
-//! use ant_quic::Node;
+//! use saorsa_transport::Node;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -81,7 +81,7 @@ pub enum NodeError {
 
 /// Zero-configuration P2P node
 ///
-/// This is the primary API for ant-quic. Create a node with zero configuration
+/// This is the primary API for saorsa-transport. Create a node with zero configuration
 /// and it will automatically handle NAT traversal, post-quantum cryptography,
 /// and peer discovery.
 ///
@@ -105,7 +105,7 @@ pub enum NodeError {
 /// # Example
 ///
 /// ```rust,ignore
-/// use ant_quic::Node;
+/// use saorsa_transport::Node;
 ///
 /// // Zero configuration
 /// let node = Node::new().await?;
@@ -195,7 +195,7 @@ impl Node {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let (public_key, secret_key) = load_keypair_from_file("~/.ant-quic/identity.key")?;
+    /// let (public_key, secret_key) = load_keypair_from_file("~/.saorsa-transport/identity.key")?;
     /// let node = Node::with_keypair(public_key, secret_key).await?;
     /// ```
     pub async fn with_keypair(
@@ -219,13 +219,13 @@ impl Node {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use ant_quic::{Node, HostIdentity};
+    /// use saorsa_transport::{Node, HostIdentity};
     ///
     /// let host = HostIdentity::generate();
     /// let node = Node::with_host_identity(
     ///     &host,
     ///     b"my-network",
-    ///     "/var/lib/ant-quic",
+    ///     "/var/lib/saorsa-transport",
     /// ).await?;
     /// ```
     pub async fn with_host_identity(
@@ -909,7 +909,7 @@ mod tests {
 
         // Create a temporary directory for storage
         let temp_dir =
-            std::env::temp_dir().join(format!("ant-quic-test-node-{}", std::process::id()));
+            std::env::temp_dir().join(format!("saorsa-transport-test-node-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         // Generate a HostIdentity
@@ -948,8 +948,10 @@ mod tests {
         use crate::host_identity::HostIdentity;
 
         // Create a temporary directory for storage
-        let temp_dir =
-            std::env::temp_dir().join(format!("ant-quic-test-isolation-{}", std::process::id()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "saorsa-transport-test-isolation-{}",
+            std::process::id()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         // Generate a HostIdentity

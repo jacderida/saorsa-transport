@@ -7,12 +7,12 @@
 
 //! Metrics collection system
 //!
-//! This module provides internal metrics collection capabilities for ant-quic.
+//! This module provides internal metrics collection capabilities for saorsa-transport.
 //!
 //! ## Example
 //!
 //! ```rust
-//! use ant_quic::metrics::MetricsConfig;
+//! use saorsa_transport::metrics::MetricsConfig;
 //!
 //! let config = MetricsConfig::default();
 //! assert!(!config.enabled);

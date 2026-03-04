@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Port configuration examples for ant-quic
+//! Port configuration examples for saorsa-transport
 //!
 //! This example demonstrates various port binding strategies including:
 //! - OS-assigned ports (recommended default)
@@ -14,10 +14,12 @@
 //! - IPv4/IPv6 configuration
 //! - Retry behaviors
 
-use ant_quic::config::{EndpointPortConfig, IpMode, PortBinding, PortRetryBehavior, bind_endpoint};
+use saorsa_transport::config::{
+    EndpointPortConfig, IpMode, PortBinding, PortRetryBehavior, bind_endpoint,
+};
 
 fn main() {
-    println!("=== ant-quic Port Configuration Examples ===\n");
+    println!("=== saorsa-transport Port Configuration Examples ===\n");
 
     // Example 1: OS-assigned port (recommended default)
     println!("Example 1: OS-assigned port");

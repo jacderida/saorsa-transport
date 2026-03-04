@@ -1,6 +1,6 @@
 //! Debug QUIC connection test
 
-use ant_quic::{
+use saorsa_transport::{
     config::{ClientConfig, ServerConfig},
     high_level::Endpoint,
 };
@@ -22,7 +22,7 @@ fn gen_self_signed_cert() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'stati
 async fn main() {
     // Set up tracing for debugging
     tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=trace")
+        .with_env_filter("saorsa_transport=trace")
         .init();
 
     eprintln!("Starting debug test with tracing...");

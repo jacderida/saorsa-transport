@@ -22,11 +22,11 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use ant_quic::bootstrap_cache::{CachedPeer, PeerCapabilities};
-use ant_quic::masque::{
+use bytes::Bytes;
+use saorsa_transport::bootstrap_cache::{CachedPeer, PeerCapabilities};
+use saorsa_transport::masque::{
     ConnectUdpRequest, MasqueRelayConfig, MasqueRelayServer, RelayManager, RelayManagerConfig,
 };
-use bytes::Bytes;
 
 // ============================================================================
 // Test Helpers
@@ -339,7 +339,7 @@ async fn test_relay_manager_fallback_to_chaining() {
 #[ignore] // TODO: Implement BootstrapCache relay selection
 async fn test_bootstrap_cache_prefers_dual_stack_relay() {
     // TODO: Implement when BootstrapCache has add_peer and select_relay_for_cross_version
-    // use ant_quic::bootstrap_cache::{BootstrapCache, BootstrapCacheConfig};
+    // use saorsa_transport::bootstrap_cache::{BootstrapCache, BootstrapCacheConfig};
     // use tempfile::tempdir;
     //
     // let dir = tempdir().unwrap();
@@ -418,7 +418,7 @@ async fn test_sustained_bridging_load_30s() {
 
 #[allow(dead_code)]
 fn create_test_peer(addr: SocketAddr, dual_stack: bool) -> CachedPeer {
-    use ant_quic::bootstrap_cache::PeerSource;
+    use saorsa_transport::bootstrap_cache::PeerSource;
 
     let external_addresses = if dual_stack {
         vec![
@@ -445,7 +445,7 @@ fn create_test_peer(addr: SocketAddr, dual_stack: bool) -> CachedPeer {
 
 #[allow(dead_code)]
 fn create_test_peer_dual_stack(v4: SocketAddr, v6: SocketAddr) -> CachedPeer {
-    use ant_quic::bootstrap_cache::PeerSource;
+    use saorsa_transport::bootstrap_cache::PeerSource;
 
     let mut peer = CachedPeer::new(v4, vec![v4, v6], PeerSource::Seed);
     peer.capabilities = PeerCapabilities {

@@ -23,7 +23,7 @@ pub enum PortBinding {
     ///
     /// # Example
     /// ```
-    /// use ant_quic::config::PortBinding;
+    /// use saorsa_transport::config::PortBinding;
     ///
     /// let port = PortBinding::OsAssigned;
     /// ```
@@ -34,7 +34,7 @@ pub enum PortBinding {
     ///
     /// # Example
     /// ```
-    /// use ant_quic::config::PortBinding;
+    /// use saorsa_transport::config::PortBinding;
     ///
     /// let port = PortBinding::Explicit(9000);
     /// ```
@@ -44,7 +44,7 @@ pub enum PortBinding {
     ///
     /// # Example
     /// ```
-    /// use ant_quic::config::PortBinding;
+    /// use saorsa_transport::config::PortBinding;
     ///
     /// let port = PortBinding::Range(9000, 9010);
     /// ```
@@ -159,14 +159,14 @@ pub enum PortRetryBehavior {
 ///
 /// ## OS-assigned port (recommended)
 /// ```
-/// use ant_quic::config::EndpointPortConfig;
+/// use saorsa_transport::config::EndpointPortConfig;
 ///
 /// let config = EndpointPortConfig::default();
 /// ```
 ///
 /// ## Explicit port
 /// ```
-/// use ant_quic::config::{EndpointPortConfig, PortBinding};
+/// use saorsa_transport::config::{EndpointPortConfig, PortBinding};
 ///
 /// let config = EndpointPortConfig {
 ///     port: PortBinding::Explicit(9000),
@@ -176,7 +176,7 @@ pub enum PortRetryBehavior {
 ///
 /// ## Dual-stack with separate ports
 /// ```
-/// use ant_quic::config::{EndpointPortConfig, IpMode, PortBinding};
+/// use saorsa_transport::config::{EndpointPortConfig, IpMode, PortBinding};
 ///
 /// let config = EndpointPortConfig {
 ///     ip_mode: IpMode::DualStackSeparate {

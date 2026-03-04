@@ -6,7 +6,7 @@
 // Full details available at https://saorsalabs.com/licenses
 #![allow(missing_docs)]
 
-//! Production-ready certificate management for ant-quic
+//! Production-ready certificate management for saorsa-transport
 //!
 //! This module provides comprehensive certificate management functionality including:
 //! - Self-signed certificate generation for development/testing
@@ -110,7 +110,7 @@ pub struct CertificateManager {
 impl Default for CertificateConfig {
     fn default() -> Self {
         Self {
-            common_name: "ant-quic-node".to_string(),
+            common_name: "saorsa-transport-node".to_string(),
             subject_alt_names: vec!["localhost".to_string()],
             validity_duration: Duration::from_secs(365 * 24 * 60 * 60), // 1 year
             key_algorithm: KeyAlgorithm::Ed25519,
@@ -390,7 +390,7 @@ mod tests {
     #[test]
     fn test_default_certificate_config() {
         let config = CertificateConfig::default();
-        assert_eq!(config.common_name, "ant-quic-node");
+        assert_eq!(config.common_name, "saorsa-transport-node");
         assert_eq!(config.subject_alt_names, vec!["localhost"]);
         assert!(config.self_signed);
         assert!(!config.require_chain_validation);

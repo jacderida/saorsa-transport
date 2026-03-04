@@ -12,8 +12,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::crypto::pqc::PqcConfig;
-use ant_quic::{
+use saorsa_transport::crypto::pqc::PqcConfig;
+use saorsa_transport::{
     EndpointConfig,
     crypto::{CryptoError, HmacKey},
 };

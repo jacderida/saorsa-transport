@@ -5,13 +5,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod pqc_raw_public_key_tests {
-    use ant_quic::crypto::pqc::{MlDsaOperations, ml_dsa::MlDsa65};
-    use ant_quic::crypto::raw_public_keys::pqc::{
+    use rustls::SignatureScheme;
+    use saorsa_transport::crypto::pqc::{MlDsaOperations, ml_dsa::MlDsa65};
+    use saorsa_transport::crypto::raw_public_keys::pqc::{
         PqcRawPublicKeyVerifier, create_subject_public_key_info, extract_public_key_from_spki,
         fingerprint_public_key, generate_ml_dsa_keypair, sign_with_ml_dsa,
         supported_signature_schemes, verify_signature, verify_with_ml_dsa,
     };
-    use rustls::SignatureScheme;
 
     #[test]
     fn test_ml_dsa_raw_public_key_lifecycle() {

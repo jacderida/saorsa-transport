@@ -13,7 +13,7 @@
 //! # Zero Configuration
 //!
 //! ```rust,ignore
-//! use ant_quic::Node;
+//! use saorsa_transport::Node;
 //!
 //! // No configuration needed - just create a node
 //! let node = Node::new().await?;
@@ -22,7 +22,7 @@
 //! # Optional Configuration
 //!
 //! ```rust,ignore
-//! use ant_quic::{Node, NodeConfig};
+//! use saorsa_transport::{Node, NodeConfig};
 //!
 //! // Only configure what you need
 //! let config = NodeConfig::builder()
@@ -156,7 +156,7 @@ impl NodeConfigBuilder {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use ant_quic::NodeConfig;
+    /// use saorsa_transport::NodeConfig;
     /// use std::net::SocketAddr;
     ///
     /// // Backward compatible: SocketAddr
@@ -165,7 +165,7 @@ impl NodeConfigBuilder {
     ///     .build();
     ///
     /// // Multi-transport: Explicit TransportAddr
-    /// use ant_quic::transport::TransportAddr;
+    /// use saorsa_transport::transport::TransportAddr;
     /// let config = NodeConfig::builder()
     ///     .bind_addr(TransportAddr::Udp("0.0.0.0:0".parse().unwrap()))
     ///     .build();
@@ -187,7 +187,7 @@ impl NodeConfigBuilder {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use ant_quic::NodeConfig;
+    /// use saorsa_transport::NodeConfig;
     /// use std::net::SocketAddr;
     ///
     /// // Backward compatible: SocketAddr
@@ -196,7 +196,7 @@ impl NodeConfigBuilder {
     ///     .build();
     ///
     /// // Multi-transport: Mix different transport types
-    /// use ant_quic::transport::TransportAddr;
+    /// use saorsa_transport::transport::TransportAddr;
     /// let config = NodeConfig::builder()
     ///     .known_peer(TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()))
     ///     .known_peer(TransportAddr::ble([0x11, 0x22, 0x33, 0x44, 0x55, 0x66], None))
@@ -216,7 +216,7 @@ impl NodeConfigBuilder {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use ant_quic::NodeConfig;
+    /// use saorsa_transport::NodeConfig;
     /// use std::net::SocketAddr;
     ///
     /// // Backward compatible: Vec<SocketAddr>
@@ -229,7 +229,7 @@ impl NodeConfigBuilder {
     ///     .build();
     ///
     /// // Multi-transport: Heterogeneous transport list
-    /// use ant_quic::transport::TransportAddr;
+    /// use saorsa_transport::transport::TransportAddr;
     /// let mixed = vec![
     ///     TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()),
     ///     TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None),

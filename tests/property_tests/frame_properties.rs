@@ -11,13 +11,13 @@
 
 use super::config::*;
 use super::generators::*;
-use ant_quic::{
+use bytes::{Bytes, BytesMut};
+use proptest::prelude::*;
+use saorsa_transport::{
     VarInt,
     coding::Codec,
     frame::{ApplicationClose, ConnectionClose, FrameType},
 };
-use bytes::{Bytes, BytesMut};
-use proptest::prelude::*;
 
 proptest! {
     #![proptest_config(default_config())]
@@ -53,7 +53,7 @@ proptest! {
         frame_type in proptest::option::of(arb_frame_type()),
         reason_len in 0usize..256,
     ) {
-        use ant_quic::TransportErrorCode;
+        use saorsa_transport::TransportErrorCode;
 
         let reason = vec![b'x'; reason_len];
         let close = ConnectionClose {

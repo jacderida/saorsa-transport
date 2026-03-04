@@ -33,7 +33,7 @@ use super::provider::{
 
 /// UDP transport provider for standard Internet connectivity
 ///
-/// This is the primary transport for ant-quic, providing high-bandwidth,
+/// This is the primary transport for saorsa-transport, providing high-bandwidth,
 /// low-latency connectivity over UDP/IP.
 pub struct UdpTransport {
     socket: Arc<UdpSocket>,

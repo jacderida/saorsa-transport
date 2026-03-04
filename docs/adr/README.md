@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-This directory contains Architecture Decision Records (ADRs) for the ant-quic project.
+This directory contains Architecture Decision Records (ADRs) for the saorsa-transport project.
 
 ## What are ADRs?
 
@@ -50,4 +50,4 @@ Relevant commits, RFCs, code paths.
 - [Architecture Overview](../architecture/ARCHITECTURE.md)
 - [Symmetric P2P Design](../SYMMETRIC_P2P.md)
 - [NAT Traversal Guide](../NAT_TRAVERSAL_GUIDE.md)
-- [PQC Authentication Spec](../rfcs/ant-quic-pqc-authentication.md)
+- [PQC Authentication Spec](../rfcs/saorsa-transport-pqc-authentication.md)

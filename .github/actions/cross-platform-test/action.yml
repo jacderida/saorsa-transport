@@ -40,11 +40,11 @@ runs:
         {
           "client": {
             "os": "${{ inputs.client-os }}",
-            "binary": "ant-quic-${{ inputs.client-os }}"
+            "binary": "saorsa-transport-${{ inputs.client-os }}"
           },
           "server": {
             "os": "${{ inputs.server-os }}",
-            "binary": "ant-quic-${{ inputs.server-os }}"
+            "binary": "saorsa-transport-${{ inputs.server-os }}"
           },
           "scenario": "${{ inputs.test-scenario }}",
           "timeout": ${{ inputs.timeout }}
@@ -59,8 +59,8 @@ runs:
         echo "Downloading binaries for testing..."
         
         # Placeholder - would actually download from artifacts
-        echo "Downloaded ant-quic-${{ inputs.client-os }}"
-        echo "Downloaded ant-quic-${{ inputs.server-os }}"
+        echo "Downloaded saorsa-transport-${{ inputs.client-os }}"
+        echo "Downloaded saorsa-transport-${{ inputs.server-os }}"
     
     - name: Run cross-platform test
       id: test

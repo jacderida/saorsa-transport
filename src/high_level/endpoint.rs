@@ -74,7 +74,7 @@ impl Endpoint {
     /// ```
     /// # use std::net::{Ipv6Addr, SocketAddr};
     /// # fn example() -> std::io::Result<()> {
-    /// use ant_quic::high_level::Endpoint;
+    /// use saorsa_transport::high_level::Endpoint;
     ///
     /// let addr: SocketAddr = (Ipv6Addr::UNSPECIFIED, 0).into();
     /// let endpoint = Endpoint::client(addr)?;

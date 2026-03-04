@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use ant_quic::{
+use saorsa_transport::{
     NetworkInterface,
     test_utils::{calculate_address_priority, is_valid_address},
     CandidateSource, CandidateState,

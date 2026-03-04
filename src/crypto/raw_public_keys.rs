@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! RFC 7250 Raw Public Keys Support for ant-quic
+//! RFC 7250 Raw Public Keys Support for saorsa-transport
 //!
 //! v0.2: Pure PQC - ML-DSA-65 for all authentication.
 //!

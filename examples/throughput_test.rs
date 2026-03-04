@@ -8,9 +8,9 @@
 //! Throughput and efficiency testing example
 //!
 //! This example measures the throughput and efficiency of data transfer
-//! between two ant-quic nodes with comprehensive statistics.
+//! between two saorsa-transport nodes with comprehensive statistics.
 
-use ant_quic::{
+use saorsa_transport::{
     ClientConfig, Endpoint, EndpointConfig, ServerConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     high_level::default_runtime,
@@ -80,7 +80,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
 async fn main() -> anyhow::Result<()> {
     // Initialize logging
     tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=info,throughput_test=info")
+        .with_env_filter("saorsa_transport=info,throughput_test=info")
         .init();
 
     info!("=== Ant-QUIC Throughput Test ===");

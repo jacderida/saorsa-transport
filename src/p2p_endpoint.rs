@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! P2P endpoint for ant-quic
+//! P2P endpoint for saorsa-transport
 //!
 //! This module provides the main API for P2P communication with NAT traversal,
 //! secure connections, and event-driven architecture.
@@ -21,7 +21,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ant_quic::{P2pEndpoint, P2pConfig};
+//! use saorsa_transport::{P2pEndpoint, P2pConfig};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -113,7 +113,7 @@ fn extract_public_key_bytes_from_connection(
     Some(cert.as_ref().to_vec())
 }
 
-/// P2P endpoint - the primary API for ant-quic
+/// P2P endpoint - the primary API for saorsa-transport
 ///
 /// This struct provides the main interface for P2P communication with
 /// NAT traversal, connection management, and secure messaging.
@@ -320,7 +320,7 @@ impl Default for EndpointStats {
 /// ## Handling events with transport awareness
 ///
 /// ```rust,ignore
-/// use ant_quic::{P2pEvent, transport::TransportAddr};
+/// use saorsa_transport::{P2pEvent, transport::TransportAddr};
 ///
 /// while let Ok(event) = events.recv().await {
 ///     match event {
@@ -942,7 +942,7 @@ impl P2pEndpoint {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use ant_quic::transport::TransportAddr;
+    /// use saorsa_transport::transport::TransportAddr;
     ///
     /// // Connect via UDP (uses QUIC)
     /// let udp_addr = TransportAddr::Udp("192.168.1.100:9000".parse()?);

@@ -9,7 +9,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     auth::AuthConfig,
     chat::ChatMessage,
     crypto::raw_public_keys::key_utils::{

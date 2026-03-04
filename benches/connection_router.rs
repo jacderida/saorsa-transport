@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
-use ant_quic::{
+use saorsa_transport::{
     connection_router::{ConnectionRouter, RouterConfig},
     transport::{TransportAddr, TransportCapabilities, TransportRegistry},
 };
@@ -27,7 +27,7 @@ fn bench_engine_selection(c: &mut Criterion) {
     };
     let lora_transport = TransportAddr::LoRa {
         device_addr: [0x12, 0x34, 0x56, 0x78],
-        params: ant_quic::transport::LoRaParams::default(),
+        params: saorsa_transport::transport::LoRaParams::default(),
     };
 
     // Benchmark UDP address selection
@@ -146,7 +146,7 @@ fn bench_capabilities_lookup(c: &mut Criterion) {
         },
         TransportAddr::LoRa {
             device_addr: [0x12, 0x34, 0x56, 0x78],
-            params: ant_quic::transport::LoRaParams::default(),
+            params: saorsa_transport::transport::LoRaParams::default(),
         },
         TransportAddr::serial("/dev/ttyUSB0"),
         TransportAddr::I2p {

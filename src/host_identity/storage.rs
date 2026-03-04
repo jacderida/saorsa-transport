@@ -23,7 +23,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use ant_quic::host_identity::storage::{HostKeyStorage, auto_storage};
+//! use saorsa_transport::host_identity::storage::{HostKeyStorage, auto_storage};
 //!
 //! // Get the best available storage for this platform
 //! let storage = auto_storage()?;
@@ -198,8 +198,8 @@ impl EncryptedFileStorage {
 
     /// Get the default storage path
     ///
-    /// - Linux/macOS: `~/.config/ant-quic/hostkey.enc`
-    /// - Windows: `%APPDATA%\ant-quic\hostkey.enc`
+    /// - Linux/macOS: `~/.config/saorsa-transport/hostkey.enc`
+    /// - Windows: `%APPDATA%\saorsa-transport\hostkey.enc`
     fn default_path() -> StorageResult<PathBuf> {
         let config_dir = dirs::config_dir().ok_or_else(|| {
             StorageError::IoError(std::io::Error::new(
@@ -208,7 +208,7 @@ impl EncryptedFileStorage {
             ))
         })?;
 
-        let path = config_dir.join("ant-quic").join("hostkey.enc");
+        let path = config_dir.join("saorsa-transport").join("hostkey.enc");
         Ok(path)
     }
 
@@ -453,7 +453,7 @@ pub struct KeyringStorage {
 }
 
 impl KeyringStorage {
-    const SERVICE: &'static str = "ant-quic";
+    const SERVICE: &'static str = "saorsa-transport";
     const USERNAME: &'static str = "hostkey";
 
     /// Create a new keyring storage instance
@@ -562,7 +562,7 @@ impl HostKeyStorage for KeyringStorage {
 /// - Platform keychain is unavailable
 /// - You haven't set `ANTQ_HOSTKEY_PASSWORD`
 ///
-/// File location: `~/.config/ant-quic/hostkey.key`
+/// File location: `~/.config/saorsa-transport/hostkey.key`
 pub struct PlainFileStorage {
     path: PathBuf,
 }
@@ -587,7 +587,7 @@ impl PlainFileStorage {
                 "Could not determine config directory",
             ))
         })?;
-        Ok(config_dir.join("ant-quic").join("hostkey.key"))
+        Ok(config_dir.join("saorsa-transport").join("hostkey.key"))
     }
 }
 

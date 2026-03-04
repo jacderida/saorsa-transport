@@ -77,7 +77,7 @@ impl ConnectionStats {
 #[tokio::test]
 async fn test_connection_success_improvement() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=info")
+        .with_env_filter("saorsa_transport=info")
         .try_init();
 
     info!("Testing connection success rate improvements with QUIC Address Discovery");
@@ -215,7 +215,7 @@ async fn test_connection_success_improvement() {
 #[tokio::test]
 async fn test_success_by_nat_type() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=info")
+        .with_env_filter("saorsa_transport=info")
         .try_init();
 
     info!("Testing success rates by NAT type");
@@ -274,7 +274,7 @@ fn nat_difficulty(nat_type: &str) -> u32 {
 #[tokio::test]
 async fn test_connection_time_improvement() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=info")
+        .with_env_filter("saorsa_transport=info")
         .try_init();
 
     info!("Testing connection establishment time improvements");
@@ -311,7 +311,7 @@ async fn test_connection_time_improvement() {
 #[tokio::test]
 async fn test_retry_behavior_improvement() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Testing retry behavior improvements");
@@ -357,7 +357,7 @@ async fn test_retry_behavior_improvement() {
 #[tokio::test]
 async fn test_overall_improvement_metrics() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=info")
+        .with_env_filter("saorsa_transport=info")
         .try_init();
 
     info!("Testing overall system improvement metrics");

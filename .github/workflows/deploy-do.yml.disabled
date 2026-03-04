@@ -54,7 +54,7 @@ jobs:
       run: cargo test --release --all-features
     
     - name: Build release binary
-      run: cargo build --release --features "pqc aws-lc-rs" --bin ant-quic
+      run: cargo build --release --features "pqc aws-lc-rs" --bin saorsa-transport
     
     - name: Create deployment package
       run: |
@@ -62,11 +62,11 @@ jobs:
         mkdir -p deploy/config
         mkdir -p deploy/scripts
         
-        cp target/release/ant-quic deploy/bin/
+        cp target/release/saorsa-transport deploy/bin/
         cp scripts/deploy-do.sh deploy/scripts/
         
         # Create default config
-        cat > deploy/config/ant-quic.toml << EOF
+        cat > deploy/config/saorsa-transport.toml << EOF
         [server]
         listen_addr = "0.0.0.0:9000"
         force_coordinator = true
@@ -81,13 +81,13 @@ jobs:
         max_streams_per_connection = 100
         EOF
         
-        tar -czf ant-quic-deploy.tar.gz deploy/
+        tar -czf saorsa-transport-deploy.tar.gz deploy/
     
     - name: Upload deployment package
       uses: actions/upload-artifact@v4
       with:
         name: deployment-package
-        path: ant-quic-deploy.tar.gz
+        path: saorsa-transport-deploy.tar.gz
         retention-days: 7
 
   deploy-staging:
@@ -97,7 +97,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging'
     environment:
       name: staging
-      url: https://staging.ant-quic.io
+      url: https://staging.saorsa-transport.io
     
     steps:
     - uses: actions/checkout@v4
@@ -114,7 +114,7 @@ jobs:
         DO_USER: ${{ secrets.DO_STAGING_USER }}
       run: |
         # Extract deployment package
-        tar -xzf ant-quic-deploy.tar.gz
+        tar -xzf saorsa-transport-deploy.tar.gz
         
         # Deploy
         export DO_HOST DO_USER
@@ -138,7 +138,7 @@ jobs:
         name: deployment-package
     
     - name: Extract package
-      run: tar -xzf ant-quic-deploy.tar.gz
+      run: tar -xzf saorsa-transport-deploy.tar.gz
     
     - name: Pre-deployment checks
       env:
@@ -173,7 +173,7 @@ jobs:
         ./deploy/scripts/deploy-do.sh health
         
         # Test connectivity
-        timeout 30 cargo run --release --bin ant-quic -- --bootstrap "$DO_HOST:9000" --minimal || true
+        timeout 30 cargo run --release --bin saorsa-transport -- --bootstrap "$DO_HOST:9000" --minimal || true
     
     - name: Notify deployment
       if: always()
@@ -185,8 +185,8 @@ jobs:
           const sha = context.sha.substring(0, 7);
           
           const message = status === 'success' 
-            ? `✅ Successfully deployed ant-quic v${version} (${sha}) to production`
-            : `❌ Failed to deploy ant-quic v${version} (${sha}) to production`;
+            ? `✅ Successfully deployed saorsa-transport v${version} (${sha}) to production`
+            : `❌ Failed to deploy saorsa-transport v${version} (${sha}) to production`;
           
           // Create deployment status
           await github.rest.repos.createDeploymentStatus({
@@ -214,7 +214,7 @@ jobs:
     - name: Build test tools
       run: |
         cargo build --release --examples
-        cargo build --release --bin ant-quic
+        cargo build --release --bin saorsa-transport
     
     - name: Run performance tests
       env:
@@ -254,7 +254,7 @@ jobs:
         name: deployment-package
     
     - name: Extract package
-      run: tar -xzf ant-quic-deploy.tar.gz
+      run: tar -xzf saorsa-transport-deploy.tar.gz
     
     - name: Rollback deployment
       env:

@@ -4,7 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::VarInt;
+use saorsa_transport::VarInt;
 
 // Frame type constants from the RFC
 const FRAME_TYPE_ADD_ADDRESS_IPV4: u64 = 0x3d7e90;

@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Property-based test runner for ant-quic
+//! Property-based test runner for saorsa-transport
 //!
 //! This is the entry point for property-based tests using proptest.
 //! Run with: cargo test --test property_tests

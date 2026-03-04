@@ -3,8 +3,8 @@
 //! v0.13.0+: PQC is always enabled (100% PQC, no classical crypto).
 //! This example shows various ways to configure PQC parameters.
 
-use ant_quic::crypto::pqc::PqcConfig;
-use ant_quic::{
+use saorsa_transport::crypto::pqc::PqcConfig;
+use saorsa_transport::{
     EndpointConfig,
     crypto::{CryptoError, HmacKey},
 };

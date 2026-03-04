@@ -1,4 +1,4 @@
-hakari-package = "ant-quic-workspace-hack"
+hakari-package = "saorsa-transport-workspace-hack"
 dep-format-version = "4"
 resolver = "2"
 platforms = []

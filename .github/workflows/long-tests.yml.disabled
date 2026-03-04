@@ -170,7 +170,7 @@ jobs:
             exit 1
           fi
         env:
-          RUST_LOG: ant_quic=info
+          RUST_LOG: saorsa_transport=info
           RUST_TEST_TIME_UNIT: 60000  # 1 minute timeout per test
       
       - name: Generate test report
@@ -338,7 +338,7 @@ jobs:
           # Monitor CPU and memory
           nohup bash -c 'while true; do 
             echo "=== $(date) ===" >> resource-monitor.log
-            ps aux | grep ant-quic | grep -v grep >> resource-monitor.log
+            ps aux | grep saorsa-transport | grep -v grep >> resource-monitor.log
             free -m >> resource-monitor.log
             echo "" >> resource-monitor.log
             sleep 30
@@ -366,7 +366,7 @@ jobs:
           EOF
           
           # Run the stress test
-          ./target/release/ant-quic-stress --config stress-config.toml \
+          ./target/release/saorsa-transport-stress --config stress-config.toml \
             2>&1 | tee stress-test-output.log || true
         timeout-minutes: ${{ matrix.duration / 60 + 10 }}
       
@@ -385,7 +385,7 @@ jobs:
           # Memory usage
           if [ -f resource-monitor.log ]; then
             echo "## Memory Usage" >> stress-analysis.md
-            grep "ant-quic" resource-monitor.log | \
+            grep "saorsa-transport" resource-monitor.log | \
               awk '{sum+=$6} END {print "Average RSS: " sum/NR/1024 " MB"}' \
               >> stress-analysis.md || true
           fi

@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{TransportError, TransportErrorCode, VarInt};
 use bytes::Bytes;
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use saorsa_transport::{TransportError, TransportErrorCode, VarInt};
 use std::time::Duration;
 
 fn varint_operations(c: &mut Criterion) {

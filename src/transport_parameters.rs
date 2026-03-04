@@ -918,9 +918,9 @@ impl TransportParameters {
     /// # Examples
     ///
     /// ```ignore
-    /// use ant_quic::VarInt;
-    /// use ant_quic::TransportParameters;
-    /// use ant_quic::NatTraversalConfig;
+    /// use saorsa_transport::VarInt;
+    /// use saorsa_transport::TransportParameters;
+    /// use saorsa_transport::NatTraversalConfig;
     ///
     /// // P2P: Both peers have ServerSupport - use minimum
     /// let local = NatTraversalConfig::ServerSupport {
@@ -971,9 +971,9 @@ impl TransportParameters {
     /// # Examples
     ///
     /// ```ignore
-    /// use ant_quic::VarInt;
-    /// use ant_quic::TransportParameters;
-    /// use ant_quic::NatTraversalConfig;
+    /// use saorsa_transport::VarInt;
+    /// use saorsa_transport::TransportParameters;
+    /// use saorsa_transport::NatTraversalConfig;
     ///
     /// let mut params = TransportParameters::default();
     /// params.nat_traversal = Some(NatTraversalConfig::ServerSupport {

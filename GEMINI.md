@@ -1,21 +1,21 @@
 # GEMINI.md
 
-Repository guidelines for Google Gemini when working with ant-quic.
+Repository guidelines for Google Gemini when working with saorsa-transport.
 
 > **Related AI Assistant Guides**: See also [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) for alternative AI assistant configurations. All guides share the same core project information.
 
 ## Repository Independence
 
-**ant-quic is an independent project (NOT a Quinn fork for contributions).**
+**saorsa-transport is an independent project (NOT a Quinn fork for contributions).**
 
 - Do NOT open PRs to `quinn-rs/quinn`
 - Do NOT add `quinn-rs/quinn` as an upstream remote
-- Contribute only to `github.com/dirvine/ant-quic`
+- Contribute only to `github.com/saorsa-labs/saorsa-transport`
 - Although GitHub shows it as a fork (legacy), we do NOT contribute back to Quinn
 
 ## Project Overview
 
-ant-quic is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks and the Autonomi ecosystem.
+saorsa-transport is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks and the Autonomi ecosystem.
 
 **v0.13.0+: Pure Symmetric P2P Architecture**
 - **One Node Type**: All nodes are identical - every node can connect AND accept connections
@@ -28,7 +28,7 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 ### Authentication: Pure PQC with Raw Public Keys (v0.2)
 
 We use **Pure Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
-- Reference: `docs/rfcs/ant-quic-pqc-authentication.md` (our specification)
+- Reference: `docs/rfcs/saorsa-transport-pqc-authentication.md` (our specification)
 - Identity: ML-DSA-65 key pairs (PeerId = BLAKE3 hash → 32 bytes compact identifier)
 - Key Exchange: ML-KEM-768 (IANA 0x0201) - FIPS 203
 - Signatures: ML-DSA-65 (IANA 0x0901) - FIPS 204
@@ -47,7 +47,7 @@ Single ML-DSA-65 key pair for identity and auth. PeerId = BLAKE3(public_key) for
 
 ### Network: Dual-Stack IPv4 and IPv6 Support
 
-ant-quic supports **both IPv4 and IPv6** addresses:
+saorsa-transport supports **both IPv4 and IPv6** addresses:
 - Dual-stack socket binding when available
 - IPv4-mapped IPv6 addresses handled transparently
 - NAT traversal works across both IP versions
@@ -91,7 +91,7 @@ All nodes are equal. Any connected peer can:
 
 ```
 src/                    # Core library
-  bin/                  # CLI binary (ant-quic)
+  bin/                  # CLI binary (saorsa-transport)
   connection/           # QUIC connection with NAT traversal extensions
   crypto/               # TLS 1.3 with Pure PQC Raw Public Keys (v0.2)
   crypto/pqc/           # Post-quantum cryptography (ML-KEM, ML-DSA)
@@ -118,7 +118,7 @@ cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 
 # Run binary (all nodes are symmetric)
-cargo run --bin ant-quic -- --listen 0.0.0.0:9000
+cargo run --bin saorsa-transport -- --listen 0.0.0.0:9000
 
 # Run example
 cargo run --example simple_chat
@@ -130,7 +130,7 @@ cargo check --all-targets
 ## Primary API (v0.13.0+)
 
 ```rust
-use ant_quic::{P2pEndpoint, P2pConfig};
+use saorsa_transport::{P2pEndpoint, P2pConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -176,7 +176,7 @@ Conventional Commits required:
 
 ### Core Protocol
 - `rfc9000.txt` - QUIC: A UDP-Based Multiplexed and Secure Transport
-- `ant-quic-pqc-authentication.md` - **Pure PQC Raw Public Keys** (v0.2 - our specification)
+- `saorsa-transport-pqc-authentication.md` - **Pure PQC Raw Public Keys** (v0.2 - our specification)
 
 ### NAT Traversal (Native QUIC - NO STUN/ICE)
 - `draft-seemann-quic-nat-traversal-02.txt` - **QUIC NAT Traversal** (primary spec)
@@ -195,7 +195,7 @@ Conventional Commits required:
 - **NAT Traversal API**: `src/nat_traversal_api.rs`
 - **QUIC Node**: `src/quic_node.rs`
 - **PQC Implementation**: `src/crypto/pqc/`
-- **Binary**: `src/bin/ant-quic.rs`
+- **Binary**: `src/bin/saorsa-transport.rs`
 
 ---
 
@@ -213,5 +213,5 @@ Conventional Commits required:
 - v0.2 Pure PQC: ML-KEM-768 (0x0201) + ML-DSA-65 (0x0901)
 - Native QUIC NAT traversal (NO STUN/ICE/TURN)
 - Correct frame IDs (0x3d7e90+, 0x9f81a6+)
-- Pure PQC Raw Public Keys (v0.2 - see `docs/rfcs/ant-quic-pqc-authentication.md`)
+- Pure PQC Raw Public Keys (v0.2 - see `docs/rfcs/saorsa-transport-pqc-authentication.md`)
 - IPv4 and IPv6 dual-stack support

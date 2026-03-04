@@ -129,7 +129,7 @@ jobs:
       - name: Check license headers
         run: |
           # Check that all Rust source files have proper license headers
-          # ant-quic uses dual MIT/Apache-2.0 licensing
+          # saorsa-transport uses dual MIT/Apache-2.0 licensing
 
           missing_headers=0
           for file in $(find src tests examples -name "*.rs" -type f); do

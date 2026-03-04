@@ -69,7 +69,7 @@ runs:
         # Start test with timeout
         timeout ${{ inputs.test-duration }} \
           docker-compose -f ${{ inputs.docker-compose-file }} \
-          exec -T bootstrap /usr/local/bin/ant-quic \
+          exec -T bootstrap /usr/local/bin/saorsa-transport \
           --nat-test-mode \
           --nat-type ${{ inputs.nat-type }} \
           --client-count ${{ inputs.client-count }} \

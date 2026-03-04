@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ant_quic::{
+use saorsa_transport::{
     ClientConfig, Connection, Endpoint, EndpointConfig, RecvStream, SendStream, ServerConfig,
     TransportConfig,
 };

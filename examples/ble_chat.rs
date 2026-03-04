@@ -1,4 +1,4 @@
-//! BLE Chat Example - Demonstrate ant-quic over Bluetooth Low Energy
+//! BLE Chat Example - Demonstrate saorsa-transport over Bluetooth Low Energy
 //!
 //! This example shows how to use the BLE transport for peer-to-peer chat
 //! over Bluetooth Low Energy. It demonstrates:
@@ -32,7 +32,7 @@
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────┐
-//! │           ant-quic BLE Service                  │
+//! │           saorsa-transport BLE Service                  │
 //! │  UUID: a03d7e9f-0bca-12fe-a600-000000000001    │
 //! ├─────────────────────────────────────────────────┤
 //! │  TX Characteristic (Write Without Response)    │
@@ -63,8 +63,8 @@ fn main() {
 }
 
 #[cfg(feature = "ble")]
-use ant_quic::transport::{
-    ANT_QUIC_SERVICE_UUID, BleConfig, BleTransport, DiscoveredDevice, TransportAddr,
+use saorsa_transport::transport::{
+    BleConfig, BleTransport, DiscoveredDevice, SAORSA_TRANSPORT_SERVICE_UUID, TransportAddr,
     TransportProvider,
 };
 #[cfg(feature = "ble")]
@@ -85,7 +85,7 @@ enum Mode {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug,ble_chat=debug")
+        .with_env_filter("saorsa_transport=debug,ble_chat=debug")
         .init();
 
     // Parse command line arguments
@@ -149,8 +149,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(feature = "ble")]
 async fn run_peripheral(transport: BleTransport) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== BLE Chat - Peripheral Mode ===");
-    println!("Advertising ant-quic service...");
-    println!("Service UUID: {:02x?}", ANT_QUIC_SERVICE_UUID);
+    println!("Advertising saorsa-transport service...");
+    println!("Service UUID: {:02x?}", SAORSA_TRANSPORT_SERVICE_UUID);
     println!();
 
     // Check if peripheral mode is supported
@@ -189,7 +189,7 @@ async fn run_peripheral(transport: BleTransport) -> Result<(), Box<dyn std::erro
 #[cfg(feature = "ble")]
 async fn run_central(transport: BleTransport) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== BLE Chat - Central Mode ===");
-    println!("Scanning for ant-quic BLE peers...");
+    println!("Scanning for saorsa-transport BLE peers...");
     println!();
 
     // Start scanning
@@ -206,17 +206,17 @@ async fn run_central(transport: BleTransport) -> Result<(), Box<dyn std::error::
     let devices = transport.discovered_devices().await;
     println!("\nDiscovered {} device(s):", devices.len());
 
-    let ant_quic_devices: Vec<&DiscoveredDevice> =
+    let saorsa_transport_devices: Vec<&DiscoveredDevice> =
         devices.iter().filter(|d| d.has_service).collect();
 
-    if ant_quic_devices.is_empty() {
-        println!("\nNo ant-quic BLE peers found nearby.");
+    if saorsa_transport_devices.is_empty() {
+        println!("\nNo saorsa-transport BLE peers found nearby.");
         println!("Make sure another instance is running in peripheral mode.");
         return Ok(());
     }
 
     // Display devices
-    for (i, device) in ant_quic_devices.iter().enumerate() {
+    for (i, device) in saorsa_transport_devices.iter().enumerate() {
         println!(
             "  [{}] {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X} - RSSI: {:?} dBm",
             i,
@@ -249,14 +249,14 @@ async fn run_central(transport: BleTransport) -> Result<(), Box<dyn std::error::
     }
 
     let index: usize = match line.parse() {
-        Ok(i) if i < ant_quic_devices.len() => i,
+        Ok(i) if i < saorsa_transport_devices.len() => i,
         _ => {
             eprintln!("Invalid selection");
             return Ok(());
         }
     };
 
-    let target = ant_quic_devices[index];
+    let target = saorsa_transport_devices[index];
     println!(
         "\nConnecting to {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}...",
         target.device_id[0],

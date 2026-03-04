@@ -15,7 +15,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 use rand::{Rng, thread_rng};
 use uuid::Uuid;
 
-use ant_quic::{CandidateAddress, CandidateSource, CandidateState};
+use saorsa_transport::{CandidateAddress, CandidateSource, CandidateState};
 
 /// Mock path validation state for benchmarking
 #[derive(Clone, Debug)]

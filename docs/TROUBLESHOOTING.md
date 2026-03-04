@@ -1,6 +1,6 @@
-# Troubleshooting Guide for ant-quic
+# Troubleshooting Guide for saorsa-transport
 
-This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT traversal and address discovery features.
+This guide helps diagnose and resolve common issues with saorsa-transport's v0.13.0+ NAT traversal and address discovery features.
 
 ## Table of Contents
 1. [Connection Issues](#connection-issues)
@@ -56,7 +56,7 @@ This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT
 
 4. **Enable debug logging**
    ```bash
-   RUST_LOG=ant_quic=debug cargo run
+   RUST_LOG=saorsa_transport=debug cargo run
    ```
 
 ### Problem: Connections drop after establishment
@@ -112,7 +112,7 @@ This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT
    ```rust
    // Address discovery is enabled by default in v0.13.0+
    // Verify with debug logging:
-   RUST_LOG=ant_quic::address_discovery=debug cargo run
+   RUST_LOG=saorsa_transport::address_discovery=debug cargo run
    ```
 
 2. **Increase candidate discovery timeout**
@@ -210,13 +210,13 @@ This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT
 2. **Verify transport parameter negotiation**
    ```bash
    # Enable transport parameter logging
-   RUST_LOG=ant_quic::transport_parameters=trace cargo run
+   RUST_LOG=saorsa_transport::transport_parameters=trace cargo run
    ```
 
 3. **Check if peers support address discovery**
    ```bash
    # Look for OBSERVED_ADDRESS frames in trace logs
-   RUST_LOG=ant_quic::frame=trace cargo run 2>&1 | grep OBSERVED_ADDRESS
+   RUST_LOG=saorsa_transport::frame=trace cargo run 2>&1 | grep OBSERVED_ADDRESS
    ```
 
 ### Problem: Wrong addresses being observed
@@ -277,7 +277,7 @@ This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT
    ```bash
    # Use cargo flamegraph
    cargo install flamegraph
-   cargo flamegraph --bin ant-quic
+   cargo flamegraph --bin saorsa-transport
    ```
 
 ### Problem: High memory usage
@@ -301,10 +301,10 @@ This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT
 2. **Monitor for leaks**
    ```bash
    # Use valgrind on Linux
-   valgrind --leak-check=full ./ant-quic
+   valgrind --leak-check=full ./saorsa-transport
 
    # Use heaptrack
-   heaptrack ./ant-quic
+   heaptrack ./saorsa-transport
    ```
 
 ## Authentication Failures
@@ -320,7 +320,7 @@ This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT
 
 1. **Verify key generation**
    ```rust
-   use ant_quic::key_utils::{generate_ed25519_keypair, derive_peer_id};
+   use saorsa_transport::key_utils::{generate_ed25519_keypair, derive_peer_id};
 
    let (private_key, public_key) = generate_ed25519_keypair();
    let peer_id = derive_peer_id(&public_key);
@@ -329,7 +329,7 @@ This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT
 
 2. **Check Raw Public Key format**
    ```rust
-   // ant-quic uses RFC 7250 Raw Public Keys
+   // saorsa-transport uses RFC 7250 Raw Public Keys
    // Ensure you're using Ed25519 keys, not certificates
    ```
 
@@ -369,7 +369,7 @@ This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT
 3. **Check for hardware support**
    ```bash
    # Verify CPU supports required instructions
-   RUST_LOG=ant_quic::crypto::pqc=debug cargo run 2>&1 | grep -i "hardware\|simd\|avx"
+   RUST_LOG=saorsa_transport::crypto::pqc=debug cargo run 2>&1 | grep -i "hardware\|simd\|avx"
    ```
 
 ### Problem: High PQC overhead
@@ -402,12 +402,12 @@ This guide helps diagnose and resolve common issues with ant-quic's v0.13.0+ NAT
 
 ```bash
 # Full debug logging
-RUST_LOG=ant_quic=trace cargo run
+RUST_LOG=saorsa_transport=trace cargo run
 
 # Specific module logging
-RUST_LOG=ant_quic::nat_traversal=debug cargo run
-RUST_LOG=ant_quic::address_discovery=trace cargo run
-RUST_LOG=ant_quic::crypto::pqc=debug cargo run
+RUST_LOG=saorsa_transport::nat_traversal=debug cargo run
+RUST_LOG=saorsa_transport::address_discovery=trace cargo run
+RUST_LOG=saorsa_transport::crypto::pqc=debug cargo run
 
 # Log to file
 RUST_LOG=debug cargo run 2>&1 | tee debug.log
@@ -464,7 +464,7 @@ heaptrack --analyze heaptrack.cargo.12345.gz
 **Problem**: Can't bind to port < 1024
 ```bash
 # Allow binding to privileged ports
-sudo setcap cap_net_bind_service=+ep ./ant-quic
+sudo setcap cap_net_bind_service=+ep ./saorsa-transport
 ```
 
 **Problem**: Too many open files
@@ -478,8 +478,8 @@ ulimit -n 65536
 **Problem**: Firewall blocking connections
 ```bash
 # Add to firewall exceptions
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add $(pwd)/ant-quic
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp $(pwd)/ant-quic
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add $(pwd)/saorsa-transport
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp $(pwd)/saorsa-transport
 ```
 
 ### Windows
@@ -487,7 +487,7 @@ sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp $(pwd)/ant-qui
 **Problem**: Windows Defender blocking
 ```powershell
 # Add exclusion
-Add-MpPreference -ExclusionPath "C:\path\to\ant-quic.exe"
+Add-MpPreference -ExclusionPath "C:\path\to\saorsa-transport.exe"
 ```
 
 **Problem**: Network interface detection fails
@@ -509,7 +509,7 @@ let config = P2pConfig::builder()
 ### Q: What's the overhead of PQC?
 **A**: Approximately 8% compared to classical-only cryptography. Connection pooling minimizes impact.
 
-### Q: Can I use ant-quic without any known peers?
+### Q: Can I use saorsa-transport without any known peers?
 **A**: Yes, if peers have public IPs or are on the same local network. Known peers are primarily for NAT traversal and address discovery.
 
 ### Q: How do I know what type of NAT I'm behind?
@@ -525,7 +525,7 @@ let config = P2pConfig::builder()
 **A**: Use multiple known peers, enable address discovery, increase timeouts, and implement retry logic with exponential backoff.
 
 ### Q: Can QUIC bi/uni streams drop data like datagrams?
-**A**: No. Streams are fully reliable and ordered — any missing stream payload is a protocol/library bug. If this happens, grab `ConnectionStats` (for both peers), enable `RUST_LOG=ant_quic=trace`, and file an issue that includes: (1) how many stream messages you sent, (2) which ones failed to arrive, and (3) whether you were concurrently reading datagrams. This helps us reproduce race conditions such as the multi-client `tokio::select!` loops covered by `tests/multi_client_mixed_traffic.rs`.
+**A**: No. Streams are fully reliable and ordered — any missing stream payload is a protocol/library bug. If this happens, grab `ConnectionStats` (for both peers), enable `RUST_LOG=saorsa_transport=trace`, and file an issue that includes: (1) how many stream messages you sent, (2) which ones failed to arrive, and (3) whether you were concurrently reading datagrams. This helps us reproduce race conditions such as the multi-client `tokio::select!` loops covered by `tests/multi_client_mixed_traffic.rs`.
 
 ## Getting Help
 
@@ -534,10 +534,10 @@ If you've tried the solutions above and still have issues:
 1. **Enable debug logging** and collect logs
 2. **Check GitHub issues** for similar problems
 3. **File a bug report** with:
-   - ant-quic version (`ant-quic --version`)
+   - saorsa-transport version (`saorsa-transport --version`)
    - Platform and OS version
    - Network configuration
    - Debug logs
    - Steps to reproduce
 
-Report issues at: https://github.com/dirvine/ant-quic/issues
+Report issues at: https://github.com/saorsa-labs/saorsa-transport/issues

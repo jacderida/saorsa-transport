@@ -1,5 +1,5 @@
 [package]
-name = "ant-quic-workspace-hack"
+name = "saorsa-transport-workspace-hack"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"

@@ -115,7 +115,7 @@ pub fn log_connection_event(event_type: ConnectionEventType, conn_info: &Connect
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level,
-        target: "ant_quic::connection".to_string(),
+        target: "saorsa_transport::connection".to_string(),
         message: message.to_string(),
         fields,
         span_id: None,
@@ -151,7 +151,7 @@ pub fn log_frame_event(event_type: FrameEventType, frame_info: &FrameInfo) {
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level,
-        target: "ant_quic::frame".to_string(),
+        target: "saorsa_transport::frame".to_string(),
         message: message.to_string(),
         fields,
         span_id: None,
@@ -189,7 +189,7 @@ pub fn log_transport_param_event(
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level,
-        target: "ant_quic::transport_params".to_string(),
+        target: "saorsa_transport::transport_params".to_string(),
         message: message.to_string(),
         fields,
         span_id: None,
@@ -231,7 +231,7 @@ pub fn log_nat_traversal_event(event_type: NatTraversalEventType, nat_info: &Nat
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level,
-        target: "ant_quic::nat_traversal".to_string(),
+        target: "saorsa_transport::nat_traversal".to_string(),
         message: message.to_string(),
         fields,
         span_id: None,
@@ -267,7 +267,7 @@ pub fn log_error_with_context(error: &dyn std::error::Error, context: super::Err
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level: tracing::Level::ERROR,
-        target: format!("ant_quic::{}", context.component),
+        target: format!("saorsa_transport::{}", context.component),
         message: error.to_string(),
         fields,
         span_id: None,
@@ -278,7 +278,7 @@ pub fn log_error_with_context(error: &dyn std::error::Error, context: super::Err
 #[allow(dead_code)]
 pub(crate) fn log_frame_details(frame: &Frame, direction: &str, conn_id: &ConnectionId) {
     trace!(
-        target: "ant_quic::frame::details",
+        target: "saorsa_transport::frame::details",
         conn_id = ?conn_id,
         direction = direction,
         frame_type = ?frame.ty(),
@@ -288,7 +288,7 @@ pub(crate) fn log_frame_details(frame: &Frame, direction: &str, conn_id: &Connec
     match frame {
         Frame::ObservedAddress(addr) => {
             debug!(
-                target: "ant_quic::frame::observed_address",
+                target: "saorsa_transport::frame::observed_address",
                 conn_id = ?conn_id,
                 sequence_number = addr.sequence_number.0,
                 address = ?addr.address,
@@ -297,7 +297,7 @@ pub(crate) fn log_frame_details(frame: &Frame, direction: &str, conn_id: &Connec
         }
         Frame::AddAddress(addr) => {
             debug!(
-                target: "ant_quic::frame::add_address",
+                target: "saorsa_transport::frame::add_address",
                 conn_id = ?conn_id,
                 sequence = addr.sequence.0,
                 address = ?addr.address,
@@ -307,7 +307,7 @@ pub(crate) fn log_frame_details(frame: &Frame, direction: &str, conn_id: &Connec
         }
         Frame::PunchMeNow(punch) => {
             debug!(
-                target: "ant_quic::frame::punch_me_now",
+                target: "saorsa_transport::frame::punch_me_now",
                 conn_id = ?conn_id,
                 paired_with_sequence_number = punch.paired_with_sequence_number.0,
                 round = punch.round.0,
@@ -316,7 +316,7 @@ pub(crate) fn log_frame_details(frame: &Frame, direction: &str, conn_id: &Connec
         }
         _ => {
             trace!(
-                target: "ant_quic::frame::other",
+                target: "saorsa_transport::frame::other",
                 conn_id = ?conn_id,
                 frame_type = ?frame.ty(),
                 "Standard QUIC frame"
@@ -345,7 +345,7 @@ pub fn log_packet_event(
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level: tracing::Level::TRACE,
-        target: "ant_quic::packet".to_string(),
+        target: "saorsa_transport::packet".to_string(),
         message: event.to_string(),
         fields,
         span_id: None,
@@ -370,7 +370,7 @@ pub fn log_stream_event(
     logger().log_event(LogEvent {
         timestamp: crate::Instant::now(),
         level: tracing::Level::DEBUG,
-        target: "ant_quic::stream".to_string(),
+        target: "saorsa_transport::stream".to_string(),
         message: event.to_string(),
         fields,
         span_id: None,

@@ -20,13 +20,13 @@
 //! ## Example
 //!
 //! ```rust,ignore
-//! use ant_quic::bootstrap_cache::{BootstrapCache, BootstrapCacheConfig};
+//! use saorsa_transport::bootstrap_cache::{BootstrapCache, BootstrapCacheConfig};
 //! use std::sync::Arc;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
 //!     let config = BootstrapCacheConfig::builder()
-//!         .cache_dir("/var/lib/ant-quic")
+//!         .cache_dir("/var/lib/saorsa-transport")
 //!         .max_peers(20_000)
 //!         .epsilon(0.1)
 //!         .build();

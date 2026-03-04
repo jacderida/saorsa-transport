@@ -4,7 +4,7 @@
 ///
 /// Tests QUIC transport features including streams, flow control, congestion control, and loss recovery
 use super::utils;
-use ant_quic::high_level::{Connection, Endpoint};
+use saorsa_transport::high_level::{Connection, Endpoint};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;

@@ -29,8 +29,8 @@
 //! provides shared infrastructure components.
 //!
 //! ```rust,ignore
-//! use ant_quic::masque::{MasqueRelayServer, MasqueRelayClient, RelayManager};
-//! use ant_quic::relay::{RelayAuthenticator, RateLimiter};
+//! use saorsa_transport::masque::{MasqueRelayServer, MasqueRelayClient, RelayManager};
+//! use saorsa_transport::relay::{RelayAuthenticator, RateLimiter};
 //!
 //! // Create a relay server with authentication
 //! let authenticator = RelayAuthenticator::new(keypair);

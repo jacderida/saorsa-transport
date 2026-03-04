@@ -1,4 +1,4 @@
-# ant-quic Pure Post-Quantum Authentication Specification
+# saorsa-transport Pure Post-Quantum Authentication Specification
 
 **Version:** 2.1
 **Date:** December 2025
@@ -8,10 +8,10 @@
 ## Abstract
 
 This document specifies the authentication and key exchange mechanisms used by
-ant-quic for secure peer-to-peer communication. ant-quic employs **pure
+saorsa-transport for secure peer-to-peer communication. saorsa-transport employs **pure
 post-quantum cryptography (PQC)** to provide quantum-resistant security.
 
-As a greenfield network with no legacy compatibility requirements, ant-quic
+As a greenfield network with no legacy compatibility requirements, saorsa-transport
 uses ML-KEM for key exchange and ML-DSA for signatures **without classical
 algorithm fallbacks**. This provides the strongest quantum resistance while
 simplifying the protocol.
@@ -38,7 +38,7 @@ simplifying the protocol.
 
 ### 1.1 Purpose
 
-ant-quic is a QUIC transport implementation optimized for P2P networks with
+saorsa-transport is a QUIC transport implementation optimized for P2P networks with
 advanced NAT traversal capabilities. This specification defines the
 cryptographic mechanisms used for:
 
@@ -48,7 +48,7 @@ cryptographic mechanisms used for:
 
 ### 1.2 Design Philosophy: Pure PQC
 
-ant-quic is a **greenfield network** with no legacy compatibility requirements.
+saorsa-transport is a **greenfield network** with no legacy compatibility requirements.
 This enables a pure PQC approach:
 
 | Principle | Implementation |
@@ -86,7 +86,7 @@ This enables a pure PQC approach:
 
 ### 2.1 PeerId: BLAKE3 Hash of ML-DSA-65 Public Key
 
-Each ant-quic node has a persistent identity based on a single ML-DSA-65 key pair.
+Each saorsa-transport node has a persistent identity based on a single ML-DSA-65 key pair.
 The PeerId is derived by hashing the ML-DSA-65 public key:
 
 ```
@@ -149,7 +149,7 @@ OID for ML-DSA-65: `2.16.840.1.101.3.4.3.17` (NIST assignment)
 
 ### 3.1 Algorithm Selection
 
-ant-quic uses **ML-KEM-768** exclusively for key exchange:
+saorsa-transport uses **ML-KEM-768** exclusively for key exchange:
 
 | Property | Value |
 |----------|-------|
@@ -200,7 +200,7 @@ Both derive session keys via TLS 1.3 key schedule using shared_secret
 
 ### 4.1 Algorithm Selection
 
-ant-quic uses **ML-DSA-65** exclusively for handshake authentication:
+saorsa-transport uses **ML-DSA-65** exclusively for handshake authentication:
 
 | Property | Value |
 |----------|-------|
@@ -242,7 +242,7 @@ messages up to that point.
 
 ### 5.1 Negotiation
 
-ant-quic advertises and accepts only pure PQC algorithms:
+saorsa-transport advertises and accepts only pure PQC algorithms:
 
 **Named Groups (key exchange):**
 ```
@@ -258,7 +258,7 @@ Rejected:  Ed25519, ECDSA, RSA, hybrid signatures
 
 ### 5.2 Certificate Type
 
-ant-quic uses RFC 7250 raw public keys:
+saorsa-transport uses RFC 7250 raw public keys:
 
 | Extension | Value |
 |-----------|-------|
@@ -417,7 +417,7 @@ rejected:
 
 ### 9.2 Migration Path
 
-Since ant-quic has not launched publicly, this is a clean break:
+Since saorsa-transport has not launched publicly, this is a clean break:
 
 1. Update cryptographic provider to pure PQC
 2. Regenerate node keys (single ML-DSA-65 key pair)
@@ -450,7 +450,7 @@ a pre-launch network.
 
 ## Appendix A: Reference Implementation
 
-The reference implementation is available in the ant-quic source code:
+The reference implementation is available in the saorsa-transport source code:
 
 - **Identity**: `src/crypto/identity.rs`
 - **ML-KEM**: `src/crypto/pqc/ml_kem.rs`

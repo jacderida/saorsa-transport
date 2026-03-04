@@ -390,7 +390,7 @@ pub fn register_rotation(
 /// label/context. This value is then signed and verified for binding.
 pub fn derive_exporter(conn: &Connection) -> Result<[u8; 32], TrustError> {
     let mut out = [0u8; 32];
-    let label = b"ant-quic/pq-binding/v1";
+    let label = b"saorsa-transport/pq-binding/v1";
     let context = b"binding";
     conn.export_keying_material(&mut out, label, context)
         .map_err(|_| TrustError::ChannelBinding("exporter"))?;
@@ -455,7 +455,7 @@ pub async fn perform_channel_binding(
 
     // Derive exporter bytes deterministically; size and label are fixed.
     let mut out = [0u8; 32];
-    let label = b"ant-quic exporter v1";
+    let label = b"saorsa-transport exporter v1";
     let context = b"binding";
     conn.export_keying_material(&mut out, label, context)
         .map_err(|_| TrustError::ChannelBinding("exporter"))?;

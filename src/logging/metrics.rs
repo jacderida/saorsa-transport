@@ -395,7 +395,7 @@ pub fn log_throughput_metrics(metrics: &ThroughputMetrics) {
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: tracing::Level::INFO,
-        target: "ant_quic::metrics::throughput".to_string(),
+        target: "saorsa_transport::metrics::throughput".to_string(),
         message: "throughput_metrics".to_string(),
         fields,
         span_id: None,
@@ -422,7 +422,7 @@ pub fn log_latency_metrics(metrics: &LatencyMetrics) {
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: tracing::Level::INFO,
-        target: "ant_quic::metrics::latency".to_string(),
+        target: "saorsa_transport::metrics::latency".to_string(),
         message: "latency_metrics".to_string(),
         fields,
         span_id: None,

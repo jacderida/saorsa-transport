@@ -20,7 +20,7 @@
 //! cargo run --release --example simple_transfer -- --client
 //! ```
 
-use ant_quic::{
+use saorsa_transport::{
     ClientConfig, Endpoint, EndpointConfig, ServerConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     high_level::default_runtime,
@@ -320,7 +320,7 @@ async fn run_client(server_addr: SocketAddr) -> anyhow::Result<()> {
 async fn main() -> anyhow::Result<()> {
     // Initialize logging
     tracing_subscriber::fmt()
-        .with_env_filter("simple_transfer=info,ant_quic=warn")
+        .with_env_filter("simple_transfer=info,saorsa_transport=warn")
         .init();
 
     let args: Vec<String> = std::env::args().collect();

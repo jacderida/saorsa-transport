@@ -5,7 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::nat_traversal_api::{
+use saorsa_transport::nat_traversal_api::{
     NatTraversalConfig, NatTraversalEndpoint, NatTraversalError, NatTraversalEvent,
 };
 use std::{

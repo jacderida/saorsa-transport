@@ -20,11 +20,11 @@ These require **external infrastructure** (STUN/TURN servers) that must be:
 - Geographically distributed
 - Trusted not to manipulate addresses
 
-### ant-quic's Scope
+### saorsa-transport's Scope
 
-ant-quic should be the **smallest useful substrate** that can reliably connect machines across the public Internet without central coordinators.
+saorsa-transport should be the **smallest useful substrate** that can reliably connect machines across the public Internet without central coordinators.
 
-**What ant-quic MUST provide**:
+**What saorsa-transport MUST provide**:
 - Stable endpoint identity (cryptographic) distinct from network locator
 - QUIC transport (streams + datagrams) with symmetric peer roles
 - QUIC NAT traversal and address discovery
@@ -32,7 +32,7 @@ ant-quic should be the **smallest useful substrate** that can reliably connect m
 - Greedy bootstrap cache with peer capabilities
 - Application protocol multiplexing
 
-**What ant-quic must NOT provide**:
+**What saorsa-transport must NOT provide**:
 - DHT semantics (replication, close-groups, pricing)
 - Naming, record formats, CRDTs
 - Overlay-specific admission rules

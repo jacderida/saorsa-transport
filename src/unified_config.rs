@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Configuration for ant-quic P2P endpoints
+//! Configuration for saorsa-transport P2P endpoints
 //!
 //! This module provides `P2pConfig` with builder pattern support for
 //! configuring endpoints, NAT traversal, MTU, PQC, and other settings.
@@ -13,7 +13,7 @@
 //! # v0.13.0 Symmetric P2P API
 //!
 //! ```rust,ignore
-//! use ant_quic::P2pConfig;
+//! use saorsa_transport::P2pConfig;
 //!
 //! // All nodes are symmetric - no client/server roles
 //! let config = P2pConfig::builder()
@@ -34,7 +34,7 @@ use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
 use crate::host_identity::HostIdentity;
 use crate::transport::{TransportAddr, TransportProvider, TransportRegistry};
 
-/// Configuration for ant-quic P2P endpoints
+/// Configuration for saorsa-transport P2P endpoints
 ///
 /// This struct provides all configuration options for P2P networking including
 /// NAT traversal, authentication, MTU settings, and post-quantum cryptography.
@@ -372,7 +372,7 @@ impl P2pConfigBuilder {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use ant_quic::P2pConfig;
+    /// use saorsa_transport::P2pConfig;
     /// use std::net::SocketAddr;
     ///
     /// // Backward compatible: SocketAddr auto-converts
@@ -381,7 +381,7 @@ impl P2pConfigBuilder {
     ///     .build()?;
     ///
     /// // Multi-transport: Explicit TransportAddr
-    /// use ant_quic::transport::TransportAddr;
+    /// use saorsa_transport::transport::TransportAddr;
     /// let config = P2pConfig::builder()
     ///     .bind_addr(TransportAddr::Udp("0.0.0.0:9000".parse().unwrap()))
     ///     .build()?;
@@ -403,7 +403,7 @@ impl P2pConfigBuilder {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use ant_quic::P2pConfig;
+    /// use saorsa_transport::P2pConfig;
     /// use std::net::SocketAddr;
     ///
     /// // Backward compatible: SocketAddr
@@ -413,7 +413,7 @@ impl P2pConfigBuilder {
     ///     .build()?;
     ///
     /// // Multi-transport: Mix UDP and BLE
-    /// use ant_quic::transport::TransportAddr;
+    /// use saorsa_transport::transport::TransportAddr;
     /// let config = P2pConfig::builder()
     ///     .known_peer(TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()))
     ///     .known_peer(TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None))
@@ -432,7 +432,7 @@ impl P2pConfigBuilder {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use ant_quic::P2pConfig;
+    /// use saorsa_transport::P2pConfig;
     /// use std::net::SocketAddr;
     ///
     /// // Backward compatible: Vec<SocketAddr>
@@ -446,7 +446,7 @@ impl P2pConfigBuilder {
     ///     .build()?;
     ///
     /// // Multi-transport: Mixed types
-    /// use ant_quic::transport::TransportAddr;
+    /// use saorsa_transport::transport::TransportAddr;
     /// let mixed_peers = vec![
     ///     TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()),
     ///     TransportAddr::ble([0x11, 0x22, 0x33, 0x44, 0x55, 0x66], None),
@@ -570,12 +570,12 @@ impl P2pConfigBuilder {
     ///
     /// # Example
     /// ```rust,ignore
-    /// use ant_quic::{P2pConfig, HostIdentity};
+    /// use saorsa_transport::{P2pConfig, HostIdentity};
     ///
     /// let host = HostIdentity::generate();
     /// let config = P2pConfig::builder()
     ///     .bind_addr("0.0.0.0:9000".parse()?)
-    ///     .with_host_identity(&host, b"my-network", "/var/lib/ant-quic")?
+    ///     .with_host_identity(&host, b"my-network", "/var/lib/saorsa-transport")?
     ///     .build()?;
     /// ```
     pub fn with_host_identity(
@@ -604,7 +604,7 @@ impl P2pConfigBuilder {
     ///
     /// # Example
     /// ```rust,ignore
-    /// use ant_quic::{P2pConfig, transport::UdpTransport};
+    /// use saorsa_transport::{P2pConfig, transport::UdpTransport};
     /// use std::sync::Arc;
     ///
     /// let udp = UdpTransport::bind("0.0.0.0:0".parse()?).await?;
@@ -627,7 +627,7 @@ impl P2pConfigBuilder {
     ///
     /// # Example
     /// ```rust,ignore
-    /// use ant_quic::{P2pConfig, transport::{TransportRegistry, UdpTransport}};
+    /// use saorsa_transport::{P2pConfig, transport::{TransportRegistry, UdpTransport}};
     /// use std::sync::Arc;
     ///
     /// let mut registry = TransportRegistry::new();

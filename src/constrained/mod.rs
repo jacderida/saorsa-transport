@@ -96,8 +96,8 @@
 //! # Example: Using with TransportAddr
 //!
 //! ```rust,ignore
-//! use ant_quic::constrained::{ConstrainedTransport, ConstrainedHandle};
-//! use ant_quic::transport::TransportAddr;
+//! use saorsa_transport::constrained::{ConstrainedTransport, ConstrainedHandle};
+//! use saorsa_transport::transport::TransportAddr;
 //!
 //! // Create transport for BLE
 //! let transport = ConstrainedTransport::for_ble();

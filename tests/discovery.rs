@@ -3,8 +3,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig};
-use ant_quic::{DiscoveryError, ValidatedCandidate};
+use saorsa_transport::candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig};
+use saorsa_transport::{DiscoveryError, ValidatedCandidate};
 use std::time::Duration;
 
 // Helper to run blocking discovery with a hard timeout so tests never hang

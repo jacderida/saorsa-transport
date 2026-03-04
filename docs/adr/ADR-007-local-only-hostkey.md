@@ -6,7 +6,7 @@ Accepted (2025-12-22)
 
 ## Context
 
-ant-quic is a global, decentralised connectivity substrate: PQC-by-default QUIC transport with NAT traversal (including IPv4/IPv6 dual-stack and MASQUE relay fallback), and a greedy bootstrap cache for rapid rejoin and improved reachability.
+saorsa-transport is a global, decentralised connectivity substrate: PQC-by-default QUIC transport with NAT traversal (including IPv4/IPv6 dual-stack and MASQUE relay fallback), and a greedy bootstrap cache for rapid rejoin and improved reachability.
 
 Current constraints and observations:
 
@@ -155,10 +155,10 @@ BootstrapCache::builder()
 ### CLI Commands
 
 ```
-ant-quic identity show     # Show EndpointId(s) without exposing HostKey
-ant-quic identity wipe     # Delete HostKey and cache, start fresh
-ant-quic cache stats       # Show cache health metrics
-ant-quic doctor            # Diagnostic mode
+saorsa-transport identity show     # Show EndpointId(s) without exposing HostKey
+saorsa-transport identity wipe     # Delete HostKey and cache, start fresh
+saorsa-transport cache stats       # Show cache health metrics
+saorsa-transport doctor            # Diagnostic mode
 ```
 
 ## References

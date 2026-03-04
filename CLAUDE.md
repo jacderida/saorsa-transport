@@ -6,17 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## ⚠️ CRITICAL: Repository Independence
 
-**ant-quic is NOT a fork of Quinn anymore - it's a completely independent project!**
+**saorsa-transport is NOT a fork of Quinn anymore - it's a completely independent project!**
 
 - **NEVER** create PRs to quinn-rs/quinn
 - **NEVER** push to any quinn-rs repositories
 - **NEVER** add quinn-rs/quinn as an upstream remote
-- This repository: github.com/dirvine/ant-quic (standalone project)
+- This repository: github.com/saorsa-labs/saorsa-transport (standalone project)
 - Although GitHub shows it as a fork (legacy), we DO NOT contribute back to Quinn
 
 ## Project Overview
 
-ant-quic is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks and the Autonomi ecosystem. It extends the proven Quinn QUIC implementation with sophisticated hole-punching protocols to achieve near 100% connectivity through restrictive NATs.
+saorsa-transport is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks and the Autonomi ecosystem. It extends the proven Quinn QUIC implementation with sophisticated hole-punching protocols to achieve near 100% connectivity through restrictive NATs.
 
 **v0.13.0+: Pure Symmetric P2P Architecture**
 - **One Node Type**: All nodes are identical - every node can connect AND accept connections
@@ -63,7 +63,7 @@ Subagents (via the `Task` tool) MUST be used whenever possible. They provide:
 ### Authentication: Pure PQC with Raw Public Keys (v0.2)
 
 We use **Pure Post-Quantum Cryptography** with raw public keys (inspired by RFC 7250):
-- **Reference**: `docs/rfcs/ant-quic-pqc-authentication.md` (our specification)
+- **Reference**: `docs/rfcs/saorsa-transport-pqc-authentication.md` (our specification)
 - **Identity**: ML-DSA-65 key pairs (PeerId = BLAKE3 hash → 32 bytes compact identifier)
 - **Key Exchange**: ML-KEM-768 (IANA 0x0201) - FIPS 203
 - **Signatures**: ML-DSA-65 (IANA 0x0901) - FIPS 204
@@ -75,7 +75,7 @@ Single ML-DSA-65 key pair for identity and auth. PeerId = BLAKE3(public_key) for
 
 ### Network: Dual-Stack IPv4 and IPv6 Support
 
-ant-quic supports **both IPv4 and IPv6** addresses:
+saorsa-transport supports **both IPv4 and IPv6** addresses:
 - Dual-stack socket binding when available
 - IPv4-mapped IPv6 addresses handled transparently
 - NAT traversal works across both IP versions
@@ -135,13 +135,13 @@ cargo fmt --all -- --check
 #### Main QUIC Binary
 ```bash
 # Run the QUIC P2P binary (v0.13.0+: all nodes are symmetric)
-cargo run --bin ant-quic -- --listen 0.0.0.0:9000
+cargo run --bin saorsa-transport -- --listen 0.0.0.0:9000
 
 # Connect to known peers (v0.13.0+: no "bootstrap" distinction)
-cargo run --bin ant-quic -- --connect quic.saorsalabs.com:9000
+cargo run --bin saorsa-transport -- --connect quic.saorsalabs.com:9000
 
 # Run with monitoring dashboard
-cargo run --bin ant-quic -- --dashboard --listen 0.0.0.0:9000
+cargo run --bin saorsa-transport -- --dashboard --listen 0.0.0.0:9000
 ```
 
 #### Examples
@@ -167,11 +167,11 @@ cargo nextest run --features "pqc aws-lc-rs"
 cargo build --features "pqc aws-lc-rs" --all-targets
 ```
 
-**Note:** WASM is not supported. ant-quic uses raw UDP sockets and NAT traversal which are incompatible with the browser sandbox environment.
+**Note:** WASM is not supported. saorsa-transport uses raw UDP sockets and NAT traversal which are incompatible with the browser sandbox environment.
 
 ## Architecture Overview
 
-ant-quic has a three-layer architecture:
+saorsa-transport has a three-layer architecture:
 
 ### Layer 1: Protocol Implementation (Low-Level)
 - **`src/endpoint.rs`**: Core QUIC endpoint (forked from Quinn)
@@ -182,10 +182,10 @@ ant-quic has a three-layer architecture:
 ### Layer 2: Integration APIs (High-Level)
 - **`src/nat_traversal_api.rs`**: `NatTraversalEndpoint` - High-level NAT traversal API with working poll() state machine
 - **`src/quic_node.rs`**: `QuicP2PNode` - Application-friendly P2P node wrapper
-- **`src/high_level/`**: Evolved fork of Quinn's async API (NOT external Quinn - this is ant-quic's own implementation)
+- **`src/high_level/`**: Evolved fork of Quinn's async API (NOT external Quinn - this is saorsa-transport's own implementation)
 
 ### Layer 3: Applications (Binaries)
-- **`src/bin/ant-quic.rs`**: Main QUIC P2P binary using `QuicP2PNode`
+- **`src/bin/saorsa-transport.rs`**: Main QUIC P2P binary using `QuicP2PNode`
 - **`examples/`**: Demo applications showing various use cases
 
 ### NAT Traversal Architecture
@@ -313,7 +313,7 @@ cargo nextest run --ignored stress
 - **Pure PQC Raw Public Keys** with BLAKE3(ML-DSA-65) PeerId + ML-DSA-65 auth (v0.2) - NO X.509 certificates
 - **Dual-stack IPv4/IPv6** support with transparent address handling
 - High-level APIs: `QuicP2PNode` and `NatTraversalEndpoint`
-- Production binary `ant-quic` with full QUIC implementation
+- Production binary `saorsa-transport` with full QUIC implementation
 - Comprehensive test suite (580+ tests)
 - Automatic connection to known peers on startup (v0.4.1+)
 - Peer authentication with ML-DSA-65 signatures
@@ -341,7 +341,7 @@ cargo nextest run --ignored stress
 - **Dual-stack networking**: Full IPv4 and IPv6 support with transparent handling
 - Address discovery via connected peers (per draft-ietf-quic-address-discovery-00)
 - Three-layer architecture: Protocol → Integration APIs → Applications
-- **IMPORTANT**: The `high_level` module is ant-quic's evolved fork of Quinn's async API, not an external dependency
+- **IMPORTANT**: The `high_level` module is saorsa-transport's evolved fork of Quinn's async API, not an external dependency
 - NAT traversal is fully functional through the `poll()` state machine in `nat_traversal_api.rs`
 
 ## Development Notes
@@ -358,16 +358,16 @@ cargo nextest run --ignored stress
 ### Logging
 ```bash
 # Enable verbose NAT traversal logging
-RUST_LOG=ant_quic::nat_traversal=debug cargo run --bin ant-quic
+RUST_LOG=saorsa_transport::nat_traversal=debug cargo run --bin saorsa-transport
 
 # Connection-level debugging
-RUST_LOG=ant_quic::connection=trace cargo nextest run --no-capture
+RUST_LOG=saorsa_transport::connection=trace cargo nextest run --no-capture
 
 # Full debugging
 RUST_LOG=debug cargo run --example nat_simulation
 
 # PQC-specific debugging
-RUST_LOG=ant_quic::crypto::pqc=debug cargo run --bin ant-quic
+RUST_LOG=saorsa_transport::crypto::pqc=debug cargo run --bin saorsa-transport
 ```
 
 ### Network Simulation
@@ -395,7 +395,7 @@ Use `examples/nat_simulation.rs` for testing different network topologies and NA
 - **QUIC Node**: `src/quic_node.rs` - P2P node implementation
 - **Connection Logic**: `src/connection_establishment.rs` - Connection orchestration
 - **PQC Implementation**: `src/crypto/pqc/` - Post-quantum crypto modules
-- **Binary**: `src/bin/ant-quic.rs` - Main executable with CLI
+- **Binary**: `src/bin/saorsa-transport.rs` - Main executable with CLI
 - **Config**: `Cargo.toml` - Feature flags, dependencies, build configuration
 
 ## Reference Specifications (docs/rfcs/ directory)
@@ -404,7 +404,7 @@ Local copies of all relevant specifications are in the `docs/rfcs/` directory:
 
 ### Core Protocol
 - `rfc9000.txt` - QUIC: A UDP-Based Multiplexed and Secure Transport
-- `ant-quic-pqc-authentication.md` - **Pure PQC Raw Public Keys** (v0.2 - our authentication method)
+- `saorsa-transport-pqc-authentication.md` - **Pure PQC Raw Public Keys** (v0.2 - our authentication method)
 
 ### NAT Traversal (Native QUIC - NO STUN/ICE)
 - `draft-seemann-quic-nat-traversal-02.txt` - **QUIC NAT Traversal** (primary specification)
@@ -433,7 +433,7 @@ This project maintains three AI assistant configuration files that should be kep
 Key shared information that must stay synchronized:
 - Repository independence (not a Quinn fork for contributions)
 - Native QUIC NAT traversal (NO STUN/ICE/TURN)
-- Pure PQC Raw Public Keys (v0.2 - see `docs/rfcs/ant-quic-pqc-authentication.md`)
+- Pure PQC Raw Public Keys (v0.2 - see `docs/rfcs/saorsa-transport-pqc-authentication.md`)
 - IPv4 and IPv6 dual-stack support
 - Development commands and code conventions
 - Architecture overview and key file locations
@@ -456,11 +456,11 @@ This includes:
 All P2P services use **dynamic port allocation** (bind to port 0). The OS assigns an available port automatically, preventing collisions between services.
 
 ```bash
-# Run ant-quic with dynamic port (recommended)
-cargo run --bin ant-quic -- --listen 0.0.0.0:0
+# Run saorsa-transport with dynamic port (recommended)
+cargo run --bin saorsa-transport -- --listen 0.0.0.0:0
 
-# Or with ant-quic-test
-cargo run --bin ant-quic-test -- --registry https://saorsa-1.saorsalabs.com
+# Or with saorsa-transport-test
+cargo run --bin saorsa-transport-test -- --registry https://saorsa-1.saorsalabs.com
 ```
 
 ### Bootstrap Discovery
@@ -474,5 +474,5 @@ Bootstrap nodes use dynamic ports. New nodes discover bootstrap addresses via:
 
 When managing VPS nodes:
 - Services register with the registry after binding to their dynamic port
-- Use service names (e.g., `systemctl restart ant-quic-test`) not port-based targeting
+- Use service names (e.g., `systemctl restart saorsa-transport-test`) not port-based targeting
 - The registry API provides current addresses of all active nodes

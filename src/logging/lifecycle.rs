@@ -123,7 +123,7 @@ impl ConnectionLifecycle {
         logger().log_event(LogEvent {
             timestamp: Instant::now(),
             level,
-            target: "ant_quic::connection::lifecycle".to_string(),
+            target: "saorsa_transport::connection::lifecycle".to_string(),
             message: "connection_state_changed".to_string(),
             fields,
             span_id: None,
@@ -206,7 +206,7 @@ impl ConnectionLifecycle {
         logger().log_event(LogEvent {
             timestamp: Instant::now(),
             level: tracing::Level::INFO,
-            target: "ant_quic::connection::lifecycle".to_string(),
+            target: "saorsa_transport::connection::lifecycle".to_string(),
             message: "connection_summary".to_string(),
             fields,
             span_id: None,
@@ -221,7 +221,7 @@ pub fn log_connection_initiated(
     remote_addr: std::net::SocketAddr,
 ) {
     info!(
-        target: "ant_quic::connection::lifecycle",
+        target: "saorsa_transport::connection::lifecycle",
         conn_id = ?conn_id,
         role = ?role,
         remote_addr = %remote_addr,
@@ -232,7 +232,7 @@ pub fn log_connection_initiated(
 /// Log when a handshake process starts for a connection
 pub fn log_handshake_started(conn_id: &ConnectionId) {
     debug!(
-        target: "ant_quic::connection::lifecycle",
+        target: "saorsa_transport::connection::lifecycle",
         conn_id = ?conn_id,
         "Handshake started"
     );
@@ -241,7 +241,7 @@ pub fn log_handshake_started(conn_id: &ConnectionId) {
 /// Log successful handshake completion and its duration
 pub fn log_handshake_completed(conn_id: &ConnectionId, duration: Duration) {
     info!(
-        target: "ant_quic::connection::lifecycle",
+        target: "saorsa_transport::connection::lifecycle",
         conn_id = ?conn_id,
         duration_ms = duration.as_millis(),
         "Handshake completed"
@@ -251,7 +251,7 @@ pub fn log_handshake_completed(conn_id: &ConnectionId, duration: Duration) {
 /// Log connection established event including QUIC version info
 pub fn log_connection_established(conn_id: &ConnectionId, negotiated_version: u32) {
     info!(
-        target: "ant_quic::connection::lifecycle",
+        target: "saorsa_transport::connection::lifecycle",
         conn_id = ?conn_id,
         negotiated_version = format!("0x{:08x}", negotiated_version),
         "Connection established"
@@ -261,7 +261,7 @@ pub fn log_connection_established(conn_id: &ConnectionId, negotiated_version: u3
 /// Log a connection migration from one path to another
 pub fn log_connection_migration(conn_id: &ConnectionId, old_path: &str, new_path: &str) {
     info!(
-        target: "ant_quic::connection::lifecycle",
+        target: "saorsa_transport::connection::lifecycle",
         conn_id = ?conn_id,
         old_path = old_path,
         new_path = new_path,
@@ -282,7 +282,7 @@ pub fn log_connection_closed(conn_id: &ConnectionId, reason: &str, error_code: O
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: tracing::Level::DEBUG,
-        target: "ant_quic::connection::lifecycle".to_string(),
+        target: "saorsa_transport::connection::lifecycle".to_string(),
         message: "connection_closed".to_string(),
         fields,
         span_id: None,
@@ -292,7 +292,7 @@ pub fn log_connection_closed(conn_id: &ConnectionId, reason: &str, error_code: O
 /// Log a connection lost event caused by unexpected conditions
 pub fn log_connection_lost(conn_id: &ConnectionId, reason: &str) {
     warn!(
-        target: "ant_quic::connection::lifecycle",
+        target: "saorsa_transport::connection::lifecycle",
         conn_id = ?conn_id,
         reason = reason,
         "Connection lost"

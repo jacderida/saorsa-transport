@@ -5,9 +5,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::VarInt;
-use ant_quic::coding::BufExt;
 use bytes::{Buf, BufMut, BytesMut};
+use saorsa_transport::VarInt;
+use saorsa_transport::coding::BufExt;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
 // Frame type constants from the RFC

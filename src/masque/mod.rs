@@ -47,8 +47,8 @@
 //! # Example
 //!
 //! ```rust
-//! use ant_quic::masque::{ContextManager, CompressionAssign, CompressedDatagram};
-//! use ant_quic::VarInt;
+//! use saorsa_transport::masque::{ContextManager, CompressionAssign, CompressedDatagram};
+//! use saorsa_transport::VarInt;
 //! use bytes::Bytes;
 //! use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 //!

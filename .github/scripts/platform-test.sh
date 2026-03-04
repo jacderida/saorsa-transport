@@ -1,5 +1,5 @@
 #!/bin/bash
-# Platform-specific test runner for ant-quic
+# Platform-specific test runner for saorsa-transport
 # Handles platform-specific test requirements and configurations
 
 set -e
@@ -33,11 +33,11 @@ setup_platform_env() {
             fi
             
             # Set Linux-specific test flags
-            export ANT_QUIC_TEST_LINUX=1
+            export SAORSA_TRANSPORT_TEST_LINUX=1
             
             # Check for network namespaces support (for advanced NAT tests)
             if command -v ip &> /dev/null && [ "$EUID" -eq 0 ]; then
-                export ANT_QUIC_TEST_NETNS=1
+                export SAORSA_TRANSPORT_TEST_NETNS=1
                 echo "Network namespace tests enabled"
             fi
             ;;
@@ -45,7 +45,7 @@ setup_platform_env() {
         darwin)
             echo "Setting up macOS environment..."
             # macOS-specific setup
-            export ANT_QUIC_TEST_MACOS=1
+            export SAORSA_TRANSPORT_TEST_MACOS=1
             
             # Check for macOS version
             sw_vers
@@ -53,13 +53,13 @@ setup_platform_env() {
             # Handle different architectures
             if [[ "$ARCH" == "arm64" ]]; then
                 echo "Running on Apple Silicon"
-                export ANT_QUIC_TEST_APPLE_SILICON=1
+                export SAORSA_TRANSPORT_TEST_APPLE_SILICON=1
             fi
             ;;
             
         mingw*|msys*|cygwin*|windows*)
             echo "Setting up Windows environment..."
-            export ANT_QUIC_TEST_WINDOWS=1
+            export SAORSA_TRANSPORT_TEST_WINDOWS=1
             
             # Windows-specific network setup
             echo "Windows Firewall status:"
@@ -239,11 +239,11 @@ generate_platform_report() {
     "performance": true
   },
   "environment": {
-    "ANT_QUIC_TEST_LINUX": "${ANT_QUIC_TEST_LINUX:-0}",
-    "ANT_QUIC_TEST_MACOS": "${ANT_QUIC_TEST_MACOS:-0}",
-    "ANT_QUIC_TEST_WINDOWS": "${ANT_QUIC_TEST_WINDOWS:-0}",
-    "ANT_QUIC_TEST_NETNS": "${ANT_QUIC_TEST_NETNS:-0}",
-    "ANT_QUIC_TEST_APPLE_SILICON": "${ANT_QUIC_TEST_APPLE_SILICON:-0}"
+    "SAORSA_TRANSPORT_TEST_LINUX": "${SAORSA_TRANSPORT_TEST_LINUX:-0}",
+    "SAORSA_TRANSPORT_TEST_MACOS": "${SAORSA_TRANSPORT_TEST_MACOS:-0}",
+    "SAORSA_TRANSPORT_TEST_WINDOWS": "${SAORSA_TRANSPORT_TEST_WINDOWS:-0}",
+    "SAORSA_TRANSPORT_TEST_NETNS": "${SAORSA_TRANSPORT_TEST_NETNS:-0}",
+    "SAORSA_TRANSPORT_TEST_APPLE_SILICON": "${SAORSA_TRANSPORT_TEST_APPLE_SILICON:-0}"
   }
 }
 EOF

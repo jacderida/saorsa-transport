@@ -6,7 +6,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::crypto::pqc::{
+use saorsa_transport::crypto::pqc::{
     PqcConfigBuilder,
     types::{PqcError, PqcResult},
 };

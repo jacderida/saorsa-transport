@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Testnet monitoring script for ant-quic
+# Testnet monitoring script for saorsa-transport
 NODES=(
   "162.243.167.201"  # bootstrap
   "159.65.221.230"
@@ -40,19 +40,19 @@ while [ $ITERATION -lt $ITERATIONS ]; do
     fi
 
     # Check 1: Process running
-    PROCESS_STATUS=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$NODE "pgrep -f ant-quic" 2>&1)
+    PROCESS_STATUS=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$NODE "pgrep -f saorsa-transport" 2>&1)
 
     if [ $? -eq 0 ] && [ ! -z "$PROCESS_STATUS" ]; then
       PIDS=$(echo "$PROCESS_STATUS" | wc -l)
-      echo "  ✓ $NODE_LABEL: ant-quic running ($PIDS process(es))"
+      echo "  ✓ $NODE_LABEL: saorsa-transport running ($PIDS process(es))"
     else
-      ERROR_MSG="✗ $NODE_LABEL: ant-quic NOT RUNNING"
+      ERROR_MSG="✗ $NODE_LABEL: saorsa-transport NOT RUNNING"
       echo "  $ERROR_MSG"
       ISSUES+=("$TIMESTAMP - $ERROR_MSG")
     fi
 
     # Check 2: Errors in logs
-    ERROR_LOG=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$NODE "tail -5 /var/log/ant-quic.log 2>/dev/null | grep -i error" 2>&1)
+    ERROR_LOG=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$NODE "tail -5 /var/log/saorsa-transport.log 2>/dev/null | grep -i error" 2>&1)
 
     if [ ! -z "$ERROR_LOG" ]; then
       ERROR_MSG="✗ $NODE_LABEL: Found errors in logs"
@@ -65,7 +65,7 @@ while [ $ITERATION -lt $ITERATIONS ]; do
   # Check 3: Bootstrap connections
   if [ $ITERATION -eq 1 ] || [ $((ITERATION % 5)) -eq 0 ]; then
     echo "  Checking bootstrap connections..."
-    CONNECTIONS=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$BOOTSTRAP "tail -20 /var/log/ant-quic.log 2>/dev/null | grep 'Active connections' | tail -1" 2>&1)
+    CONNECTIONS=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$BOOTSTRAP "tail -20 /var/log/saorsa-transport.log 2>/dev/null | grep 'Active connections' | tail -1" 2>&1)
 
     if [ ! -z "$CONNECTIONS" ]; then
       echo "    $CONNECTIONS"

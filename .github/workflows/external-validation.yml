@@ -64,7 +64,7 @@ jobs:
       - name: Build validation tool
         run: |
           cargo build --release --bin test-public-endpoints
-          cargo build --release --bin ant-quic
+          cargo build --release --bin saorsa-transport
 
       - name: Run endpoint validation
         id: validate

@@ -4,7 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     config::{ClientConfig, ServerConfig},
     crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey},
     crypto::raw_public_keys::pqc::{create_subject_public_key_info, generate_ml_dsa_keypair},
@@ -34,7 +34,7 @@ fn spki_from_pk(pk: &MlDsaPublicKey) -> Vec<u8> {
     create_subject_public_key_info(pk).expect("SPKI creation")
 }
 
-async fn loopback_pair() -> (ant_quic::Connection, ant_quic::Connection) {
+async fn loopback_pair() -> (saorsa_transport::Connection, saorsa_transport::Connection) {
     let (chain, key) = gen_self_signed_cert();
     let server_cfg = ServerConfig::with_single_cert(chain.clone(), key).expect("server cfg");
     let server = Endpoint::server(server_cfg, ([127, 0, 0, 1], 0).into()).expect("server ep");
@@ -144,7 +144,7 @@ async fn binding_reject_on_key_mismatch() {
         .expect("send ok");
     let err = recv_task.await.unwrap().expect_err("should reject");
     match err {
-        ant_quic::trust::TrustError::ChannelBinding(_) | ant_quic::trust::TrustError::NotPinned => {
+        saorsa_transport::trust::TrustError::ChannelBinding(_) | saorsa_transport::trust::TrustError::NotPinned => {
         }
         _ => panic!("unexpected err"),
     }

@@ -2,7 +2,7 @@
 // Licensed under GPL v3. See LICENSE-GPL.
 
 // v0.2: AuthConfig removed - TLS handles peer authentication via ML-DSA-65
-use ant_quic::{P2pConfig, P2pEndpoint, P2pEvent};
+use saorsa_transport::{P2pConfig, P2pEndpoint, P2pEvent};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
@@ -18,13 +18,13 @@ async fn test_external_address_discovery() -> anyhow::Result<()> {
     println!("Initializing observer node...");
     let observer_config = P2pConfig::builder()
         .bind_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-        .nat(ant_quic::NatConfig {
+        .nat(saorsa_transport::NatConfig {
             enable_relay_fallback: false,
             ..Default::default()
         })
         // v0.2: Authentication handled by TLS via ML-DSA-65 - no separate config needed
         // v0.13.0+: PQC is always on
-        .pqc(ant_quic::PqcConfig::default())
+        .pqc(saorsa_transport::PqcConfig::default())
         .build()?;
 
     let observer_node = P2pEndpoint::new(observer_config).await?;
@@ -49,7 +49,7 @@ async fn test_external_address_discovery() -> anyhow::Result<()> {
         .known_peers(vec![observer_addr])
         // v0.2: Authentication handled by TLS via ML-DSA-65 - no separate config needed
         // v0.13.0+: PQC is always on
-        .pqc(ant_quic::PqcConfig::default())
+        .pqc(saorsa_transport::PqcConfig::default())
         .build()?;
 
     let client_node = P2pEndpoint::new(client_config).await?;
@@ -62,7 +62,7 @@ async fn test_external_address_discovery() -> anyhow::Result<()> {
         tokio::spawn(async move { client_node.connect_known_peers().await })
     };
 
-    let mut discovered_addr: Option<ant_quic::transport::TransportAddr> = None;
+    let mut discovered_addr: Option<saorsa_transport::transport::TransportAddr> = None;
     let mut events = client_node.subscribe();
     println!("Waiting for external address discovery...");
 
@@ -75,7 +75,7 @@ async fn test_external_address_discovery() -> anyhow::Result<()> {
     while start.elapsed() < timeout {
         if let Some(addr) = client_node.external_addr() {
             println!("Successfully discovered external address: {}", addr);
-            discovered_addr = Some(ant_quic::transport::TransportAddr::Udp(addr));
+            discovered_addr = Some(saorsa_transport::transport::TransportAddr::Udp(addr));
             break;
         }
 

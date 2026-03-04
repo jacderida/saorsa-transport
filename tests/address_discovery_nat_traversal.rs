@@ -16,7 +16,7 @@ use tracing::{debug, info};
 async fn test_address_discovery_improves_nat_traversal() {
     // Setup logging for debugging
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting address discovery NAT traversal test");
@@ -49,7 +49,7 @@ async fn test_address_discovery_improves_nat_traversal() {
 #[tokio::test]
 async fn test_multiple_address_discovery_sources() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Testing multiple address discovery sources");
@@ -88,7 +88,7 @@ async fn test_multiple_address_discovery_sources() {
 #[tokio::test]
 async fn test_symmetric_nat_address_discovery() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Testing symmetric NAT scenario");
@@ -136,7 +136,7 @@ async fn test_symmetric_nat_address_discovery() {
 #[tokio::test]
 async fn test_address_discovery_performance() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=info")
+        .with_env_filter("saorsa_transport=info")
         .try_init();
 
     info!("Testing address discovery performance impact");
@@ -175,7 +175,7 @@ async fn test_address_discovery_performance() {
 #[tokio::test]
 async fn test_connection_success_improvement() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=info")
+        .with_env_filter("saorsa_transport=info")
         .try_init();
 
     info!("Testing connection success rate improvement");
@@ -227,7 +227,7 @@ async fn test_connection_success_improvement() {
 #[tokio::test]
 async fn test_full_nat_traversal_with_discovery() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Testing full NAT traversal flow with address discovery");
@@ -269,7 +269,7 @@ async fn test_full_nat_traversal_with_discovery() {
 #[tokio::test]
 async fn test_address_discovery_edge_cases() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Testing address discovery edge cases");

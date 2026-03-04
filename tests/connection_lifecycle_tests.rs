@@ -7,7 +7,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{NatConfig, P2pConfig, P2pEndpoint, PqcConfig, transport::TransportAddr};
+use saorsa_transport::{NatConfig, P2pConfig, P2pEndpoint, PqcConfig, transport::TransportAddr};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::Duration,

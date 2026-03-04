@@ -41,7 +41,7 @@ pub mod raw_public_keys;
 pub mod pqc;
 
 // NOTE: The following modules were removed because they were written as external
-// integrations with Quinn, but ant-quic IS a fork of Quinn, not something that
+// integrations with Quinn, but saorsa-transport IS a fork of Quinn, not something that
 // integrates with it. These need to be rewritten as part of the Quinn implementation
 // if their functionality is needed.
 

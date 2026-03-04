@@ -78,7 +78,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
           flags: unittests
-          name: ant-quic-coverage-${{ matrix.os }}
+          name: saorsa-transport-coverage-${{ matrix.os }}
           fail_ci_if_error: false
 
       - name: Upload coverage report

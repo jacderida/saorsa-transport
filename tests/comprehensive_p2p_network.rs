@@ -13,7 +13,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{NatConfig, P2pConfig, P2pEndpoint, P2pEvent, PqcConfig};
+use saorsa_transport::{NatConfig, P2pConfig, P2pEndpoint, P2pEvent, PqcConfig};
 // v0.2: AuthConfig removed - TLS handles peer authentication via ML-DSA-65
 use proptest::prelude::*;
 use std::collections::HashSet;
@@ -461,7 +461,7 @@ mod data_transfer_tests {
 
 mod raw_public_key_tests {
     use super::*;
-    use ant_quic::crypto::raw_public_keys::key_utils;
+    use saorsa_transport::crypto::raw_public_keys::key_utils;
 
     /// v0.2.0+: Pure PQC - ML-DSA-65 key sizes
     const ML_DSA_65_PUBLIC_KEY_SIZE: usize = 1952;
@@ -881,7 +881,7 @@ mod proptest_tests {
         /// Test that keypairs are always unique (ML-DSA-65)
         #[test]
         fn test_keypair_uniqueness(_seed in 0u64..1000u64) {
-            use ant_quic::crypto::raw_public_keys::key_utils;
+            use saorsa_transport::crypto::raw_public_keys::key_utils;
 
             let (pk1, _) = key_utils::generate_keypair().expect("keygen1");
             let (pk2, _) = key_utils::generate_keypair().expect("keygen2");
@@ -893,7 +893,7 @@ mod proptest_tests {
         /// Test public key fingerprint derivation is deterministic (ML-DSA-65)
         #[test]
         fn test_fingerprint_deterministic(_seed in 0u64..100u64) {
-            use ant_quic::crypto::raw_public_keys::key_utils;
+            use saorsa_transport::crypto::raw_public_keys::key_utils;
 
             let (public_key, _) = key_utils::generate_keypair().expect("keygen");
 
@@ -913,7 +913,7 @@ mod proptest_tests {
             _ml_dsa in any::<bool>(),
             pool_size in 1usize..200usize,
         ) {
-            use ant_quic::PqcConfig;
+            use saorsa_transport::PqcConfig;
 
             let result = PqcConfig::builder()
                 .ml_kem(_ml_kem)
@@ -1144,7 +1144,7 @@ mod channel_recv_and_shutdown_tests {
         // Shutdown both endpoints and assert bounded completion.
         // The budget is SHUTDOWN_DRAIN_TIMEOUT (used internally) plus a 2s buffer
         // for task join overhead.
-        let budget = ant_quic::SHUTDOWN_DRAIN_TIMEOUT + Duration::from_secs(2);
+        let budget = saorsa_transport::SHUTDOWN_DRAIN_TIMEOUT + Duration::from_secs(2);
 
         let start = tokio::time::Instant::now();
         let shutdown_result = timeout(budget, async {

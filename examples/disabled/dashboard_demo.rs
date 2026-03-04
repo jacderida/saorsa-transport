@@ -1,9 +1,9 @@
-//! Dashboard demonstration example for ant-quic
+//! Dashboard demonstration example for saorsa-transport
 //!
 //! This example shows how to use the statistics dashboard to monitor
 //! connection health and NAT traversal performance.
 
-use ant_quic::{
+use saorsa_transport::{
     nat_traversal_api::NatTraversalStatistics,
     quic_node::NodeStats,
     stats_dashboard::{DashboardConfig, StatsDashboard},

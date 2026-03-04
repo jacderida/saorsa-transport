@@ -92,7 +92,7 @@ impl TransportConfig {
     ///
     /// ```
     /// # use std::{convert::TryInto, time::Duration};
-    /// # use ant_quic::{TransportConfig, VarInt, VarIntBoundsExceeded};
+    /// # use saorsa_transport::{TransportConfig, VarInt, VarIntBoundsExceeded};
     /// # fn main() -> Result<(), VarIntBoundsExceeded> {
     /// let mut config = TransportConfig::default();
     ///
@@ -323,7 +323,7 @@ impl TransportConfig {
     /// # Example
     /// ```
     /// # use std::sync::Arc;
-    /// use ant_quic::config::TransportConfig;
+    /// use saorsa_transport::config::TransportConfig;
     ///
     /// let mut config = TransportConfig::default();
     /// // The default uses CubicConfig, but custom implementations can be provided
@@ -774,8 +774,8 @@ impl Default for MtuDiscoveryConfig {
 ///
 /// ```
 /// # use std::{convert::TryFrom, time::Duration};
-/// use ant_quic::config::IdleTimeout;
-/// use ant_quic::{VarIntBoundsExceeded, VarInt};
+/// use saorsa_transport::config::IdleTimeout;
+/// use saorsa_transport::{VarIntBoundsExceeded, VarInt};
 /// # fn main() -> Result<(), VarIntBoundsExceeded> {
 /// // A `VarInt`-encoded value in milliseconds
 /// let timeout = IdleTimeout::from(VarInt::from_u32(10_000));

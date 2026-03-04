@@ -13,8 +13,8 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use ant_quic::{P2pConfig, P2pLinkTransport};
-//! use ant_quic::link_transport::{LinkTransport, ProtocolId};
+//! use saorsa_transport::{P2pConfig, P2pLinkTransport};
+//! use saorsa_transport::link_transport::{LinkTransport, ProtocolId};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -441,7 +441,7 @@ impl Default for LinkTransportState {
 /// A [`LinkTransport`] implementation wrapping [`P2pEndpoint`].
 ///
 /// This provides a stable abstraction layer for overlay networks to use,
-/// decoupling them from specific ant-quic versions.
+/// decoupling them from specific saorsa-transport versions.
 pub struct P2pLinkTransport {
     /// The underlying P2pEndpoint.
     endpoint: Arc<P2pEndpoint>,
@@ -806,7 +806,7 @@ use crate::link_transport::BoxedHandler;
 /// # Example
 ///
 /// ```rust,ignore
-/// use ant_quic::{SharedTransport, P2pLinkTransport, ProtocolHandler, StreamType};
+/// use saorsa_transport::{SharedTransport, P2pLinkTransport, ProtocolHandler, StreamType};
 ///
 /// let quic_transport = P2pLinkTransport::new(config).await?;
 /// let transport = SharedTransport::new(quic_transport);
@@ -1368,9 +1368,9 @@ mod tests {
 
     #[test]
     fn test_protocol_id_constants() {
-        assert_eq!(ProtocolId::DEFAULT.to_string(), "ant-quic/default");
-        assert_eq!(ProtocolId::NAT_TRAVERSAL.to_string(), "ant-quic/nat");
-        assert_eq!(ProtocolId::RELAY.to_string(), "ant-quic/relay");
+        assert_eq!(ProtocolId::DEFAULT.to_string(), "saorsa/default");
+        assert_eq!(ProtocolId::NAT_TRAVERSAL.to_string(), "saorsa/nat");
+        assert_eq!(ProtocolId::RELAY.to_string(), "saorsa/relay");
     }
 
     #[test]

@@ -11,7 +11,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::crypto::pqc::{
+use saorsa_transport::crypto::pqc::{
     PqcConfig, create_crypto_provider, is_pqc_group, validate_negotiated_group,
 };
 
@@ -130,7 +130,7 @@ fn test_provider_only_has_pqc_groups() {
 /// Test configured_provider_with_pqc function
 #[test]
 fn test_configured_provider_with_pqc() {
-    use ant_quic::crypto::rustls::configured_provider_with_pqc;
+    use saorsa_transport::crypto::rustls::configured_provider_with_pqc;
 
     // Without config, should return default provider with PQC support
     let provider = configured_provider_with_pqc(None);
@@ -156,7 +156,7 @@ fn test_configured_provider_with_pqc() {
 /// Test validate_pqc_connection function (v0.2: ML-KEM required)
 #[test]
 fn test_validate_pqc_connection() {
-    use ant_quic::crypto::rustls::validate_pqc_connection;
+    use saorsa_transport::crypto::rustls::validate_pqc_connection;
 
     // Classical groups without ML-KEM should be rejected
     let result = validate_pqc_connection(rustls::NamedGroup::X25519);

@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::from_default_env()
-                .add_directive("ant_quic=debug".parse()?)
+                .add_directive("saorsa_transport=debug".parse()?)
                 .add_directive("interop_test=info".parse()?),
         )
         .with_target(false)
@@ -156,7 +156,7 @@ async fn test_endpoint(
     endpoint_str: &str,
     timeout_secs: u64,
 ) -> Result<std::time::Duration, Box<dyn std::error::Error>> {
-    use ant_quic::high_level::Endpoint;
+    use saorsa_transport::high_level::Endpoint;
     use std::sync::Arc;
     use std::time::Instant;
 
@@ -165,23 +165,29 @@ async fn test_endpoint(
 
     // Create client endpoint
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
-    let runtime = ant_quic::high_level::default_runtime()
+    let runtime = saorsa_transport::high_level::default_runtime()
         .ok_or_else(|| std::io::Error::other("No compatible async runtime found"))?;
-    let endpoint = Endpoint::new(ant_quic::EndpointConfig::default(), None, socket, runtime)?;
+    let endpoint = Endpoint::new(
+        saorsa_transport::EndpointConfig::default(),
+        None,
+        socket,
+        runtime,
+    )?;
 
     // Create client config
     #[cfg(feature = "platform-verifier")]
-    let client_config = ant_quic::ClientConfig::try_with_platform_verifier().unwrap_or_else(|_| {
-        // Fallback to empty roots if platform verifier not available
-        let roots = rustls::RootCertStore::empty();
-        let crypto = rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        #[allow(clippy::unwrap_used)]
-        ant_quic::ClientConfig::new(Arc::new(
-            ant_quic::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap(),
-        ))
-    });
+    let client_config = saorsa_transport::ClientConfig::try_with_platform_verifier()
+        .unwrap_or_else(|_| {
+            // Fallback to empty roots if platform verifier not available
+            let roots = rustls::RootCertStore::empty();
+            let crypto = rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            #[allow(clippy::unwrap_used)]
+            saorsa_transport::ClientConfig::new(Arc::new(
+                saorsa_transport::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap(),
+            ))
+        });
 
     #[cfg(not(feature = "platform-verifier"))]
     let client_config = {
@@ -190,8 +196,8 @@ async fn test_endpoint(
         let crypto = rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_no_client_auth();
-        ant_quic::ClientConfig::new(Arc::new(
-            ant_quic::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap(),
+        saorsa_transport::ClientConfig::new(Arc::new(
+            saorsa_transport::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap(),
         ))
     };
 

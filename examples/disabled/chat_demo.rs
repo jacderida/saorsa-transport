@@ -3,7 +3,7 @@
 //! This example demonstrates the chat protocol implementation
 //! with NAT traversal support.
 
-use ant_quic::{
+use saorsa_transport::{
     auth::AuthConfig,
     chat::{ChatMessage, PeerInfo},
     crypto::raw_public_keys::key_utils::{
@@ -62,7 +62,7 @@ impl ChatNode {
     ) -> Result<PeerId, Box<dyn std::error::Error + Send + Sync>> {
         info!("Connecting to bootstrap node at {}", bootstrap_addr);
 
-        // Use the same logic as the ant-quic binary
+        // Use the same logic as the saorsa-transport binary
         let bootstrap_peer_id = self
             .node
             .connect_to_bootstrap(bootstrap_addr)
@@ -214,7 +214,7 @@ impl ChatNode {
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Initialize logging
     tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=info,chat_demo=info")
+        .with_env_filter("saorsa_transport=info,chat_demo=info")
         .init();
 
     // Parse command line arguments

@@ -53,7 +53,7 @@ def generate_dashboard_html(history: Dict[str, List[Tuple[str, float]]]) -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ant-quic Performance Dashboard</title>
+    <title>saorsa-transport Performance Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {{
@@ -120,7 +120,7 @@ def generate_dashboard_html(history: Dict[str, List[Tuple[str, float]]]) -> str:
 </head>
 <body>
     <div class="container">
-        <h1>🚀 ant-quic Performance Dashboard</h1>
+        <h1>🚀 saorsa-transport Performance Dashboard</h1>
         <div class="updated">Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
         
         <div class="summary">

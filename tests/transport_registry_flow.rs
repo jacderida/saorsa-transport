@@ -15,11 +15,11 @@
 
 // TransportRegistry is used indirectly via build_transport_registry() return type
 #[allow(unused_imports)]
-use ant_quic::transport::{
+use saorsa_transport::transport::{
     InboundDatagram, TransportAddr, TransportProvider, TransportRegistry, TransportStats,
     TransportType, UdpTransport,
 };
-use ant_quic::{Node, NodeConfig};
+use saorsa_transport::{Node, NodeConfig};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -176,7 +176,7 @@ async fn test_default_config_empty_registry() {
 ///    (verified via to_nat_config() returning transport_registry: Some(...))
 #[tokio::test]
 async fn test_transport_registry_flows_to_nat_traversal_endpoint() {
-    use ant_quic::unified_config::P2pConfig;
+    use saorsa_transport::unified_config::P2pConfig;
 
     // Create a registry with a provider
     let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
@@ -204,7 +204,7 @@ async fn test_transport_registry_flows_to_nat_traversal_endpoint() {
     // This is the key Phase 1.2 wiring - P2pConfig must include transport_registry
     // when converting to NatTraversalConfig for NatTraversalEndpoint creation
     let p2p_config = P2pConfig::builder()
-        .transport_registry(ant_quic::transport::TransportRegistry::new())
+        .transport_registry(saorsa_transport::transport::TransportRegistry::new())
         .build()
         .expect("P2pConfig build should succeed");
     let nat_config = p2p_config.to_nat_config();
@@ -238,7 +238,7 @@ async fn test_transport_registry_flows_to_nat_traversal_endpoint() {
 /// - System gracefully handles transport failures
 #[tokio::test]
 async fn test_multi_transport_concurrent_io() {
-    use ant_quic::transport::ProviderError;
+    use saorsa_transport::transport::ProviderError;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::Duration;
 
@@ -246,7 +246,7 @@ async fn test_multi_transport_concurrent_io() {
     #[allow(dead_code)]
     struct MockBleTransport {
         name: String,
-        capabilities: ant_quic::transport::TransportCapabilities,
+        capabilities: saorsa_transport::transport::TransportCapabilities,
         online: AtomicBool,
         local_addr: TransportAddr,
         bytes_sent: AtomicU64,
@@ -259,7 +259,7 @@ async fn test_multi_transport_concurrent_io() {
             let (tx, rx) = mpsc::channel(16);
             let transport = Self {
                 name: "MockBLE".to_string(),
-                capabilities: ant_quic::transport::TransportCapabilities::ble(),
+                capabilities: saorsa_transport::transport::TransportCapabilities::ble(),
                 online: AtomicBool::new(true),
                 local_addr: TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], None),
                 bytes_sent: AtomicU64::new(0),
@@ -280,7 +280,7 @@ async fn test_multi_transport_concurrent_io() {
             TransportType::Ble
         }
 
-        fn capabilities(&self) -> &ant_quic::transport::TransportCapabilities {
+        fn capabilities(&self) -> &saorsa_transport::transport::TransportCapabilities {
             &self.capabilities
         }
 

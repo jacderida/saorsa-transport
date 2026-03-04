@@ -5,7 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     ClientConfig, Endpoint, ServerConfig, TransportConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
@@ -89,7 +89,7 @@ fn create_test_endpoints() -> (Endpoint, Endpoint) {
 async fn test_basic_address_discovery_flow() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting basic address discovery flow test");
@@ -112,7 +112,7 @@ async fn test_basic_address_discovery_flow() {
                 // Server should observe client's address and may send OBSERVED_ADDRESS frames
                 tokio::time::sleep(Duration::from_millis(100)).await;
 
-                // In ant-quic, address discovery happens automatically
+                // In saorsa-transport, address discovery happens automatically
                 // Stats tracking would need to be implemented at the connection level
                 info!("Server accepted connection, address discovery is active");
 
@@ -155,7 +155,7 @@ async fn test_basic_address_discovery_flow() {
     // Verify server connection
     let _server_conn = server_handle.await.unwrap();
 
-    // Address discovery is enabled by default in ant-quic
+    // Address discovery is enabled by default in saorsa-transport
     // The protocol handles OBSERVED_ADDRESS frames automatically
 
     info!("✓ Basic address discovery flow completed successfully");
@@ -169,7 +169,7 @@ async fn test_basic_address_discovery_flow() {
 async fn test_multipath_address_discovery() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting multipath address discovery test");
@@ -255,7 +255,7 @@ async fn test_multipath_address_discovery() {
 async fn test_address_discovery_rate_limiting() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting rate limiting test");
@@ -346,7 +346,7 @@ async fn test_address_discovery_rate_limiting() {
 async fn test_bootstrap_mode_address_discovery() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting bootstrap mode test");
@@ -470,7 +470,7 @@ async fn test_bootstrap_mode_address_discovery() {
 async fn test_address_discovery_disabled() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting disabled address discovery test");
@@ -567,7 +567,7 @@ async fn test_address_discovery_disabled() {
 async fn test_address_discovery_with_migration() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting connection migration test");
@@ -647,7 +647,7 @@ async fn test_address_discovery_with_migration() {
 async fn test_nat_traversal_integration() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting NAT traversal integration test");
@@ -756,7 +756,7 @@ async fn test_nat_traversal_integration() {
     conn_a.close(0u32.into(), b"test complete");
     conn_b.close(0u32.into(), b"test complete");
 
-    // In ant-quic, discovered addresses are automatically integrated
+    // In saorsa-transport, discovered addresses are automatically integrated
     // with the NAT traversal system for hole punching
 
     info!("✓ NAT traversal integration test completed");

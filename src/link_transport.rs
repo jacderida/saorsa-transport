@@ -11,7 +11,7 @@
 //! the transport layer for overlay networks like saorsa-core. This enables:
 //!
 //! - **Version decoupling**: Overlays can compile against a stable trait interface
-//!   while ant-quic evolves underneath
+//!   while saorsa-transport evolves underneath
 //! - **Testing**: Mock transports for unit testing overlay logic
 //! - **Alternative transports**: Future support for WebRTC, TCP fallback, etc.
 //!
@@ -31,7 +31,7 @@
 //!                              │
 //!                              ▼
 //! ┌─────────────────────────────────────────────────────────────────┐
-//! │                  ant-quic P2pEndpoint                            │
+//! │                  saorsa-transport P2pEndpoint                            │
 //! │  QUIC transport │ NAT traversal │ PQC │ Connection management   │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
@@ -39,7 +39,7 @@
 //! ## Example: Implementing an Overlay
 //!
 //! ```rust,ignore
-//! use ant_quic::link_transport::{LinkTransport, LinkConn, LinkEvent, ProtocolId, LinkError};
+//! use saorsa_transport::link_transport::{LinkTransport, LinkConn, LinkEvent, ProtocolId, LinkError};
 //! use std::sync::Arc;
 //! use futures_util::StreamExt;
 //!
@@ -116,7 +116,7 @@
 //! ## Error Handling Patterns
 //!
 //! ```rust,ignore
-//! use ant_quic::link_transport::{LinkError, LinkResult};
+//! use saorsa_transport::link_transport::{LinkError, LinkResult};
 //! use std::net::SocketAddr;
 //!
 //! async fn connect_with_retry<T: LinkTransport>(
@@ -180,7 +180,7 @@ use crate::transport::TransportAddr;
 /// # Example
 ///
 /// ```rust
-/// use ant_quic::link_transport::StreamType;
+/// use saorsa_transport::link_transport::StreamType;
 ///
 /// // Check if a byte is a valid stream type
 /// let stream_type = StreamType::from_byte(0x10);
@@ -406,7 +406,7 @@ impl StreamTypeFamily {
 /// # Example
 ///
 /// ```rust
-/// use ant_quic::link_transport::{StreamFilter, StreamType};
+/// use saorsa_transport::link_transport::{StreamFilter, StreamType};
 ///
 /// // Accept only DHT streams
 /// let filter = StreamFilter::new()
@@ -495,7 +495,7 @@ impl StreamFilter {
 /// # Examples
 ///
 /// ```rust
-/// use ant_quic::link_transport::ProtocolId;
+/// use saorsa_transport::link_transport::ProtocolId;
 ///
 /// // From a static string (padded/truncated to 16 bytes)
 /// const DHT: ProtocolId = ProtocolId::from_static(b"saorsa-dht/1.0.0");
@@ -537,13 +537,13 @@ impl ProtocolId {
     }
 
     /// The default protocol for connections without explicit protocol negotiation.
-    pub const DEFAULT: Self = Self::from_static(b"ant-quic/default");
+    pub const DEFAULT: Self = Self::from_static(b"saorsa/default");
 
     /// Protocol ID for NAT traversal coordination messages.
-    pub const NAT_TRAVERSAL: Self = Self::from_static(b"ant-quic/nat");
+    pub const NAT_TRAVERSAL: Self = Self::from_static(b"saorsa/nat");
 
     /// Protocol ID for relay traffic.
-    pub const RELAY: Self = Self::from_static(b"ant-quic/relay");
+    pub const RELAY: Self = Self::from_static(b"saorsa/relay");
 }
 
 impl Default for ProtocolId {
@@ -838,7 +838,7 @@ pub enum LinkEvent {
 /// # Example
 ///
 /// ```rust,ignore
-/// use ant_quic::link_transport::{ProtocolHandler, StreamType, LinkResult};
+/// use saorsa_transport::link_transport::{ProtocolHandler, StreamType, LinkResult};
 /// use async_trait::async_trait;
 /// use bytes::Bytes;
 /// use std::net::SocketAddr;

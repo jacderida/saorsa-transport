@@ -10,13 +10,13 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{ConnectionHealth, Node};
+use saorsa_transport::{ConnectionHealth, Node};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 use tokio::time::timeout;
 
 /// Extract the remote socket address from a PeerConnection.
-fn remote_socket_addr(conn: &ant_quic::PeerConnection) -> SocketAddr {
+fn remote_socket_addr(conn: &saorsa_transport::PeerConnection) -> SocketAddr {
     conn.remote_addr
         .as_socket_addr()
         .expect("test connections use UDP")

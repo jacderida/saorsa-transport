@@ -41,8 +41,8 @@
 //! ## Example
 //!
 //! ```ignore
-//! use ant_quic::nat_traversal::CapabilityFlags;
-//! use ant_quic::transport::TransportAddr;
+//! use saorsa_transport::nat_traversal::CapabilityFlags;
+//! use saorsa_transport::transport::TransportAddr;
 //!
 //! // Advertise a BLE address with capability flags
 //! endpoint.advertise_transport_address(

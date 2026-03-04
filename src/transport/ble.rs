@@ -16,7 +16,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ant-quic = { version = "0.18", features = ["ble"] }
+//! saorsa-transport = { version = "0.18", features = ["ble"] }
 //! ```
 //!
 //! # Platform Support
@@ -37,7 +37,7 @@
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────┐
-//! │           ant-quic BLE Service                  │
+//! │           saorsa-transport BLE Service                  │
 //! │  UUID: a03d7e9f-0bca-12fe-a600-000000000001    │
 //! ├─────────────────────────────────────────────────┤
 //! │  TX Characteristic (Write Without Response)    │
@@ -86,15 +86,15 @@ use futures_util::stream::StreamExt;
 #[cfg(feature = "ble")]
 use uuid::Uuid;
 
-/// Default GATT service UUID for ant-quic BLE transport
+/// Default GATT service UUID for saorsa-transport BLE transport
 ///
 /// This UUID is used when no custom service UUID is specified.
 /// UUID: a03d7e9f-0bca-12fe-a600-000000000001
-pub const ANT_QUIC_SERVICE_UUID: [u8; 16] = [
+pub const SAORSA_TRANSPORT_SERVICE_UUID: [u8; 16] = [
     0xa0, 0x3d, 0x7e, 0x9f, 0x0b, 0xca, 0x12, 0xfe, 0xa6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ];
 
-/// TX Characteristic UUID for ant-quic BLE transport
+/// TX Characteristic UUID for saorsa-transport BLE transport
 ///
 /// This characteristic is used by the Central to send data to the Peripheral.
 /// Properties: Write Without Response
@@ -104,7 +104,7 @@ pub const TX_CHARACTERISTIC_UUID: [u8; 16] = [
     0xa0, 0x3d, 0x7e, 0x9f, 0x0b, 0xca, 0x12, 0xfe, 0xa6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
 ];
 
-/// RX Characteristic UUID for ant-quic BLE transport
+/// RX Characteristic UUID for saorsa-transport BLE transport
 ///
 /// This characteristic is used by the Peripheral to send data to the Central via notifications.
 /// Properties: Notify
@@ -582,13 +582,13 @@ pub(crate) fn uuid_from_bytes(bytes: &[u8; 16]) -> Uuid {
     Uuid::from_bytes(*bytes)
 }
 
-/// Get the ant-quic service UUID as a btleplug Uuid
+/// Get the saorsa-transport service UUID as a btleplug Uuid
 ///
 /// Note: Will be used in Task 2 for scan filtering and Task 3 for service discovery.
 #[cfg(feature = "ble")]
 #[allow(dead_code)] // Will be used in subsequent tasks (scanning, connecting)
 pub(crate) fn service_uuid() -> Uuid {
-    uuid_from_bytes(&ANT_QUIC_SERVICE_UUID)
+    uuid_from_bytes(&SAORSA_TRANSPORT_SERVICE_UUID)
 }
 
 /// Get the TX characteristic UUID as a btleplug Uuid
@@ -913,7 +913,7 @@ impl std::fmt::Debug for BleConnection {
 /// BLE transport configuration
 #[derive(Debug, Clone)]
 pub struct BleConfig {
-    /// GATT service UUID for the ant-quic service
+    /// GATT service UUID for the saorsa-transport service
     pub service_uuid: [u8; 16],
 
     /// Session cache duration for PQC mitigation
@@ -948,7 +948,7 @@ pub struct BleConfig {
 impl Default for BleConfig {
     fn default() -> Self {
         Self {
-            service_uuid: ANT_QUIC_SERVICE_UUID,
+            service_uuid: SAORSA_TRANSPORT_SERVICE_UUID,
             session_cache_duration: Duration::from_secs(24 * 60 * 60), // 24 hours
             max_connections: 5,
             scan_interval: Duration::from_secs(10),
@@ -1197,7 +1197,7 @@ impl SessionCacheFile {
 
 /// Information about a discovered BLE peripheral
 ///
-/// Populated during scanning when a device advertising the ant-quic service is found.
+/// Populated during scanning when a device advertising the saorsa-transport service is found.
 #[derive(Debug, Clone)]
 pub struct DiscoveredDevice {
     /// BLE MAC address (6 bytes) - derived from btleplug peripheral ID
@@ -1869,7 +1869,7 @@ impl BleTransport {
         *self.scan_state.read().await == ScanState::Scanning
     }
 
-    /// Start scanning for BLE peripherals advertising the ant-quic service
+    /// Start scanning for BLE peripherals advertising the saorsa-transport service
     ///
     /// This method starts a background scan task that discovers nearby BLE devices
     /// advertising the configured service UUID. Discovered devices are added to
@@ -2155,7 +2155,7 @@ impl BleTransport {
     /// 1. Validates the device was previously discovered
     /// 2. Creates a BleConnection handle
     /// 3. Connects via btleplug and discovers GATT services
-    /// 4. Finds the ant-quic service and TX/RX characteristics
+    /// 4. Finds the saorsa-transport service and TX/RX characteristics
     /// 5. Subscribes to RX characteristic notifications
     /// 6. Stores the connection in active_connections
     ///
@@ -2275,7 +2275,10 @@ impl BleTransport {
             .iter()
             .find(|s| s.uuid == service_uuid())
             .ok_or_else(|| TransportError::Other {
-                message: format!("ant-quic service not found on device {:02x?}", device_id),
+                message: format!(
+                    "saorsa-transport service not found on device {:02x?}",
+                    device_id
+                ),
             })?;
 
         // Find TX characteristic (write without response)
@@ -2301,7 +2304,7 @@ impl BleTransport {
         tracing::debug!(
             tx_uuid = %tx_char.uuid,
             rx_uuid = %rx_char.uuid,
-            "Found ant-quic characteristics"
+            "Found saorsa-transport characteristics"
         );
 
         // Subscribe to RX characteristic notifications
@@ -2800,7 +2803,7 @@ impl BleTransport {
 
     /// Start advertising as a BLE peripheral
     ///
-    /// This starts the GATT server with the ant-quic service and begins advertising.
+    /// This starts the GATT server with the saorsa-transport service and begins advertising.
     /// Other devices can discover and connect to this node.
     ///
     /// # Platform Support
@@ -2829,7 +2832,7 @@ impl BleTransport {
 
         // In a full implementation, this would:
         // 1. Create a GATT server using bluez-async or dbus
-        // 2. Add the ant-quic service with TX/RX characteristics
+        // 2. Add the saorsa-transport service with TX/RX characteristics
         // 3. Start advertising with the service UUID
         //
         // btleplug focuses on Central mode; full peripheral mode
@@ -3437,7 +3440,7 @@ mod tests {
     fn test_ble_config_default() {
         let config = BleConfig::default();
 
-        assert_eq!(config.service_uuid, ANT_QUIC_SERVICE_UUID);
+        assert_eq!(config.service_uuid, SAORSA_TRANSPORT_SERVICE_UUID);
         assert_eq!(
             config.session_cache_duration,
             Duration::from_secs(24 * 60 * 60)
@@ -3522,9 +3525,9 @@ mod tests {
     fn test_gatt_service_uuid() {
         // Verify the service UUID follows our naming convention
         // a03d7e9f-0bca-12fe-a600-000000000001
-        assert_eq!(ANT_QUIC_SERVICE_UUID[0], 0xa0);
-        assert_eq!(ANT_QUIC_SERVICE_UUID[15], 0x01);
-        assert_eq!(ANT_QUIC_SERVICE_UUID.len(), 16);
+        assert_eq!(SAORSA_TRANSPORT_SERVICE_UUID[0], 0xa0);
+        assert_eq!(SAORSA_TRANSPORT_SERVICE_UUID[15], 0x01);
+        assert_eq!(SAORSA_TRANSPORT_SERVICE_UUID.len(), 16);
     }
 
     #[test]
@@ -3536,7 +3539,10 @@ mod tests {
         assert_eq!(TX_CHARACTERISTIC_UUID.len(), 16);
 
         // First 15 bytes should match service UUID
-        assert_eq!(&TX_CHARACTERISTIC_UUID[..15], &ANT_QUIC_SERVICE_UUID[..15]);
+        assert_eq!(
+            &TX_CHARACTERISTIC_UUID[..15],
+            &SAORSA_TRANSPORT_SERVICE_UUID[..15]
+        );
     }
 
     #[test]
@@ -3548,7 +3554,10 @@ mod tests {
         assert_eq!(RX_CHARACTERISTIC_UUID.len(), 16);
 
         // First 15 bytes should match service UUID
-        assert_eq!(&RX_CHARACTERISTIC_UUID[..15], &ANT_QUIC_SERVICE_UUID[..15]);
+        assert_eq!(
+            &RX_CHARACTERISTIC_UUID[..15],
+            &SAORSA_TRANSPORT_SERVICE_UUID[..15]
+        );
     }
 
     #[test]
@@ -3574,10 +3583,10 @@ mod tests {
     #[test]
     fn test_characteristic_uuids_unique() {
         // All UUIDs must be unique
-        assert_ne!(ANT_QUIC_SERVICE_UUID, TX_CHARACTERISTIC_UUID);
-        assert_ne!(ANT_QUIC_SERVICE_UUID, RX_CHARACTERISTIC_UUID);
+        assert_ne!(SAORSA_TRANSPORT_SERVICE_UUID, TX_CHARACTERISTIC_UUID);
+        assert_ne!(SAORSA_TRANSPORT_SERVICE_UUID, RX_CHARACTERISTIC_UUID);
         assert_ne!(TX_CHARACTERISTIC_UUID, RX_CHARACTERISTIC_UUID);
-        assert_ne!(ANT_QUIC_SERVICE_UUID, CCCD_UUID);
+        assert_ne!(SAORSA_TRANSPORT_SERVICE_UUID, CCCD_UUID);
     }
 
     #[test]
@@ -4968,7 +4977,7 @@ mod tests {
     async fn test_ble_transport_session_persistence_save_load() {
         // Create a temp file for testing
         let temp_dir = std::env::temp_dir();
-        let persist_path = temp_dir.join("ant_quic_ble_session_test.cache");
+        let persist_path = temp_dir.join("saorsa_transport_ble_session_test.cache");
 
         // Clean up any previous test file
         let _ = std::fs::remove_file(&persist_path);

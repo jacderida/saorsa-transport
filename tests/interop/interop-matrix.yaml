@@ -1,5 +1,5 @@
 # QUIC Interoperability Test Matrix
-# Defines test combinations for ant-quic compatibility testing
+# Defines test combinations for saorsa-transport compatibility testing
 
 version: "1.0"
 last_updated: "2025-07-25"
@@ -151,8 +151,8 @@ test_categories:
 
 # Expected outcomes matrix
 expected_outcomes:
-  # ant-quic as client
-  ant_quic_client:
+  # saorsa-transport as client
+  saorsa_transport_client:
     google:
       basic: pass
       version_negotiation: pass

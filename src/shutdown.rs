@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Coordinated shutdown for ant-quic endpoints
+//! Coordinated shutdown for saorsa-transport endpoints
 //!
 //! Implements staged shutdown:
 //! 1. Stop accepting new work

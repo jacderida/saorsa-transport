@@ -10,7 +10,7 @@ Quantum computers threaten classical cryptography:
 - **Shor's algorithm**: Breaks RSA, ECDH, ECDSA in polynomial time
 - **Grover's algorithm**: Halves symmetric key security (128-bit becomes 64-bit effective)
 
-Most projects adopt **hybrid** approaches (classical + PQC) for backwards compatibility. However, ant-quic is a **greenfield network** with no legacy peers, enabling a different choice.
+Most projects adopt **hybrid** approaches (classical + PQC) for backwards compatibility. However, saorsa-transport is a **greenfield network** with no legacy peers, enabling a different choice.
 
 Key requirements:
 - Long-term data confidentiality (decades)
@@ -71,7 +71,7 @@ Adopt **pure post-quantum cryptography** with no classical fallback:
 
 ## References
 
-- Specification: `docs/rfcs/ant-quic-pqc-authentication.md` (v0.2)
+- Specification: `docs/rfcs/saorsa-transport-pqc-authentication.md` (v0.2)
 - Standards: FIPS 203 (ML-KEM), FIPS 204 (ML-DSA)
 - Files: `src/crypto/pqc/*.rs`
 - Implementation: saorsa-pqc library

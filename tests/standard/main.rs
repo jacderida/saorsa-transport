@@ -1,4 +1,4 @@
-//! Standard test suite for ant-quic
+//! Standard test suite for saorsa-transport
 //! These tests run in < 5 minutes and include integration and protocol tests
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -11,7 +11,7 @@ pub mod utils {
     // Add common test utilities here
     pub fn setup_test_logger() {
         let _ = tracing_subscriber::fmt()
-            .with_env_filter("ant_quic=debug,warn")
+            .with_env_filter("saorsa_transport=debug,warn")
             .try_init();
     }
 }

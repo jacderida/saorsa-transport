@@ -449,7 +449,7 @@ impl MacOSInterfaceDiscovery {
         }
 
         // Create dynamic store
-        let store_name = CString::new("ant-quic-network-discovery")
+        let store_name = CString::new("saorsa-transport-network-discovery")
             .unwrap_or_else(|_| panic!("hardcoded store name should be valid"));
         let sc_store = unsafe {
             // SCDynamicStoreCreate equivalent
@@ -627,7 +627,7 @@ impl MacOSInterfaceDiscovery {
         let _handle = std::thread::spawn(move || {
             let result = unsafe {
                 // Create preferences reference
-                let prefs_name = rust_string_to_cf_string("ant-quic-network-discovery");
+                let prefs_name = rust_string_to_cf_string("saorsa-transport-network-discovery");
                 let prefs = SCPreferencesCreate(
                     kCFAllocatorDefault,
                     prefs_name,

@@ -119,7 +119,7 @@ impl SimulatedNat {
 #[tokio::test]
 async fn test_nat_traversal_with_address_discovery() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Testing NAT traversal with address discovery");
@@ -245,7 +245,7 @@ async fn simulate_nat_scenario(client_nat_type: NatType, peer_nat_type: NatType)
 #[tokio::test]
 async fn test_symmetric_nat_port_prediction() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Testing symmetric NAT port prediction");
@@ -300,7 +300,7 @@ async fn test_symmetric_nat_port_prediction() {
 #[tokio::test]
 async fn test_connection_setup_time_improvement() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=info")
+        .with_env_filter("saorsa_transport=info")
         .try_init();
 
     info!("Testing connection setup time improvement");
@@ -332,7 +332,7 @@ async fn test_connection_setup_time_improvement() {
 #[tokio::test]
 async fn test_multi_hop_nat_scenarios() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Testing multi-hop NAT scenarios (CGNAT)");
@@ -374,7 +374,7 @@ async fn test_multi_hop_nat_scenarios() {
 #[tokio::test]
 async fn test_address_discovery_robustness() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Testing address discovery robustness");

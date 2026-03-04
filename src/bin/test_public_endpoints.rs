@@ -7,15 +7,15 @@
 
 //! Test connectivity to public QUIC endpoints
 //!
-//! This binary tests ant-quic's ability to connect to various public QUIC servers
+//! This binary tests saorsa-transport's ability to connect to various public QUIC servers
 //! to verify protocol compliance and interoperability.
 
-use ant_quic::{
+use clap::Parser;
+use rustls::pki_types::ServerName;
+use saorsa_transport::{
     ClientConfig, Endpoint, EndpointConfig, TransportConfig, VarInt,
     crypto::rustls::QuicClientConfig, high_level,
 };
-use clap::Parser;
-use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
 // use std::collections::HashMap; // Currently unused
 use std::error::Error;
@@ -151,7 +151,7 @@ struct ValidationSummary {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ResultMetadata {
-    ant_quic_version: String,
+    saorsa_transport_version: String,
     test_date: String,
     test_duration_ms: u64,
 }
@@ -523,7 +523,7 @@ async fn run_validation(args: Args) -> Result<ValidationResults, Box<dyn Error>>
             protocols_seen: protocols_seen.into_iter().collect(),
         },
         metadata: ResultMetadata {
-            ant_quic_version: env!("CARGO_PKG_VERSION").to_string(),
+            saorsa_transport_version: env!("CARGO_PKG_VERSION").to_string(),
             test_date: chrono::Utc::now().to_rfc3339(),
             test_duration_ms: test_duration.as_millis() as u64,
         },
@@ -538,8 +538,8 @@ fn generate_markdown_report(results: &ValidationResults) -> String {
     report.push_str("# QUIC Endpoint Validation Report\n\n");
     report.push_str(&format!("**Date**: {}\n", results.metadata.test_date));
     report.push_str(&format!(
-        "**ant-quic Version**: {}\n",
-        results.metadata.ant_quic_version
+        "**saorsa-transport Version**: {}\n",
+        results.metadata.saorsa_transport_version
     ));
     report.push_str(&format!(
         "**Test Duration**: {}ms\n\n",
@@ -611,7 +611,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(format!("ant_quic={log_level}").parse()?)
+                .add_directive(format!("saorsa_transport={log_level}").parse()?)
                 .add_directive(format!("test_public_endpoints={log_level}").parse()?),
         )
         .init();
@@ -638,7 +638,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!("================================================");
-    println!("ant-quic Public Endpoint Validation");
+    println!("saorsa-transport Public Endpoint Validation");
     println!("================================================");
     println!();
 

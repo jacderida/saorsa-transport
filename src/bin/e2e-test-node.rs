@@ -7,7 +7,7 @@
 
 //! E2E Test Node - Enhanced P2P node with metrics push and data verification
 //!
-//! This binary extends ant-quic with capabilities for comprehensive E2E testing:
+//! This binary extends saorsa-transport with capabilities for comprehensive E2E testing:
 //! - Metrics push to central dashboard (HTTP POST)
 //! - Data generation and verification with BLAKE3 checksums
 //! - Progress reporting for heavy throughput testing
@@ -28,9 +28,9 @@
 #![allow(clippy::unwrap_used)] // Test binary - panics are acceptable
 #![allow(clippy::expect_used)] // Test binary - panics are acceptable
 
-use ant_quic::transport::TransportAddr;
-use ant_quic::{MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, TraversalPhase};
 use clap::Parser;
+use saorsa_transport::transport::TransportAddr;
+use saorsa_transport::{MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, TraversalPhase};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -256,7 +256,9 @@ async fn main() -> anyhow::Result<()> {
     // Initialize logging
     let log_level = if args.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt()
-        .with_env_filter(format!("ant_quic={log_level},e2e_test_node={log_level}"))
+        .with_env_filter(format!(
+            "saorsa_transport={log_level},e2e_test_node={log_level}"
+        ))
         .init();
 
     info!("E2E Test Node v{}", env!("CARGO_PKG_VERSION"));

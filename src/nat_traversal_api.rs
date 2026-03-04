@@ -338,7 +338,7 @@ pub struct NatTraversalEndpoint {
 ///
 /// # Example
 /// ```rust
-/// use ant_quic::nat_traversal_api::NatTraversalConfig;
+/// use saorsa_transport::nat_traversal_api::NatTraversalConfig;
 /// use std::time::Duration;
 /// use std::net::SocketAddr;
 ///
@@ -873,7 +873,7 @@ impl CandidateAddress {
 
 fn allow_loopback_from_env() -> bool {
     matches!(
-        std::env::var("ANT_QUIC_ALLOW_LOOPBACK")
+        std::env::var("SAORSA_TRANSPORT_ALLOW_LOOPBACK")
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase()
@@ -1591,7 +1591,7 @@ impl NatTraversalEndpoint {
     /// # Example
     ///
     /// ```ignore
-    /// use ant_quic::transport::udp::UdpTransport;
+    /// use saorsa_transport::transport::udp::UdpTransport;
     ///
     /// // Bind transport and get socket for Quinn
     /// let (udp_transport, quinn_socket) = UdpTransport::bind_for_quinn(addr).await?;
@@ -3685,8 +3685,8 @@ impl NatTraversalEndpoint {
     ///
     /// # Example
     /// ```ignore
-    /// use ant_quic::transport::TransportAddr;
-    /// use ant_quic::nat_traversal::CapabilityFlags;
+    /// use saorsa_transport::transport::TransportAddr;
+    /// use saorsa_transport::nat_traversal::CapabilityFlags;
     ///
     /// // Advertise a UDP address
     /// endpoint.advertise_transport_address(

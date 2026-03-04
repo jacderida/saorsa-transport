@@ -8,7 +8,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     auth::AuthConfig,
     nat_traversal_api::EndpointRole,
     quic_node::{QuicNodeConfig, QuicP2PNode},

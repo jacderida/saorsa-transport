@@ -2,12 +2,12 @@
 //!
 //! v0.2: Updated to use the simplified MlKem768 implementation backed by saorsa-pqc.
 
-use ant_quic::crypto::pqc::{MlKem768, MlKemOperations};
+use saorsa_transport::crypto::pqc::{MlKem768, MlKemOperations};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== ML-KEM-768 Usage Example ===\n");
 
-    // PQC is always enabled in ant-quic v0.12.0+
+    // PQC is always enabled in saorsa-transport v0.12.0+
     run_ml_kem_demo()
 }
 

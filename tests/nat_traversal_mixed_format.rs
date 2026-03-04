@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     ClientConfig, Endpoint, ServerConfig, TransportConfig, VarInt,
     crypto::{rustls::QuicClientConfig, rustls::QuicServerConfig},
     transport_parameters::NatTraversalConfig,

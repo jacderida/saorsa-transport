@@ -1,6 +1,6 @@
 //! Demonstration of the zero-cost tracing system
 
-use ant_quic::tracing::{EventLog, TraceId};
+use saorsa_transport::tracing::{EventLog, TraceId};
 #[cfg(feature = "trace")]
 use std::sync::Arc;
 

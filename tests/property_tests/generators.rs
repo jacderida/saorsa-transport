@@ -5,16 +5,16 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Property test generators for ant-quic types
+//! Property test generators for saorsa-transport types
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 #![allow(dead_code)] // Generators may be used in future tests
 
-use ant_quic::{
+use proptest::prelude::*;
+use saorsa_transport::{
     VarInt,
     frame::{Ack, EcnCounts, FrameType},
 };
-use proptest::prelude::*;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
@@ -80,8 +80,8 @@ pub fn arb_connection_id() -> impl Strategy<Value = Vec<u8>> {
 /// Generate arbitrary frame types for testing
 /// Since FrameType constructor is private, we'll generate raw values and decode them
 pub fn arb_frame_type() -> impl Strategy<Value = FrameType> {
-    use ant_quic::coding::Codec;
     use bytes::BytesMut;
+    use saorsa_transport::coding::Codec;
 
     // Generate common frame type values
     prop_oneof![

@@ -2,7 +2,7 @@
 ///
 /// This example verifies which public QUIC endpoints are accessible
 /// and documents their capabilities.
-use ant_quic::{ClientConfig, EndpointConfig, VarInt, high_level::Endpoint};
+use saorsa_transport::{ClientConfig, EndpointConfig, VarInt, high_level::Endpoint};
 #[cfg(not(feature = "platform-verifier"))]
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,15 +27,15 @@ const TEST_ENDPOINTS: &[(&str, &str)] = &[
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=info,verify_quic_endpoints=info")
+        .with_env_filter("saorsa_transport=info,verify_quic_endpoints=info")
         .init();
 
     info!("Starting QUIC endpoint verification...");
 
     // Create client endpoint
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
-    let runtime =
-        ant_quic::high_level::default_runtime().ok_or("No compatible async runtime found")?;
+    let runtime = saorsa_transport::high_level::default_runtime()
+        .ok_or("No compatible async runtime found")?;
     let endpoint = Endpoint::new(EndpointConfig::default(), None, socket, runtime)?;
 
     let mut results = Vec::new();
@@ -99,7 +99,7 @@ async fn test_endpoint(
 
     #[cfg(not(feature = "platform-verifier"))]
     let client_config = {
-        use ant_quic::crypto::rustls::QuicClientConfig;
+        use saorsa_transport::crypto::rustls::QuicClientConfig;
 
         let mut roots = rustls::RootCertStore::empty();
 
@@ -136,7 +136,7 @@ async fn test_endpoint(
 
     // Get connection info
     let alpn = connection.handshake_data().and_then(|data| {
-        data.downcast_ref::<ant_quic::crypto::rustls::HandshakeData>()
+        data.downcast_ref::<saorsa_transport::crypto::rustls::HandshakeData>()
             .and_then(|handshake| handshake.protocol.clone())
     });
 

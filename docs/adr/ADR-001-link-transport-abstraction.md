@@ -6,9 +6,9 @@ Accepted (2025-12-21)
 
 ## Context
 
-Overlay networks like saorsa-core need to build on top of ant-quic's QUIC transport, but face several challenges:
+Overlay networks like saorsa-core need to build on top of saorsa-transport's QUIC transport, but face several challenges:
 
-1. **Version coupling**: Overlays compile directly against ant-quic's concrete types, creating tight coupling that breaks when ant-quic evolves
+1. **Version coupling**: Overlays compile directly against saorsa-transport's concrete types, creating tight coupling that breaks when saorsa-transport evolves
 2. **Testing difficulty**: Testing overlay logic requires instantiating real QUIC endpoints, making unit tests slow and flaky
 3. **Transport flexibility**: Future requirements may need alternative transports (WebRTC for browsers, TCP fallback for restrictive networks)
 

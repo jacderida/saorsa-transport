@@ -87,7 +87,7 @@ impl Default for LoRaParams {
 /// # Example
 ///
 /// ```rust
-/// use ant_quic::transport::{TransportAddr, TransportType};
+/// use saorsa_transport::transport::{TransportAddr, TransportType};
 /// use std::net::SocketAddr;
 ///
 /// // UDP address
@@ -108,7 +108,7 @@ pub enum TransportAddr {
         /// 48-bit Bluetooth device address (MAC address)
         device_id: [u8; 6],
         /// Optional GATT service UUID for connection
-        /// If None, uses the default ant-quic service UUID
+        /// If None, uses the default saorsa-transport service UUID
         service_uuid: Option<[u8; 16]>,
     },
 
@@ -230,7 +230,7 @@ impl TransportAddr {
     /// # Example
     ///
     /// ```rust
-    /// use ant_quic::transport::TransportAddr;
+    /// use saorsa_transport::transport::TransportAddr;
     /// use std::net::SocketAddr;
     ///
     /// let socket_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
@@ -263,7 +263,7 @@ impl TransportAddr {
     /// # Example
     ///
     /// ```rust
-    /// use ant_quic::transport::TransportAddr;
+    /// use saorsa_transport::transport::TransportAddr;
     ///
     /// let ble_addr = TransportAddr::ble([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], None);
     /// let synthetic = ble_addr.to_synthetic_socket_addr();
@@ -498,7 +498,7 @@ impl fmt::Display for TransportAddr {
 /// # Example
 ///
 /// ```rust
-/// use ant_quic::transport::TransportAddr;
+/// use saorsa_transport::transport::TransportAddr;
 /// use std::net::SocketAddr;
 ///
 /// // Direct conversion

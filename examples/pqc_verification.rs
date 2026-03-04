@@ -6,7 +6,7 @@
 //! v0.13.0+: PQC is always enabled (100% PQC, no classical crypto).
 //! This example verifies the P2pEndpoint initializes with PQC correctly.
 
-use ant_quic::{P2pConfig, P2pEndpoint, PqcConfig};
+use saorsa_transport::{P2pConfig, P2pEndpoint, PqcConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

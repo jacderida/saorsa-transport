@@ -1,4 +1,4 @@
-//! Enhanced property testing configuration for ant-quic
+//! Enhanced property testing configuration for saorsa-transport
 //!
 //! This module provides comprehensive property testing strategies and configurations
 //! to ensure the robustness and correctness of the QUIC implementation.
@@ -75,12 +75,14 @@ pub fn arb_priority() -> impl Strategy<Value = u32> {
 }
 
 /// Strategy for generating candidate addresses with various characteristics
-pub fn arb_candidate_address() -> impl Strategy<Value = ant_quic::CandidateAddress> {
-    (arb_socket_addr(), arb_priority()).prop_map(|(addr, priority)| ant_quic::CandidateAddress {
-        address: addr,
-        priority,
-        source: ant_quic::CandidateSource::Local,
-        state: ant_quic::CandidateState::New,
+pub fn arb_candidate_address() -> impl Strategy<Value = saorsa_transport::CandidateAddress> {
+    (arb_socket_addr(), arb_priority()).prop_map(|(addr, priority)| {
+        saorsa_transport::CandidateAddress {
+            address: addr,
+            priority,
+            source: saorsa_transport::CandidateSource::Local,
+            state: saorsa_transport::CandidateState::New,
+        }
     })
 }
 
@@ -159,7 +161,7 @@ pub struct NetworkConditions {
 }
 
 /// Strategy for generating valid transport parameter values
-use ant_quic::transport_parameters::TransportParameters;
+use saorsa_transport::transport_parameters::TransportParameters;
 
 pub fn arb_transport_params() -> impl Strategy<Value = TransportParameters> {
     // Generate transport parameters by decoding what we encode using the public codec APIs
@@ -186,8 +188,8 @@ pub fn arb_transport_params() -> impl Strategy<Value = TransportParameters> {
                 max_ack_delay,
                 cid_limit,
             )| {
-                use ant_quic::coding::Codec;
                 use bytes::BytesMut;
+                use saorsa_transport::coding::Codec;
 
                 // Build a writer using the same encoding routine as the stack by constructing
                 // a minimal `TransportParameters` via the public constructor equivalent: decode of what we encode.
@@ -198,11 +200,13 @@ pub fn arb_transport_params() -> impl Strategy<Value = TransportParameters> {
 
                 // Helper to write a single varint field pair (id, value)
                 fn write_kv(buf: &mut BytesMut, id: u64, val: u64) {
-                    ant_quic::VarInt::try_from(id).unwrap().encode(buf);
+                    saorsa_transport::VarInt::try_from(id).unwrap().encode(buf);
                     // Values are encoded as varint with a preceding length
                     let mut tmp = BytesMut::new();
-                    ant_quic::VarInt::try_from(val).unwrap().encode(&mut tmp);
-                    ant_quic::VarInt::from_u32(tmp.len() as u32).encode(buf);
+                    saorsa_transport::VarInt::try_from(val)
+                        .unwrap()
+                        .encode(&mut tmp);
+                    saorsa_transport::VarInt::from_u32(tmp.len() as u32).encode(buf);
                     buf.extend_from_slice(&tmp);
                 }
 
@@ -232,18 +236,18 @@ pub fn arb_transport_params() -> impl Strategy<Value = TransportParameters> {
                 // Now decode via public API
                 let mut cursor = std::io::Cursor::new(&buf[..]);
                 // Use server side for decoding in tests (side doesn't affect these core params)
-                TransportParameters::read(ant_quic::Side::Server, &mut cursor)
+                TransportParameters::read(saorsa_transport::Side::Server, &mut cursor)
                     .expect("Failed to decode synthesized transport parameters")
             },
         )
 }
 
-// Note: Frame and Packet types are internal to ant_quic and not exposed in the public API.
+// Note: Frame and Packet types are internal to saorsa_transport and not exposed in the public API.
 // These strategies are commented out but kept for potential future use if the types become public.
 
 /*
 /// Strategy for generating frame sequences
-pub fn arb_frame_sequence() -> impl Strategy<Value = Vec<ant_quic::Frame>> {
+pub fn arb_frame_sequence() -> impl Strategy<Value = Vec<saorsa_transport::Frame>> {
     prop::collection::vec(
         prop_oneof![
             arb_stream_frame(),
@@ -257,10 +261,10 @@ pub fn arb_frame_sequence() -> impl Strategy<Value = Vec<ant_quic::Frame>> {
 }
 
 /// Strategy for generating stream frames
-pub fn arb_stream_frame() -> impl Strategy<Value = ant_quic::Frame> {
+pub fn arb_stream_frame() -> impl Strategy<Value = saorsa_transport::Frame> {
     (any::<u64>(), any::<u64>(), any::<Vec<u8>>()).prop_map(|(stream_id, offset, data)| {
-        ant_quic::Frame::Stream {
-            id: ant_quic::StreamId(stream_id),
+        saorsa_transport::Frame::Stream {
+            id: saorsa_transport::StreamId(stream_id),
             offset,
             length: data.len() as u64,
             fin: false,
@@ -270,9 +274,9 @@ pub fn arb_stream_frame() -> impl Strategy<Value = ant_quic::Frame> {
 }
 
 /// Strategy for generating ACK frames
-pub fn arb_ack_frame() -> impl Strategy<Value = ant_quic::Frame> {
+pub fn arb_ack_frame() -> impl Strategy<Value = saorsa_transport::Frame> {
     (1..=100u64, 1..=1000u64).prop_map(|(delay, largest)| {
-        ant_quic::Frame::Ack {
+        saorsa_transport::Frame::Ack {
             delay,
             largest,
             ranges: vec![0..=largest],
@@ -281,20 +285,20 @@ pub fn arb_ack_frame() -> impl Strategy<Value = ant_quic::Frame> {
 }
 
 /// Strategy for generating padding frames
-pub fn arb_padding_frame() -> impl Strategy<Value = ant_quic::Frame> {
-    (1..=100usize).prop_map(ant_quic::Frame::Padding)
+pub fn arb_padding_frame() -> impl Strategy<Value = saorsa_transport::Frame> {
+    (1..=100usize).prop_map(saorsa_transport::Frame::Padding)
 }
 
 /// Strategy for generating ping frames
-pub fn arb_ping_frame() -> impl Strategy<Value = ant_quic::Frame> {
-    Just(ant_quic::Frame::Ping)
+pub fn arb_ping_frame() -> impl Strategy<Value = saorsa_transport::Frame> {
+    Just(saorsa_transport::Frame::Ping)
 }
 
 /// Strategy for generating close frames
-pub fn arb_close_frame() -> impl Strategy<Value = ant_quic::Frame> {
+pub fn arb_close_frame() -> impl Strategy<Value = saorsa_transport::Frame> {
     (any::<u64>(), any::<String>()).prop_map(|(code, reason)| {
-        ant_quic::Frame::Close {
-            error_code: ant_quic::TransportErrorCode(code & 0xFF), // Valid code range
+        saorsa_transport::Frame::Close {
+            error_code: saorsa_transport::TransportErrorCode(code & 0xFF), // Valid code range
             frame_type: None,
             reason: reason.into_bytes().into(),
         }
@@ -302,15 +306,15 @@ pub fn arb_close_frame() -> impl Strategy<Value = ant_quic::Frame> {
 }
 
 /// Strategy for generating realistic QUIC packet sequences
-pub fn arb_packet_sequence() -> impl Strategy<Value = Vec<ant_quic::Packet>> {
+pub fn arb_packet_sequence() -> impl Strategy<Value = Vec<saorsa_transport::Packet>> {
     prop::collection::vec(arb_packet(), 1..=5)
 }
 
 /// Strategy for generating QUIC packets
-pub fn arb_packet() -> impl Strategy<Value = ant_quic::Packet> {
+pub fn arb_packet() -> impl Strategy<Value = saorsa_transport::Packet> {
     (arb_connection_id(), arb_frame_sequence()).prop_map(|(dst_cid, frames)| {
-        ant_quic::Packet {
-            header: ant_quic::Header::Short {
+        saorsa_transport::Packet {
+            header: saorsa_transport::Header::Short {
                 dst_cid,
                 number: 0,
                 spin: false,

@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 /// NAT Test Harness
 ///
 /// Comprehensive test harness for NAT traversal scenarios
-/// Integrates with Docker environment and real ant-quic binaries
+/// Integrates with Docker environment and real saorsa-transport binaries
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -117,10 +117,10 @@ impl NatTestHarness {
         Ok(result)
     }
 
-    /// Start ant-quic listener in a container
+    /// Start saorsa-transport listener in a container
     async fn start_listener(&self, container: &str) -> Result<ListenerHandle> {
         let cmd = format!(
-            "docker exec -e RUST_LOG={} {} ant-quic --listen 0.0.0.0:9000 --dashboard",
+            "docker exec -e RUST_LOG={} {} saorsa-transport --listen 0.0.0.0:9000 --dashboard",
             self.config.log_level, container
         );
 
@@ -162,7 +162,7 @@ impl NatTestHarness {
     /// Connect to a peer from a container
     async fn connect_to_peer(&self, container: &str, peer_id: &str) -> Result<ConnectionMetrics> {
         let cmd = format!(
-            "docker exec -e RUST_LOG={} {} ant-quic --connect {} --bootstrap {}",
+            "docker exec -e RUST_LOG={} {} saorsa-transport --connect {} --bootstrap {}",
             self.config.log_level, container, peer_id, self.config.bootstrap_addr
         );
 
@@ -184,7 +184,7 @@ impl NatTestHarness {
         Ok(self.parse_connection_metrics(&stdout))
     }
 
-    /// Parse connection metrics from ant-quic output
+    /// Parse connection metrics from saorsa-transport output
     fn parse_connection_metrics(&self, output: &str) -> ConnectionMetrics {
         // Parse real metrics from output
         // For now, return dummy metrics

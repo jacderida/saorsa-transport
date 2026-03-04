@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ant_quic::Node;
+//! use saorsa_transport::Node;
 //!
 //! let node = Node::new().await?;
 //! let status = node.status();

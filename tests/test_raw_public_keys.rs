@@ -5,7 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::crypto::{
+use saorsa_transport::crypto::{
     certificate_negotiation::{CertificateNegotiationManager, NegotiationConfig},
     raw_public_keys::{RawPublicKeyConfigBuilder, pqc::generate_ml_dsa_keypair},
     tls_extensions::{CertificateType, CertificateTypeList, CertificateTypePreferences},

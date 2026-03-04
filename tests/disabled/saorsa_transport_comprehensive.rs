@@ -1,13 +1,13 @@
-//! Comprehensive ant-quic Connection Testing Suite
+//! Comprehensive saorsa-transport Connection Testing Suite
 //!
 //! This test suite investigates connection lifecycle and identifies why connections
 //! close immediately after establishment in communitas-core P2P messaging tests.
 //!
-//! Based on: ANT_QUIC_COMPREHENSIVE_SPEC.md
+//! Based on: SAORSA_TRANSPORT_COMPREHENSIVE_SPEC.md
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     EndpointRole, NatTraversalEvent, PeerId, QuicNodeConfig, QuicP2PNode, auth::AuthConfig,
 };
 use std::net::SocketAddr;

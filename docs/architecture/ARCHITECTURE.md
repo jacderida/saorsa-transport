@@ -1,14 +1,14 @@
-# ant-quic Architecture
+# saorsa-transport Architecture
 
 ## Overview
 
-ant-quic is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks. It extends the QUIC protocol with NAT traversal capabilities based on draft-seemann-quic-nat-traversal-02 and draft-ietf-quic-address-discovery-00.
+saorsa-transport is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks. It extends the QUIC protocol with NAT traversal capabilities based on draft-seemann-quic-nat-traversal-02 and draft-ietf-quic-address-discovery-00.
 
 **v0.13.0+: Pure Symmetric P2P Architecture**
 - Every node is identical - can connect, accept, and coordinate
 - 100% Post-Quantum Cryptography (ML-KEM-768, ML-DSA-65) on every connection
 - No client/server/bootstrap role distinctions
-- Pure PQC Raw Public Keys for authentication (see `docs/rfcs/ant-quic-pqc-authentication.md`)
+- Pure PQC Raw Public Keys for authentication (see `docs/rfcs/saorsa-transport-pqc-authentication.md`)
 
 ## Three-Layer Architecture
 
@@ -84,7 +84,7 @@ This layer provides developer-friendly APIs wrapping the low-level protocol.
 User-facing applications demonstrating the library capabilities.
 
 #### Main Binary
-- **`src/bin/ant-quic.rs`** - Full QUIC P2P implementation
+- **`src/bin/saorsa-transport.rs`** - Full QUIC P2P implementation
   - Uses symmetric P2P model (v0.13.0+)
   - Implements chat with peer discovery
   - Dashboard support for monitoring
@@ -100,7 +100,7 @@ User-facing applications demonstrating the library capabilities.
 ### Connection Establishment Flow
 
 ```
-Application (ant-quic)
+Application (saorsa-transport)
     ↓
 P2pEndpoint (v0.13.0+)
     ↓
@@ -153,7 +153,7 @@ There are no special roles. The term "known_peers" replaces "bootstrap_nodes" - 
 - Ed25519 keys for peer identity
 - X25519 + ML-KEM-768 hybrid key exchange (IANA 0x11EC)
 - Ed25519 + ML-DSA-65 hybrid signatures (0x0920)
-- See `docs/rfcs/ant-quic-pqc-authentication.md` for full specification
+- See `docs/rfcs/saorsa-transport-pqc-authentication.md` for full specification
 
 ### 100% Post-Quantum Cryptography (v0.13.0+)
 - ML-KEM-768 key encapsulation on every connection
@@ -166,7 +166,7 @@ There are no special roles. The term "known_peers" replaces "bootstrap_nodes" - 
 ### For Library Users (v0.13.0+)
 
 ```rust
-use ant_quic::{P2pEndpoint, P2pConfig};
+use saorsa_transport::{P2pEndpoint, P2pConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -218,7 +218,7 @@ The architecture supports extensions through:
 ### Completed
 - Core QUIC protocol (RFC 9000)
 - NAT traversal extension frames (0x3d7e90+, 0x9f81a6+)
-- Pure PQC Raw Public Keys (ant-quic-pqc-authentication.md)
+- Pure PQC Raw Public Keys (saorsa-transport-pqc-authentication.md)
 - 100% Post-Quantum Cryptography (v0.13.0+)
 - Symmetric P2P architecture (v0.13.0+)
 - High-level APIs (`P2pEndpoint`, `NatTraversalEndpoint`)
@@ -268,5 +268,5 @@ Ensure all changes are compatible with the core specifications:
 - RFC 9000 (QUIC)
 - draft-seemann-quic-nat-traversal-02
 - draft-ietf-quic-address-discovery-00
-- ant-quic-pqc-authentication.md (Pure PQC Raw Public Keys)
+- saorsa-transport-pqc-authentication.md (Pure PQC Raw Public Keys)
 - FIPS 203 (ML-KEM), FIPS 204 (ML-DSA)

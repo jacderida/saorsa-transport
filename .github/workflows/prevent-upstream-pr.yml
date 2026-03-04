@@ -9,7 +9,7 @@ on:
 jobs:
   check-pr-target:
     runs-on: ubuntu-latest
-    if: github.repository == 'dirvine/ant-quic' || github.repository == 'saorsa-labs/ant-quic'
+    if: github.repository == 'saorsa-labs/saorsa-transport'
     steps:
       - name: Check PR Target
         run: |
@@ -20,15 +20,15 @@ jobs:
           if [[ "${{ github.event.pull_request.base.repo.full_name }}" == "quinn-rs/quinn" ]]; then
             echo "❌ ERROR: This PR targets quinn-rs/quinn!"
             echo ""
-            echo "ant-quic is NOT a fork of Quinn - it's an independent project."
-            echo "PRs should target saorsa-labs/ant-quic only."
+            echo "saorsa-transport is NOT a fork of Quinn - it's an independent project."
+            echo "PRs should target saorsa-labs/saorsa-transport only."
             echo ""
             echo "Please close this PR and create a new one targeting:"
-            echo "  https://github.com/saorsa-labs/ant-quic"
+            echo "  https://github.com/saorsa-labs/saorsa-transport"
             exit 1
           fi
 
-          echo "✅ PR correctly targets ant-quic repository"
+          echo "✅ PR correctly targets saorsa-transport repository"
 
       - name: Add Warning Comment
         if: |
@@ -41,5 +41,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '⚠️ **Reminder**: ant-quic is an independent project, not a fork of Quinn. We do not contribute changes back to quinn-rs/quinn.'
+              body: '⚠️ **Reminder**: saorsa-transport is an independent project, not a fork of Quinn. We do not contribute changes back to quinn-rs/quinn.'
             })

@@ -20,7 +20,7 @@ fn test_key_generation_speed() {
     // ML-DSA-65 key generation is slower than Ed25519 - allow more time
     super::utils::assert_duration(Duration::from_millis(500), || {
         // Test that ML-DSA-65 key generation completes in reasonable time
-        use ant_quic::crypto::raw_public_keys::pqc::generate_ml_dsa_keypair;
+        use saorsa_transport::crypto::raw_public_keys::pqc::generate_ml_dsa_keypair;
         let (_public_key, _secret_key) = generate_ml_dsa_keypair().expect("keygen");
         // Test completed - ML-DSA-65 keypair generated successfully
     });

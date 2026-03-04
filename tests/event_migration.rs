@@ -6,8 +6,8 @@
 //! End-to-end tests for event address migration from SocketAddr to TransportAddr.
 //! Validates the entire event pipeline with new address types.
 
-use ant_quic::transport::TransportAddr;
-use ant_quic::{P2pConfig, P2pEndpoint, P2pEvent};
+use saorsa_transport::transport::TransportAddr;
+use saorsa_transport::{P2pConfig, P2pEndpoint, P2pEvent};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
@@ -71,7 +71,7 @@ fn test_peer_connected_event_construction_udp() {
     let event = P2pEvent::PeerConnected {
         addr: TransportAddr::Udp(socket_addr),
         public_key: Some(test_public_key.clone()),
-        side: ant_quic::Side::Client,
+        side: saorsa_transport::Side::Client,
     };
 
     // Verify we can destructure it correctly
@@ -123,7 +123,7 @@ fn test_event_clone_for_broadcast() {
     let original = P2pEvent::PeerConnected {
         addr: TransportAddr::Udp(socket_addr),
         public_key: Some(vec![0xaa; 32]),
-        side: ant_quic::Side::Server,
+        side: saorsa_transport::Side::Server,
     };
 
     // Clone is required for broadcast channel
@@ -161,7 +161,7 @@ fn test_multi_transport_events() {
     let udp_event = P2pEvent::PeerConnected {
         addr: TransportAddr::Udp(udp_addr),
         public_key: Some(vec![0x01; 32]),
-        side: ant_quic::Side::Client,
+        side: saorsa_transport::Side::Client,
     };
 
     // BLE event
@@ -171,7 +171,7 @@ fn test_multi_transport_events() {
             service_uuid: None,
         },
         public_key: Some(vec![0x02; 32]),
-        side: ant_quic::Side::Server,
+        side: saorsa_transport::Side::Server,
     };
 
     // Verify we can distinguish between them
@@ -197,7 +197,7 @@ fn test_transport_aware_event_handling() {
         P2pEvent::PeerConnected {
             addr: TransportAddr::Udp("10.0.0.1:8080".parse().expect("valid")),
             public_key: Some(vec![0x01; 32]),
-            side: ant_quic::Side::Client,
+            side: saorsa_transport::Side::Client,
         },
         P2pEvent::PeerConnected {
             addr: TransportAddr::Ble {
@@ -205,7 +205,7 @@ fn test_transport_aware_event_handling() {
                 service_uuid: None,
             },
             public_key: Some(vec![0x02; 32]),
-            side: ant_quic::Side::Server,
+            side: saorsa_transport::Side::Server,
         },
         P2pEvent::ExternalAddressDiscovered {
             addr: TransportAddr::Udp("203.0.113.1:9000".parse().expect("valid")),
@@ -243,7 +243,7 @@ fn test_backward_compatibility_with_as_socket_addr() {
     let event = P2pEvent::PeerConnected {
         addr: TransportAddr::Udp(socket_addr),
         public_key: Some(vec![0xff; 32]),
-        side: ant_quic::Side::Client,
+        side: saorsa_transport::Side::Client,
     };
 
     // Simulate legacy code that expects SocketAddr
@@ -286,7 +286,7 @@ fn test_event_debug_formatting() {
     let event = P2pEvent::PeerConnected {
         addr: TransportAddr::Udp("192.168.0.100:9001".parse().expect("valid")),
         public_key: Some(vec![0x55; 32]),
-        side: ant_quic::Side::Client,
+        side: saorsa_transport::Side::Client,
     };
 
     let debug = format!("{:?}", event);

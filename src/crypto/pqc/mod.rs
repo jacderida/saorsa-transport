@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Post-Quantum Cryptography module for ant-quic
+//! Post-Quantum Cryptography module for saorsa-transport
 //!
 //! v0.2: Pure PQC - NO hybrid or classical algorithms.
 //!

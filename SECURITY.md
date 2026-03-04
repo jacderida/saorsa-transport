@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-We take security seriously and actively maintain the following versions of ant-quic:
+We take security seriously and actively maintain the following versions of saorsa-transport:
 
 | Version | Supported          |
 | ------- | ------------------ |
@@ -12,7 +12,7 @@ We take security seriously and actively maintain the following versions of ant-q
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in ant-quic, please report it responsibly.
+If you discover a security vulnerability in saorsa-transport, please report it responsibly.
 
 ### How to Report
 
@@ -60,7 +60,7 @@ We employ multiple automated security measures:
 
 ### Security Best Practices
 
-When contributing to ant-quic:
+When contributing to saorsa-transport:
 
 1. **Dependencies**
    - Minimize external dependencies
@@ -126,7 +126,7 @@ Subscribe to security announcements:
 
 ## Compliance
 
-ant-quic follows security best practices from:
+saorsa-transport follows security best practices from:
 - [NIST Cybersecurity Framework](https://www.nist.gov/cyberframework)
 - [OWASP Secure Coding Practices](https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/)
 - [Rust Security Guidelines](https://anssi-fr.github.io/rust-guide/)
@@ -135,4 +135,4 @@ ant-quic follows security best practices from:
 
 - Security Team: security@maidsafe.net
 - Project Maintainers: @dirvine
-- Security Advisory URL: https://github.com/dirvine/ant-quic/security/advisories
+- Security Advisory URL: https://github.com/saorsa-labs/saorsa-transport/security/advisories

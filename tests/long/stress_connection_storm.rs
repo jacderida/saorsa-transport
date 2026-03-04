@@ -6,7 +6,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     Endpoint, EndpointConfig, ServerConfig, ClientConfig,
     TransportConfig, VarInt,
 };

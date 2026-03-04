@@ -1,10 +1,10 @@
 //! Basic Post-Quantum Cryptography example
 //!
-//! This example demonstrates the simplest way to enable PQC in ant-quic
+//! This example demonstrates the simplest way to enable PQC in saorsa-transport
 //! using the QuicP2PNode high-level API.
 
 
-use ant_quic::{
+use saorsa_transport::{
     auth::AuthConfig,
     crypto::pqc::{PqcConfig, PqcMode},
     crypto::raw_public_keys::key_utils::{

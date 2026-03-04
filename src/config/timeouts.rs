@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Timeout configuration constants for ant-quic
+//! Timeout configuration constants for saorsa-transport
 //!
 //! This module centralizes all timeout and duration constants used throughout
 //! the codebase to improve maintainability and configurability.

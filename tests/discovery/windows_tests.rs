@@ -11,8 +11,8 @@ use std::time::Duration;
 #[cfg(windows)]
 mod windows_tests {
     use super::*;
-    use ant_quic::discovery::{NetworkDiscovery, NetworkInterface, DiscoveryError};
-    use ant_quic::discovery::windows::WindowsDiscovery;
+    use saorsa_transport::discovery::{NetworkDiscovery, NetworkInterface, DiscoveryError};
+    use saorsa_transport::discovery::windows::WindowsDiscovery;
 
     #[test]
     fn test_windows_discovery_creation() {
@@ -115,8 +115,8 @@ fn test_windows_discovery_mock() {
     // On Windows, this is just an extra test
     // On non-Windows, this is the only test that runs
     
-    use ant_quic::discovery::mock::MockDiscovery;
-    use ant_quic::discovery::NetworkDiscovery;
+    use saorsa_transport::discovery::mock::MockDiscovery;
+    use saorsa_transport::discovery::NetworkDiscovery;
     
     let mock = MockDiscovery::with_simple_config();
     let interfaces = mock.discover_interfaces().unwrap();

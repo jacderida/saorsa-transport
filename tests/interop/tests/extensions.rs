@@ -4,7 +4,7 @@
 ///
 /// Tests QUIC extensions including transport parameters, frame types, and error codes
 use super::utils;
-use ant_quic::high_level::Endpoint;
+use saorsa_transport::high_level::Endpoint;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;

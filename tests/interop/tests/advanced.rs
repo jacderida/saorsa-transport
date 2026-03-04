@@ -4,7 +4,7 @@
 ///
 /// Tests advanced QUIC features including 0-RTT, connection migration, multipath, and ECN
 use super::utils;
-use ant_quic::high_level::Endpoint;
+use saorsa_transport::high_level::Endpoint;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;

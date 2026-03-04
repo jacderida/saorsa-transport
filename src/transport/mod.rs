@@ -5,9 +5,9 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Multi-transport abstraction layer for ant-quic
+//! Multi-transport abstraction layer for saorsa-transport
 //!
-//! This module provides a transport abstraction that enables ant-quic to operate
+//! This module provides a transport abstraction that enables saorsa-transport to operate
 //! over multiple physical mediums beyond UDP/IP. The design is based on the
 //! multi-transport architecture described in `docs/research/CONSTRAINED_TRANSPORTS.md`.
 //!
@@ -54,7 +54,7 @@
 //! # Example
 //!
 //! ```rust
-//! use ant_quic::transport::{
+//! use saorsa_transport::transport::{
 //!     TransportAddr, TransportCapabilities, TransportType, ProtocolEngine,
 //! };
 //! use std::net::SocketAddr;
@@ -114,10 +114,10 @@ pub use udp::UdpTransport;
 // Re-export BLE transport provider when feature is enabled
 #[cfg(feature = "ble")]
 pub use ble::{
-    ANT_QUIC_SERVICE_UUID, BleConfig, BleConnection, BleConnectionState, BleTransport,
-    CCCD_DISABLE, CCCD_ENABLE_INDICATION, CCCD_ENABLE_NOTIFICATION, CCCD_UUID,
-    CharacteristicHandle, ConnectionPoolStats, DiscoveredDevice, RX_CHARACTERISTIC_UUID,
-    ResumeToken, ScanEvent, ScanState, TX_CHARACTERISTIC_UUID,
+    BleConfig, BleConnection, BleConnectionState, BleTransport, CCCD_DISABLE,
+    CCCD_ENABLE_INDICATION, CCCD_ENABLE_NOTIFICATION, CCCD_UUID, CharacteristicHandle,
+    ConnectionPoolStats, DiscoveredDevice, RX_CHARACTERISTIC_UUID, ResumeToken,
+    SAORSA_TRANSPORT_SERVICE_UUID, ScanEvent, ScanState, TX_CHARACTERISTIC_UUID,
 };
 
 /// Create a default transport registry with UDP support
@@ -128,7 +128,7 @@ pub use ble::{
 /// # Example
 ///
 /// ```rust,ignore
-/// use ant_quic::transport::default_registry;
+/// use saorsa_transport::transport::default_registry;
 ///
 /// let registry = default_registry("0.0.0.0:0").await?;
 /// assert!(registry.has_quic_capable_transport());

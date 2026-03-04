@@ -4,14 +4,14 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use saorsa_transport::{
     config::{ClientConfig, ServerConfig},
     crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey},
     crypto::raw_public_keys::pqc::{create_subject_public_key_info, generate_ml_dsa_keypair},
     high_level::Endpoint,
     trust::{self, EventCollector, FsPinStore, TransportPolicy},
 };
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::{net::SocketAddr, sync::Arc};
 use tempfile::TempDir;
 use tokio::time::{Duration, timeout};
@@ -35,8 +35,8 @@ fn spki_from_pk(pk: &MlDsaPublicKey) -> Vec<u8> {
 }
 
 async fn loopback_pair() -> (
-    ant_quic::high_level::Connection,
-    ant_quic::high_level::Connection,
+    saorsa_transport::high_level::Connection,
+    saorsa_transport::high_level::Connection,
 ) {
     let (chain, key) = gen_self_signed_cert();
     let server_cfg = ServerConfig::with_single_cert(chain.clone(), key).expect("server cfg");
@@ -61,14 +61,14 @@ async fn loopback_pair() -> (
     let client_cfg = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
     let mut client = Endpoint::client(([127, 0, 0, 1], 0).into()).expect("client ep");
     client.set_default_client_config(client_cfg);
-    let c_conn: ant_quic::high_level::Connection = timeout(
+    let c_conn: saorsa_transport::high_level::Connection = timeout(
         Duration::from_secs(10),
         client.connect(addr, "localhost").expect("start"),
     )
     .await
     .unwrap()
     .unwrap();
-    let s_conn: ant_quic::high_level::Connection = accept.await.unwrap();
+    let s_conn: saorsa_transport::high_level::Connection = accept.await.unwrap();
     (c_conn, s_conn)
 }
 
@@ -142,8 +142,8 @@ async fn binding_over_stream_reject_on_mismatch() {
         .expect("send ok");
     let err = recv_task.await.unwrap().expect_err("should reject");
     match err {
-        ant_quic::trust::TrustError::ChannelBinding(_) | ant_quic::trust::TrustError::NotPinned => {
-        }
+        saorsa_transport::trust::TrustError::ChannelBinding(_)
+        | saorsa_transport::trust::TrustError::NotPinned => {}
         _ => panic!("unexpected err"),
     }
 }

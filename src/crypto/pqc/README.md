@@ -1,6 +1,6 @@
 # Post-Quantum Cryptography Module
 
-This module implements post-quantum cryptography support for ant-quic.
+This module implements post-quantum cryptography support for saorsa-transport.
 
 ## Structure
 
@@ -91,16 +91,16 @@ The PQC module is ready with placeholder implementations:
 
 ## Usage
 
-PQC is always enabled. Add ant-quic as a normal dependency:
+PQC is always enabled. Add saorsa-transport as a normal dependency:
 ```toml
 [dependencies]
-ant-quic = "0.4"
+saorsa-transport = "0.4"
 ```
 
 ### Example Usage
 
 ```rust
-use ant_quic::crypto::pqc::{ml_kem::MlKem768, ml_dsa::MlDsa65};
+use saorsa_transport::crypto::pqc::{ml_kem::MlKem768, ml_dsa::MlDsa65};
 
 // Key Encapsulation
 let kem = MlKem768::new();
@@ -124,7 +124,7 @@ match dsa.generate_keypair() {
 // Ed25519 is used ONLY for 32-byte PeerId compact identifier
 
 // TLS Integration (v0.2: Pure PQC)
-use ant_quic::crypto::pqc::tls::{PqcTlsExtension, NamedGroup, NegotiationResult};
+use saorsa_transport::crypto::pqc::tls::{PqcTlsExtension, NamedGroup, NegotiationResult};
 
 let tls_ext = PqcTlsExtension::new();
 
@@ -142,7 +142,7 @@ match result {
 }
 
 // Memory Pool
-use ant_quic::crypto::pqc::memory_pool::{PqcMemoryPool, PoolConfig};
+use saorsa_transport::crypto::pqc::memory_pool::{PqcMemoryPool, PoolConfig};
 
 let pool = PqcMemoryPool::new(PoolConfig::default());
 
@@ -161,7 +161,7 @@ let pool = PqcMemoryPool::new(PoolConfig::default());
 println!("Hit rate: {:.1}%", pool.stats().hit_rate());
 
 // Raw Public Keys (PQC)
-use ant_quic::crypto::raw_public_keys::pqc::{ExtendedRawPublicKey, PqcRawPublicKeyVerifier};
+use saorsa_transport::crypto::raw_public_keys::pqc::{ExtendedRawPublicKey, PqcRawPublicKeyVerifier};
 
 // Create Ed25519 key (classical)
 let (_, ed25519_key) = generate_ed25519_keypair();
@@ -192,8 +192,8 @@ verifier.add_trusted_key(extended_key);
 verifier.add_trusted_key(pqc_key);
 
 // rustls Integration (placeholder)
-use ant_quic::{ClientConfig, ServerConfig};
-use ant_quic::crypto::pqc::rustls_provider::{with_pqc_support, with_pqc_support_server};
+use saorsa_transport::{ClientConfig, ServerConfig};
+use saorsa_transport::crypto::pqc::rustls_provider::{with_pqc_support, with_pqc_support_server};
 
 // Client with PQC support
 let client_config = ClientConfig::try_with_platform_verifier()?;
@@ -204,7 +204,7 @@ let server_config = ServerConfig::with_single_cert(certs, key)?;
 let pqc_server = with_pqc_support_server(server_config)?;
 
 // Check PQC support
-use ant_quic::crypto::pqc::rustls_provider::PqcConfigExt;
+use saorsa_transport::crypto::pqc::rustls_provider::PqcConfigExt;
 assert!(pqc_client.has_pqc_support());
 assert!(pqc_server.has_pqc_support());
 ```
@@ -214,10 +214,10 @@ assert!(pqc_server.has_pqc_support());
 Run tests with:
 ```bash
 # Without PQC feature
-cargo test --package ant-quic --lib crypto::pqc
+cargo test --package saorsa-transport --lib crypto::pqc
 
 # With PQC feature
-cargo test --package ant-quic --lib crypto::pqc --features pqc
+cargo test --package saorsa-transport --lib crypto::pqc --features pqc
 ```
 
 All tests pass with appropriate error messages indicating that the actual cryptographic operations are not yet available in aws-lc-rs.

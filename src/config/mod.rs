@@ -196,7 +196,7 @@ impl EndpointConfig {
     /// Checks environment variables first, then falls back to configuration
     pub fn address_discovery_enabled(&self) -> bool {
         // Check environment variable override
-        if let Ok(val) = std::env::var("ANT_QUIC_ADDRESS_DISCOVERY_ENABLED") {
+        if let Ok(val) = std::env::var("SAORSA_TRANSPORT_ADDRESS_DISCOVERY_ENABLED") {
             return val.to_lowercase() == "true" || val == "1";
         }
         self.address_discovery_enabled
@@ -213,7 +213,7 @@ impl EndpointConfig {
     /// Checks environment variables first, then falls back to configuration
     pub fn max_observation_rate(&self) -> u8 {
         // Check environment variable override
-        if let Ok(val) = std::env::var("ANT_QUIC_MAX_OBSERVATION_RATE") {
+        if let Ok(val) = std::env::var("SAORSA_TRANSPORT_MAX_OBSERVATION_RATE") {
             if let Ok(rate) = val.parse::<u8>() {
                 return rate.min(63); // Cap at protocol maximum
             }
@@ -281,7 +281,7 @@ impl EndpointConfig {
     /// # Examples
     ///
     /// ```
-    /// use ant_quic::config::{EndpointConfig, EndpointPortConfig, PortBinding};
+    /// use saorsa_transport::config::{EndpointConfig, EndpointPortConfig, PortBinding};
     /// use std::sync::Arc;
     ///
     /// let mut config = EndpointConfig::default();

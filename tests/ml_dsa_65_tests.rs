@@ -4,9 +4,9 @@
 
 #[cfg(test)]
 mod ml_dsa_65_tests {
-    use ant_quic::crypto::pqc::MlDsa65;
-    use ant_quic::crypto::pqc::MlDsaOperations;
-    use ant_quic::crypto::pqc::types::*;
+    use saorsa_transport::crypto::pqc::MlDsa65;
+    use saorsa_transport::crypto::pqc::MlDsaOperations;
+    use saorsa_transport::crypto::pqc::types::*;
 
     // Key size constants from FIPS 204
     const ML_DSA_65_PUBLIC_KEY_SIZE: usize = 1952;
@@ -304,9 +304,9 @@ mod ml_dsa_65_tests {
 
 #[cfg(test)]
 mod ml_dsa_65_api_tests {
-    use ant_quic::crypto::pqc::MlDsa65;
-    use ant_quic::crypto::pqc::MlDsaOperations;
-    use ant_quic::crypto::pqc::types::*;
+    use saorsa_transport::crypto::pqc::MlDsa65;
+    use saorsa_transport::crypto::pqc::MlDsaOperations;
+    use saorsa_transport::crypto::pqc::types::*;
 
     #[test]
     fn test_ml_dsa_65_type_safety() {

@@ -21,7 +21,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ant_quic::masque::relay_client::{MasqueRelayClient, RelayClientConfig};
+//! use saorsa_transport::masque::relay_client::{MasqueRelayClient, RelayClientConfig};
 //! use std::net::SocketAddr;
 //!
 //! // Connect to a relay

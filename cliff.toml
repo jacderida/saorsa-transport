@@ -1,11 +1,11 @@
-# git-cliff configuration for ant-quic
+# git-cliff configuration for saorsa-transport
 
 [changelog]
 # changelog header
 header = """
 # Changelog
 
-All notable changes to ant-quic will be documented in this file.
+All notable changes to saorsa-transport will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -22,7 +22,7 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
     ### {{ group | upper_first }}
     {% for commit in commits %}
-        - {% if commit.breaking %}[**BREAKING**] {% endif %}{{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/dirvine/ant-quic/commit/{{ commit.id }}))
+        - {% if commit.breaking %}[**BREAKING**] {% endif %}{{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/saorsa-labs/saorsa-transport/commit/{{ commit.id }}))
     {%- endfor %}
 {% endfor %}\n
 """
@@ -42,7 +42,7 @@ filter_unconventional = true
 split_commits = false
 # regex for preprocessing the commit messages
 commit_preprocessors = [
-    { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/dirvine/ant-quic/issues/${2}))" },
+    { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/saorsa-labs/saorsa-transport/issues/${2}))" },
 ]
 # regex for parsing and grouping commits
 commit_parsers = [

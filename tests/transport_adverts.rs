@@ -13,11 +13,13 @@
 //! - Transport-aware candidate selection
 //! - Backward compatibility with UDP-only peers
 
-use ant_quic::coding::Codec;
-use ant_quic::nat_traversal::CapabilityFlags;
-use ant_quic::nat_traversal::frames::{AddAddress, PunchMeNow, RemoveAddress};
-use ant_quic::transport::{LoRaParams, TransportAddr, TransportCapabilities, TransportType};
 use bytes::BytesMut;
+use saorsa_transport::coding::Codec;
+use saorsa_transport::nat_traversal::CapabilityFlags;
+use saorsa_transport::nat_traversal::frames::{AddAddress, PunchMeNow, RemoveAddress};
+use saorsa_transport::transport::{
+    LoRaParams, TransportAddr, TransportCapabilities, TransportType,
+};
 use std::net::SocketAddr;
 
 // ============ Wire Format Tests ============

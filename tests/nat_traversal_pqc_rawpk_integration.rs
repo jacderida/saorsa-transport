@@ -5,11 +5,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod pqc_integration {
-    use ant_quic::VarInt;
-    use ant_quic::crypto::raw_public_keys::pqc::{
+    use saorsa_transport::VarInt;
+    use saorsa_transport::crypto::raw_public_keys::pqc::{
         PqcRawPublicKeyVerifier, create_subject_public_key_info, generate_ml_dsa_keypair,
     };
-    use ant_quic::frame::nat_traversal_unified::{
+    use saorsa_transport::frame::nat_traversal_unified::{
         NatTraversalFrameConfig, TRANSPORT_PARAM_RFC_NAT_TRAVERSAL, peer_supports_rfc_nat,
     };
 

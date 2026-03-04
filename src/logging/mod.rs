@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-/// Comprehensive Logging System for ant-quic
+/// Comprehensive Logging System for saorsa-transport
 ///
 /// This module provides structured logging capabilities for debugging,
 /// monitoring, and analyzing QUIC connections, NAT traversal, and
@@ -60,7 +60,7 @@ pub fn init_logging(config: LoggingConfig) -> Result<(), LoggingError> {
 
     // Initialize tracing subscriber
     let env_filter = EnvFilter::from_default_env().add_directive(
-        "ant_quic=debug"
+        "saorsa_transport=debug"
             .parse()
             .expect("Static directive should always parse"),
     );
@@ -88,7 +88,7 @@ pub fn init_logging(config: LoggingConfig) -> Result<(), LoggingError> {
             .init();
     }
 
-    info!("ant-quic logging system initialized");
+    info!("saorsa-transport logging system initialized");
     Ok(())
 }
 
@@ -395,7 +395,7 @@ pub fn log_error(message: &str, context: ErrorContext) {
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: Level::ERROR,
-        target: format!("ant_quic::{}", context.component),
+        target: format!("saorsa_transport::{}", context.component),
         message: message.to_string(),
         fields,
         span_id: None,
@@ -414,7 +414,7 @@ pub fn log_warning(message: &str, context: WarningContext) {
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: Level::WARN,
-        target: format!("ant_quic::{}", context.component),
+        target: format!("saorsa_transport::{}", context.component),
         message: message.to_string(),
         fields,
         span_id: None,
@@ -433,7 +433,7 @@ pub fn log_info(message: &str, context: InfoContext) {
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: Level::INFO,
-        target: format!("ant_quic::{}", context.component),
+        target: format!("saorsa_transport::{}", context.component),
         message: message.to_string(),
         fields,
         span_id: None,
@@ -452,7 +452,7 @@ pub fn log_debug(message: &str, context: DebugContext) {
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: Level::DEBUG,
-        target: format!("ant_quic::{}", context.component),
+        target: format!("saorsa_transport::{}", context.component),
         message: message.to_string(),
         fields,
         span_id: None,
@@ -471,7 +471,7 @@ pub fn log_trace(message: &str, context: TraceContext) {
     logger().log_event(LogEvent {
         timestamp: Instant::now(),
         level: Level::TRACE,
-        target: format!("ant_quic::{}", context.component),
+        target: format!("saorsa_transport::{}", context.component),
         message: message.to_string(),
         fields,
         span_id: None,

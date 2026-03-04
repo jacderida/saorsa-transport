@@ -23,7 +23,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ant_quic::masque::relay_server::{MasqueRelayServer, MasqueRelayConfig};
+//! use saorsa_transport::masque::relay_server::{MasqueRelayServer, MasqueRelayConfig};
 //! use std::net::SocketAddr;
 //!
 //! let config = MasqueRelayConfig::default();

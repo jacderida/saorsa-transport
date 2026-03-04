@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 /// Interoperability Test Categories and Cases
-use ant_quic::high_level::Endpoint;
+use saorsa_transport::high_level::Endpoint;
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -32,8 +32,8 @@ pub struct TestCase {
 /// Common test utilities
 pub mod utils {
     use super::*;
-    use ant_quic::{ClientConfig, TransportConfig, VarInt};
-    use ant_quic::crypto::rustls::QuicClientConfig;
+    use saorsa_transport::{ClientConfig, TransportConfig, VarInt};
+    use saorsa_transport::crypto::rustls::QuicClientConfig;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::time::timeout;
@@ -70,7 +70,7 @@ pub mod utils {
         endpoint: &Endpoint,
         server_addr: &str,
         timeout_duration: Duration,
-    ) -> Result<ant_quic::high_level::Connection> {
+    ) -> Result<saorsa_transport::high_level::Connection> {
         let addr = server_addr.parse()?;
         
         timeout(timeout_duration, async {
@@ -100,7 +100,7 @@ pub mod utils {
     
     /// Test data transfer
     pub async fn test_data_transfer(
-        conn: &ant_quic::high_level::Connection,
+        conn: &saorsa_transport::high_level::Connection,
         size: usize,
     ) -> Result<HashMap<String, f64>> {
         let mut metrics = HashMap::new();

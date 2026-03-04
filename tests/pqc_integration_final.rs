@@ -1,4 +1,4 @@
-//! Final integration tests for PQC implementation in ant-quic
+//! Final integration tests for PQC implementation in saorsa-transport
 //!
 //! v0.13.0+: PQC is always enabled (100% PQC, no classical crypto).
 //! This test suite verifies that all PQC components are properly integrated
@@ -6,12 +6,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use saorsa_transport::{
     Endpoint,
     config::{ClientConfig, ServerConfig},
     crypto::pqc::{MlDsa65, MlDsaOperations, MlKem768, MlKemOperations, PqcConfigBuilder},
 };
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;

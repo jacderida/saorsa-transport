@@ -45,7 +45,7 @@ impl MlDsaOperations for MlDsa65 {
             .generate_keypair()
             .map_err(|e| PqcError::KeyGenerationFailed(format!("Key generation failed: {}", e)))?;
 
-        // Convert saorsa-pqc types to ant-quic types
+        // Convert saorsa-pqc types to saorsa-transport types
         let ant_pub_key = MlDsaPublicKey::from_bytes(pub_key.as_bytes())
             .map_err(|_| PqcError::InvalidPublicKey)?;
         let ant_sec_key = MlDsaSecretKey::from_bytes(sec_key.as_bytes())
@@ -55,7 +55,7 @@ impl MlDsaOperations for MlDsa65 {
     }
 
     fn sign(&self, secret_key: &MlDsaSecretKey, message: &[u8]) -> PqcResult<MlDsaSignature> {
-        // Convert ant-quic types to saorsa-pqc types
+        // Convert saorsa-transport types to saorsa-pqc types
         let saorsa_secret_key = SaorsaMlDsaSecretKey::from_bytes(secret_key.as_bytes())
             .map_err(|_| PqcError::InvalidSecretKey)?;
 
@@ -64,7 +64,7 @@ impl MlDsaOperations for MlDsa65 {
             .sign(&saorsa_secret_key, message)
             .map_err(|e| PqcError::SigningFailed(format!("Signing failed: {}", e)))?;
 
-        // Convert back to ant-quic types
+        // Convert back to saorsa-transport types
         let ant_signature = MlDsaSignature::from_bytes(signature.as_bytes())
             .map_err(|_| PqcError::InvalidSignature)?;
 
@@ -77,7 +77,7 @@ impl MlDsaOperations for MlDsa65 {
         message: &[u8],
         signature: &MlDsaSignature,
     ) -> PqcResult<bool> {
-        // Convert ant-quic types to saorsa-pqc types
+        // Convert saorsa-transport types to saorsa-pqc types
         let saorsa_public_key = SaorsaMlDsaPublicKey::from_bytes(public_key.as_bytes())
             .map_err(|_| PqcError::InvalidPublicKey)?;
         let saorsa_signature = SaorsaMlDsaSignature::from_bytes(signature.as_bytes())

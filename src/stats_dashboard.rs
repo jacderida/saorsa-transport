@@ -283,7 +283,7 @@ impl StatsDashboard {
 
         // Title
         output.push_str(&format!(
-            "{}🚀 ant-quic Connection Statistics Dashboard\n\n{}",
+            "{}🚀 saorsa-transport Connection Statistics Dashboard\n\n{}",
             terminal_ui::colors::BOLD,
             terminal_ui::colors::RESET
         ));

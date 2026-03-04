@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     auth::AuthConfig,
     crypto::raw_public_keys::key_utils::{
         derive_peer_id_from_public_key, generate_ed25519_keypair,

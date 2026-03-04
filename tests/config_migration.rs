@@ -15,8 +15,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::transport::{TransportAddr, TransportType};
-use ant_quic::{NodeConfig, P2pConfig};
+use saorsa_transport::transport::{TransportAddr, TransportType};
+use saorsa_transport::{NodeConfig, P2pConfig};
 use std::net::SocketAddr;
 
 // ============================================================================

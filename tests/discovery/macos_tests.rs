@@ -11,8 +11,8 @@ use std::time::Duration;
 #[cfg(target_os = "macos")]
 mod macos_tests {
     use super::*;
-    use ant_quic::discovery::{NetworkDiscovery, NetworkInterface, DiscoveryError};
-    use ant_quic::discovery::macos::MacOSDiscovery;
+    use saorsa_transport::discovery::{NetworkDiscovery, NetworkInterface, DiscoveryError};
+    use saorsa_transport::discovery::macos::MacOSDiscovery;
 
     #[test]
     fn test_macos_discovery_creation() {
@@ -126,8 +126,8 @@ fn test_macos_discovery_mock() {
     // On macOS, this is just an extra test
     // On non-macOS, this is the only test that runs
     
-    use ant_quic::discovery::mock::MockDiscovery;
-    use ant_quic::discovery::NetworkDiscovery;
+    use saorsa_transport::discovery::mock::MockDiscovery;
+    use saorsa_transport::discovery::NetworkDiscovery;
     
     let mock = MockDiscovery::with_simple_config();
     let interfaces = mock.discover_interfaces().unwrap();

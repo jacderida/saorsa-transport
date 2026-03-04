@@ -4,7 +4,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 // Import the frame types directly from the source
-use ant_quic::{
+use saorsa_transport::{
     VarInt,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
 };

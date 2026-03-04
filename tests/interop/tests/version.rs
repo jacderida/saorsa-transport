@@ -4,7 +4,7 @@
 ///
 /// Tests QUIC version negotiation including compatible versions, incompatible versions, and downgrades
 use super::utils;
-use ant_quic::{TransportConfig, VarInt, high_level::Endpoint};
+use saorsa_transport::{TransportConfig, VarInt, high_level::Endpoint};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;

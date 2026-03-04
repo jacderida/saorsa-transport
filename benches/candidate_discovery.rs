@@ -13,7 +13,7 @@ use std::{
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand::{Rng, thread_rng};
 
-use ant_quic::{CandidateAddress, CandidateSource, CandidateState};
+use saorsa_transport::{CandidateAddress, CandidateSource, CandidateState};
 
 /// Generate test IPv4 addresses for benchmarking
 fn generate_ipv4_addresses(count: usize) -> Vec<IpAddr> {

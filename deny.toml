@@ -1,4 +1,4 @@
-# cargo-deny configuration for ant-quic
+# cargo-deny configuration for saorsa-transport
 # This file defines security and license policies for dependencies
 
 [graph]

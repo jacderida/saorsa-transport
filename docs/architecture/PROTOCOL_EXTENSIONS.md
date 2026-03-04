@@ -1,10 +1,10 @@
-# ant-quic Protocol Extensions
+# saorsa-transport Protocol Extensions
 
-This document describes the QUIC protocol extensions implemented in ant-quic for NAT traversal and address discovery.
+This document describes the QUIC protocol extensions implemented in saorsa-transport for NAT traversal and address discovery.
 
 ## Overview
 
-ant-quic implements the following IETF drafts and custom extensions:
+saorsa-transport implements the following IETF drafts and custom extensions:
 
 1. **draft-ietf-quic-address-discovery-00** - QUIC Address Discovery
 2. **draft-seemann-quic-nat-traversal-02** - QUIC NAT Traversal
@@ -212,7 +212,7 @@ Type preferences:
 
 ### Symmetric NAT Handling
 
-For symmetric NATs, ant-quic implements port prediction:
+For symmetric NATs, saorsa-transport implements port prediction:
 
 1. **Linear Prediction**: Assumes sequential port allocation
 2. **Delta Prediction**: Based on observed port differences
@@ -351,8 +351,8 @@ cargo run --bin compliance-test -- \
 ### Enable Protocol Logging
 
 ```bash
-RUST_LOG=ant_quic::frame=trace,ant_quic::connection::nat_traversal=debug \
-    cargo run --bin ant-quic
+RUST_LOG=saorsa_transport::frame=trace,saorsa_transport::connection::nat_traversal=debug \
+    cargo run --bin saorsa-transport
 ```
 
 ### Packet Capture

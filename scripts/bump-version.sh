@@ -1,5 +1,5 @@
 #!/bin/bash
-# Version bump helper script for ant-quic
+# Version bump helper script for saorsa-transport
 # Usage: ./scripts/bump-version.sh [major|minor|patch]
 
 set -e

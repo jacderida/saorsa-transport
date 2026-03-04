@@ -25,7 +25,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ant_quic::happy_eyeballs::{race_connect, HappyEyeballsConfig};
+//! use saorsa_transport::happy_eyeballs::{race_connect, HappyEyeballsConfig};
 //! use std::net::SocketAddr;
 //!
 //! let addresses: Vec<SocketAddr> = vec![
@@ -150,7 +150,7 @@ fn format_error_summary(errors: &[(SocketAddr, String)]) -> String {
 /// # Example
 ///
 /// ```rust,ignore
-/// use ant_quic::happy_eyeballs::{sort_addresses, HappyEyeballsConfig, AddressFamily};
+/// use saorsa_transport::happy_eyeballs::{sort_addresses, HappyEyeballsConfig, AddressFamily};
 ///
 /// let addrs: Vec<SocketAddr> = vec![
 ///     "192.168.1.1:80".parse().unwrap(),  // v4_a

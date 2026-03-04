@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates basic chat message serialization and handling.
 
-use ant_quic::chat::{ChatMessage, PeerInfo};
+use saorsa_transport::chat::{ChatMessage, PeerInfo};
 use std::time::SystemTime;
 
 fn main() {

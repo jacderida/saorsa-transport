@@ -4,9 +4,9 @@
 
 #[cfg(test)]
 mod ml_kem_768_tests {
-    use ant_quic::crypto::pqc::MlKem768;
-    use ant_quic::crypto::pqc::MlKemOperations;
-    use ant_quic::crypto::pqc::types::*;
+    use saorsa_transport::crypto::pqc::MlKem768;
+    use saorsa_transport::crypto::pqc::MlKemOperations;
+    use saorsa_transport::crypto::pqc::types::*;
 
     // Key size constants from FIPS 203
     const ML_KEM_768_PUBLIC_KEY_SIZE: usize = 1184;
@@ -280,9 +280,9 @@ mod ml_kem_768_tests {
 
 #[cfg(test)]
 mod ml_kem_768_api_tests {
-    use ant_quic::crypto::pqc::MlKem768;
-    use ant_quic::crypto::pqc::MlKemOperations;
-    use ant_quic::crypto::pqc::types::*;
+    use saorsa_transport::crypto::pqc::MlKem768;
+    use saorsa_transport::crypto::pqc::MlKemOperations;
+    use saorsa_transport::crypto::pqc::types::*;
 
     #[test]
     fn test_ml_kem_768_type_safety() {

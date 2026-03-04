@@ -1,4 +1,4 @@
-//! Platform-specific tests for ant-quic
+//! Platform-specific tests for saorsa-transport
 //!
 //! These tests verify platform-specific functionality and behavior
 
@@ -247,7 +247,7 @@ mod platform_wasm {
 // Cross-platform network utilities tests
 #[cfg(test)]
 mod network_utils {
-    use ant_quic::config::EndpointConfig;
+    use saorsa_transport::config::EndpointConfig;
 
     #[test]
     fn test_endpoint_config_cross_platform() {

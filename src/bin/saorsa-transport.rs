@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! ant-quic - P2P QUIC networking with NAT traversal
+//! saorsa-transport - P2P QUIC networking with NAT traversal
 //!
 //! This binary provides a command-line interface for running symmetric P2P nodes.
 //! All nodes are identical - they can connect to and accept connections from other nodes,
@@ -15,23 +15,25 @@
 //!
 //! Start a node listening on port 9000:
 //! ```bash
-//! ant-quic --listen 0.0.0.0:9000
+//! saorsa-transport --listen 0.0.0.0:9000
 //! ```
 //!
 //! Start a node and connect to known peers:
 //! ```bash
-//! ant-quic --known-peers 1.2.3.4:9000,5.6.7.8:9000
+//! saorsa-transport --known-peers 1.2.3.4:9000,5.6.7.8:9000
 //! ```
 //!
 //! Run throughput test:
 //! ```bash
-//! ant-quic --known-peers 1.2.3.4:9000 --connect 5.6.7.8:9001 --throughput-test
+//! saorsa-transport --known-peers 1.2.3.4:9000 --connect 5.6.7.8:9001 --throughput-test
 //! ```
 
-use ant_quic::host_identity::{HostIdentity, auto_storage};
-use ant_quic::transport::TransportAddr;
-use ant_quic::{ConnectionMethod, MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, TraversalPhase};
 use clap::{Parser, Subcommand};
+use saorsa_transport::host_identity::{HostIdentity, auto_storage};
+use saorsa_transport::transport::TransportAddr;
+use saorsa_transport::{
+    ConnectionMethod, MtuConfig, P2pConfig, P2pEndpoint, P2pEvent, TraversalPhase,
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -45,7 +47,7 @@ use tracing::{debug, error, info, warn};
 /// Default bootstrap nodes operated by Saorsa Labs
 ///
 /// These nodes are available for initial network discovery. They run the same
-/// ant-quic software as any other node and provide:
+/// saorsa-transport software as any other node and provide:
 /// - Initial peer discovery
 /// - NAT traversal coordination
 /// - External address observation (OBSERVED_ADDRESS frames)
@@ -54,13 +56,13 @@ const DEFAULT_BOOTSTRAP_NODES: &[&str] = &[
     "saorsa-2.saorsalabs.com:9000",
 ];
 
-/// ant-quic P2P node
+/// saorsa-transport P2P node
 ///
 /// A symmetric P2P node that can both connect to and accept connections from
 /// other nodes. All nodes are functionally identical - there is no client/server
 /// distinction.
 #[derive(Parser, Debug)]
-#[command(name = "ant-quic")]
+#[command(name = "saorsa-transport")]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Subcommand to run
@@ -199,7 +201,7 @@ enum IdentityAction {
         all_networks: bool,
 
         /// Data directory for stored identities
-        #[arg(long, default_value = "~/.ant-quic")]
+        #[arg(long, default_value = "~/.saorsa-transport")]
         data_dir: PathBuf,
     },
 
@@ -210,7 +212,7 @@ enum IdentityAction {
         force: bool,
 
         /// Data directory for stored identities
-        #[arg(long, default_value = "~/.ant-quic")]
+        #[arg(long, default_value = "~/.saorsa-transport")]
         data_dir: PathBuf,
     },
 
@@ -224,7 +226,7 @@ enum CacheAction {
     /// Show bootstrap cache statistics
     Stats {
         /// Data directory containing the cache
-        #[arg(long, default_value = "~/.ant-quic")]
+        #[arg(long, default_value = "~/.saorsa-transport")]
         data_dir: PathBuf,
     },
 
@@ -235,7 +237,7 @@ enum CacheAction {
         force: bool,
 
         /// Data directory containing the cache
-        #[arg(long, default_value = "~/.ant-quic")]
+        #[arg(long, default_value = "~/.saorsa-transport")]
         data_dir: PathBuf,
     },
 }
@@ -315,7 +317,9 @@ async fn main() -> anyhow::Result<()> {
     // Initialize logging
     let log_level = if args.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt()
-        .with_env_filter(format!("ant_quic={log_level},ant_quic={log_level}"))
+        .with_env_filter(format!(
+            "saorsa_transport={log_level},saorsa_transport={log_level}"
+        ))
         .init();
 
     // Handle subcommands first
@@ -323,7 +327,7 @@ async fn main() -> anyhow::Result<()> {
         return handle_command(command).await;
     }
 
-    info!("ant-quic v{}", env!("CARGO_PKG_VERSION"));
+    info!("saorsa-transport v{}", env!("CARGO_PKG_VERSION"));
     info!("Symmetric P2P node starting...");
 
     // Combine known_peers and bootstrap (bootstrap is an alias for backwards compat)
@@ -1463,8 +1467,8 @@ async fn handle_doctor_command() -> anyhow::Result<()> {
     // Check 3: Data directory
     print!("Checking data directory... ");
     let data_dir = dirs::home_dir()
-        .map(|h| h.join(".ant-quic"))
-        .unwrap_or_else(|| PathBuf::from(".ant-quic"));
+        .map(|h| h.join(".saorsa-transport"))
+        .unwrap_or_else(|| PathBuf::from(".saorsa-transport"));
     if data_dir.exists() {
         println!("OK ({})", data_dir.display());
         passed += 1;
@@ -1532,7 +1536,7 @@ async fn handle_doctor_command() -> anyhow::Result<()> {
 
     if issues.is_empty() {
         println!();
-        println!("All checks passed! Your system is ready to run ant-quic.");
+        println!("All checks passed! Your system is ready to run saorsa-transport.");
     } else {
         println!();
         println!("Issues found:");

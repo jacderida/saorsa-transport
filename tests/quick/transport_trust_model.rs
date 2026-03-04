@@ -6,8 +6,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic as quic;
-use ant_quic::crypto::raw_public_keys::pqc::{
+use saorsa_transport as quic;
+use saorsa_transport::crypto::raw_public_keys::pqc::{
     create_subject_public_key_info, generate_ml_dsa_keypair,
 };
 

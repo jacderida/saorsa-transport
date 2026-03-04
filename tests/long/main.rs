@@ -1,4 +1,4 @@
-//! Long-running test suite for ant-quic
+//! Long-running test suite for saorsa-transport
 //! These tests take > 5 minutes and include stress, performance, and comprehensive tests
 //!
 //! Run with: `cargo nextest run --test long -- --ignored`
@@ -13,10 +13,10 @@ pub mod utils {
     /// Timeout for long-running tests (30 minutes)
     pub const LONG_TEST_TIMEOUT: Duration = Duration::from_secs(1800);
 
-    /// Set up test logging with debug level for ant-quic
+    /// Set up test logging with debug level for saorsa-transport
     pub fn setup_test_logger() {
         let _ = tracing_subscriber::fmt()
-            .with_env_filter("ant_quic=debug,warn")
+            .with_env_filter("saorsa_transport=debug,warn")
             .try_init();
     }
 }

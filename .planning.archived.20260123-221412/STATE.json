@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "project": "ant-quic",
+  "project": "saorsa-transport",
   "active": false,
   "milestone": "multi-transport-core",
   "phase": "completed",

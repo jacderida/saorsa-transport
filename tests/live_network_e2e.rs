@@ -10,8 +10,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::transport::TransportAddr;
-use ant_quic::{P2pConfig, P2pEndpoint, P2pEvent};
+use saorsa_transport::transport::TransportAddr;
+use saorsa_transport::{P2pConfig, P2pEndpoint, P2pEvent};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
@@ -66,7 +66,7 @@ async fn test_external_address_discovery_live() -> anyhow::Result<()> {
     let config = P2pConfig::builder()
         .bind_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
         .known_peers(known_peers.clone())
-        .pqc(ant_quic::PqcConfig::default())
+        .pqc(saorsa_transport::PqcConfig::default())
         .build()?;
 
     let node = P2pEndpoint::new(config).await?;
@@ -168,7 +168,7 @@ async fn test_dual_stack_connectivity() -> anyhow::Result<()> {
         let config = P2pConfig::builder()
             .bind_addr(bind_addr)
             .known_peers(vec![peer_addr])
-            .pqc(ant_quic::PqcConfig::default())
+            .pqc(saorsa_transport::PqcConfig::default())
             .build()?;
 
         match P2pEndpoint::new(config).await {
@@ -211,7 +211,7 @@ async fn connect_to_node(addr: &str) -> anyhow::Result<()> {
     let config = P2pConfig::builder()
         .bind_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
         .known_peers(vec![peer_addr])
-        .pqc(ant_quic::PqcConfig::default())
+        .pqc(saorsa_transport::PqcConfig::default())
         .build()?;
 
     let node = P2pEndpoint::new(config).await?;

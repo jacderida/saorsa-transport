@@ -36,7 +36,7 @@ pub enum NamedGroup {
 }
 
 impl NamedGroup {
-    /// The primary/default group for ant-quic
+    /// The primary/default group for saorsa-transport
     pub const PRIMARY: Self = Self::MlKem768;
 
     /// Check if this is a pure PQC group (always true for this enum)
@@ -120,7 +120,7 @@ pub enum SignatureScheme {
 }
 
 impl SignatureScheme {
-    /// The primary/default signature scheme for ant-quic
+    /// The primary/default signature scheme for saorsa-transport
     pub const PRIMARY: Self = Self::MlDsa65;
 
     /// Check if this is a pure PQC scheme (always true for this enum)

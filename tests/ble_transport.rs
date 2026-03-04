@@ -23,12 +23,12 @@
 #![cfg(feature = "ble")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::transport::{
-    ANT_QUIC_SERVICE_UUID, BleConfig, BleConnection, BleConnectionState, BleTransport,
-    CCCD_DISABLE, CCCD_ENABLE_INDICATION, CCCD_ENABLE_NOTIFICATION, CCCD_UUID,
-    CharacteristicHandle, ConnectionPoolStats, DiscoveredDevice, RX_CHARACTERISTIC_UUID,
-    ResumeToken, ScanState, TX_CHARACTERISTIC_UUID, TransportCapabilities, TransportProvider,
-    TransportType,
+use saorsa_transport::transport::{
+    BleConfig, BleConnection, BleConnectionState, BleTransport, CCCD_DISABLE,
+    CCCD_ENABLE_INDICATION, CCCD_ENABLE_NOTIFICATION, CCCD_UUID, CharacteristicHandle,
+    ConnectionPoolStats, DiscoveredDevice, RX_CHARACTERISTIC_UUID, ResumeToken,
+    SAORSA_TRANSPORT_SERVICE_UUID, ScanState, TX_CHARACTERISTIC_UUID, TransportCapabilities,
+    TransportProvider, TransportType,
 };
 use std::time::Duration;
 
@@ -39,18 +39,22 @@ use std::time::Duration;
 #[test]
 fn test_service_uuid_format() {
     // Verify the service UUID is in correct format
-    assert_eq!(ANT_QUIC_SERVICE_UUID.len(), 16, "UUID should be 16 bytes");
+    assert_eq!(
+        SAORSA_TRANSPORT_SERVICE_UUID.len(),
+        16,
+        "UUID should be 16 bytes"
+    );
 
     // Verify it starts with our expected prefix
     assert_eq!(
-        &ANT_QUIC_SERVICE_UUID[..4],
+        &SAORSA_TRANSPORT_SERVICE_UUID[..4],
         &[0xa0, 0x3d, 0x7e, 0x9f],
         "Service UUID should have correct prefix"
     );
 
     // Verify it ends with 0x01 (service marker)
     assert_eq!(
-        ANT_QUIC_SERVICE_UUID[15], 0x01,
+        SAORSA_TRANSPORT_SERVICE_UUID[15], 0x01,
         "Service UUID should end with 0x01"
     );
 }
@@ -233,7 +237,7 @@ fn test_characteristic_handle_rx() {
 fn test_ble_config_default() {
     let config = BleConfig::default();
 
-    assert_eq!(config.service_uuid, ANT_QUIC_SERVICE_UUID);
+    assert_eq!(config.service_uuid, SAORSA_TRANSPORT_SERVICE_UUID);
     assert_eq!(
         config.session_cache_duration,
         Duration::from_secs(24 * 60 * 60)
@@ -478,7 +482,7 @@ async fn test_ble_transport_scanning() {
 
 /// Test connection to a BLE device
 #[tokio::test]
-#[ignore = "requires BLE hardware and nearby ant-quic peer"]
+#[ignore = "requires BLE hardware and nearby saorsa-transport peer"]
 async fn test_ble_transport_connection() {
     let transport = match BleTransport::new().await {
         Ok(t) => t,
@@ -496,15 +500,15 @@ async fn test_ble_transport_connection() {
 
     // Get discovered devices with our service
     let devices = transport.discovered_devices().await;
-    let ant_quic_devices: Vec<_> = devices.iter().filter(|d| d.has_service).collect();
+    let saorsa_transport_devices: Vec<_> = devices.iter().filter(|d| d.has_service).collect();
 
-    if ant_quic_devices.is_empty() {
-        println!("No ant-quic BLE peers found");
+    if saorsa_transport_devices.is_empty() {
+        println!("No saorsa-transport BLE peers found");
         return;
     }
 
     // Try to connect to the first one
-    let target = ant_quic_devices[0];
+    let target = saorsa_transport_devices[0];
     println!("Connecting to device {:02x?}", target.device_id);
 
     let result = transport.connect_to_device(target.device_id).await;
@@ -523,7 +527,7 @@ async fn test_ble_transport_connection() {
 
 /// Test send/receive data over BLE
 #[tokio::test]
-#[ignore = "requires BLE hardware and nearby ant-quic peer"]
+#[ignore = "requires BLE hardware and nearby saorsa-transport peer"]
 async fn test_ble_transport_data_transfer() {
     let _transport = match BleTransport::new().await {
         Ok(t) => t,
@@ -601,7 +605,7 @@ fn test_resume_token_efficiency() {
 /// Test that BLE capabilities indicate constrained engine
 #[test]
 fn test_ble_uses_constrained_engine() {
-    use ant_quic::transport::ProtocolEngine;
+    use saorsa_transport::transport::ProtocolEngine;
 
     let caps = TransportCapabilities::ble();
     let engine = ProtocolEngine::for_transport(&caps);
@@ -616,7 +620,7 @@ fn test_ble_uses_constrained_engine() {
 /// Test BLE address format
 #[test]
 fn test_ble_address_format() {
-    use ant_quic::transport::TransportAddr;
+    use saorsa_transport::transport::TransportAddr;
 
     // Create a BLE address
     let device_id = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];

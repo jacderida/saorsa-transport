@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ant_quic::{
+use saorsa_transport::{
     nat_traversal_api::{
         EndpointRole, NatTraversalConfig, NatTraversalEndpoint, NatTraversalEvent, PeerId,
     },

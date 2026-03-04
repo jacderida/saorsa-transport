@@ -202,11 +202,11 @@ impl DockerNatTestRunner {
 
         // Get container names
         let client1_container = format!(
-            "ant-quic-client{}",
+            "saorsa-transport-client{}",
             scenario.client1_nat.chars().last().unwrap_or('1')
         );
         let client2_container = format!(
-            "ant-quic-client{}",
+            "saorsa-transport-client{}",
             scenario.client2_nat.chars().last().unwrap_or('2')
         );
 
@@ -265,8 +265,8 @@ impl DockerNatTestRunner {
 
     /// Execute NAT traversal test between two containers
     async fn execute_nat_test(&self, client1: &str, client2: &str) -> Result<(bool, bool)> {
-        // Start ant-quic in listening mode on client2
-        let listen_cmd = format!("docker exec -d {client2} ant-quic --listen 0.0.0.0:9000");
+        // Start saorsa-transport in listening mode on client2
+        let listen_cmd = format!("docker exec -d {client2} saorsa-transport --listen 0.0.0.0:9000");
 
         Command::new("sh")
             .arg("-c")
@@ -282,7 +282,7 @@ impl DockerNatTestRunner {
 
         // Connect from client1 to client2
         let connect_cmd = format!(
-            "docker exec {client1} ant-quic --connect {peer_id} --bootstrap bootstrap:9000"
+            "docker exec {client1} saorsa-transport --connect {peer_id} --bootstrap bootstrap:9000"
         );
 
         let output = Command::new("sh")

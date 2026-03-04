@@ -88,7 +88,7 @@ impl ContextManager {
     /// # Example
     ///
     /// ```
-    /// use ant_quic::masque::ContextManager;
+    /// use saorsa_transport::masque::ContextManager;
     ///
     /// // Client creates a manager that allocates even IDs
     /// let client_mgr = ContextManager::new(true);

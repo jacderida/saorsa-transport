@@ -5,7 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     ClientConfig, Endpoint, ServerConfig, TransportConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
@@ -67,7 +67,7 @@ impl NatEnvironment {
 async fn test_basic_observed_address_flow() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting basic OBSERVED_ADDRESS frame flow test");
@@ -148,7 +148,7 @@ async fn test_basic_observed_address_flow() {
 async fn test_observed_address_with_nat() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting OBSERVED_ADDRESS with NAT test");
@@ -215,7 +215,7 @@ async fn test_observed_address_with_nat() {
 async fn test_multipath_observations() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting multipath observations test");
@@ -290,7 +290,7 @@ async fn test_multipath_observations() {
 async fn test_observation_rate_limiting() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting rate limiting test");
@@ -364,7 +364,7 @@ async fn test_observation_rate_limiting() {
 async fn test_observation_during_migration() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting migration observation test");

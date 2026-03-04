@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```
-//! use ant_quic::crypto::pqc::memory_pool::{PqcMemoryPool, PoolConfig};
+//! use saorsa_transport::crypto::pqc::memory_pool::{PqcMemoryPool, PoolConfig};
 //!
 //! let pool = PqcMemoryPool::new(PoolConfig::default());
 //!

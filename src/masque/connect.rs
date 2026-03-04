@@ -36,7 +36,7 @@
 //! # Example
 //!
 //! ```rust
-//! use ant_quic::masque::connect::{ConnectUdpRequest, ConnectUdpResponse};
+//! use saorsa_transport::masque::connect::{ConnectUdpRequest, ConnectUdpResponse};
 //! use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 //!
 //! // Create a bind request

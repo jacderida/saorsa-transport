@@ -38,7 +38,7 @@ fn main() {
     println!("  - Used for BSD, Android, iOS, etc.\n");
 
     // Test CandidateDiscoveryManager which uses the platform implementations internally
-    use ant_quic::candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig};
+    use saorsa_transport::candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig};
 
     println!("Testing CandidateDiscoveryManager (uses platform discovery internally):\n");
 

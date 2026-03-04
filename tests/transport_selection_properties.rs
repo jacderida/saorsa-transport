@@ -10,13 +10,13 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::TransportCapabilities;
-use ant_quic::transport::{
+use async_trait::async_trait;
+use proptest::prelude::*;
+use saorsa_transport::TransportCapabilities;
+use saorsa_transport::transport::{
     InboundDatagram, ProviderError, TransportAddr, TransportProvider, TransportRegistry,
     TransportStats, TransportType,
 };
-use async_trait::async_trait;
-use proptest::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -79,11 +79,11 @@ impl TransportProvider for MockTransportProvider {
         Some(TransportAddr::Udp("127.0.0.1:0".parse().unwrap()))
     }
 
-    fn protocol_engine(&self) -> ant_quic::transport::ProtocolEngine {
+    fn protocol_engine(&self) -> saorsa_transport::transport::ProtocolEngine {
         if self.capabilities.supports_full_quic() {
-            ant_quic::transport::ProtocolEngine::Quic
+            saorsa_transport::transport::ProtocolEngine::Quic
         } else {
-            ant_quic::transport::ProtocolEngine::Constrained
+            saorsa_transport::transport::ProtocolEngine::Constrained
         }
     }
 
@@ -392,7 +392,7 @@ proptest! {
             // Low: 1000..=99_999
             // Medium: 100_000..=9_999_999
             // High: >= 10_000_000
-            use ant_quic::transport::BandwidthClass;
+            use saorsa_transport::transport::BandwidthClass;
             match bandwidth_class {
                 BandwidthClass::VeryLow => prop_assert!(bps <= 999),
                 BandwidthClass::Low => prop_assert!((1_000..=99_999).contains(&bps)),
@@ -412,7 +412,7 @@ proptest! {
             let supports_quic = transport.capabilities().supports_full_quic();
             let engine = transport.protocol_engine();
 
-            use ant_quic::transport::ProtocolEngine;
+            use saorsa_transport::transport::ProtocolEngine;
             if supports_quic {
                 prop_assert_eq!(engine, ProtocolEngine::Quic);
             } else {

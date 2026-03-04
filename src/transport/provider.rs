@@ -12,7 +12,7 @@
 //!
 //! # Design
 //!
-//! The transport abstraction enables ant-quic to operate over any medium that can
+//! The transport abstraction enables saorsa-transport to operate over any medium that can
 //! deliver datagrams. Higher layers (protocol engines, routing) are unaware of
 //! the underlying transport characteristics.
 //!
@@ -23,7 +23,7 @@
 //!
 //! # Protocol Engine Selection
 //!
-//! Based on transport capabilities, ant-quic selects the appropriate protocol engine:
+//! Based on transport capabilities, saorsa-transport selects the appropriate protocol engine:
 //! - **QUIC Engine**: Full RFC 9000 for capable transports
 //! - **Constrained Engine**: Minimal protocol for limited transports
 //!

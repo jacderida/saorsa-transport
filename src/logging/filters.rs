@@ -91,7 +91,7 @@ impl LogFilter {
             return Some(level);
         }
 
-        // Check prefix matches (e.g., "ant_quic::connection" matches "ant_quic::connection::mod")
+        // Check prefix matches (e.g., "saorsa_transport::connection" matches "saorsa_transport::connection::mod")
         for (module, &level) in &self.component_levels {
             if target.starts_with(module) {
                 return Some(level);
@@ -137,22 +137,23 @@ impl LogFilterBuilder {
     pub fn quic_defaults(mut self) -> Self {
         self.filter
             .component_levels
-            .insert("ant_quic::connection".to_string(), Level::DEBUG);
+            .insert("saorsa_transport::connection".to_string(), Level::DEBUG);
         self.filter
             .component_levels
-            .insert("ant_quic::endpoint".to_string(), Level::INFO);
+            .insert("saorsa_transport::endpoint".to_string(), Level::INFO);
         self.filter
             .component_levels
-            .insert("ant_quic::frame".to_string(), Level::TRACE);
+            .insert("saorsa_transport::frame".to_string(), Level::TRACE);
         self.filter
             .component_levels
-            .insert("ant_quic::packet".to_string(), Level::TRACE);
+            .insert("saorsa_transport::packet".to_string(), Level::TRACE);
         self.filter
             .component_levels
-            .insert("ant_quic::crypto".to_string(), Level::DEBUG);
-        self.filter
-            .component_levels
-            .insert("ant_quic::transport_params".to_string(), Level::DEBUG);
+            .insert("saorsa_transport::crypto".to_string(), Level::DEBUG);
+        self.filter.component_levels.insert(
+            "saorsa_transport::transport_params".to_string(),
+            Level::DEBUG,
+        );
         self
     }
 
@@ -160,12 +161,13 @@ impl LogFilterBuilder {
     pub fn nat_traversal_debug(mut self) -> Self {
         self.filter
             .component_levels
-            .insert("ant_quic::nat_traversal".to_string(), Level::TRACE);
-        self.filter
-            .component_levels
-            .insert("ant_quic::candidate_discovery".to_string(), Level::DEBUG);
+            .insert("saorsa_transport::nat_traversal".to_string(), Level::TRACE);
         self.filter.component_levels.insert(
-            "ant_quic::connection::nat_traversal".to_string(),
+            "saorsa_transport::candidate_discovery".to_string(),
+            Level::DEBUG,
+        );
+        self.filter.component_levels.insert(
+            "saorsa_transport::connection::nat_traversal".to_string(),
             Level::TRACE,
         );
         self
@@ -175,28 +177,29 @@ impl LogFilterBuilder {
     pub fn performance_analysis(mut self) -> Self {
         self.filter
             .component_levels
-            .insert("ant_quic::metrics".to_string(), Level::INFO);
+            .insert("saorsa_transport::metrics".to_string(), Level::INFO);
         self.filter
             .component_levels
-            .insert("ant_quic::congestion".to_string(), Level::DEBUG);
+            .insert("saorsa_transport::congestion".to_string(), Level::DEBUG);
         self.filter
             .component_levels
-            .insert("ant_quic::pacing".to_string(), Level::DEBUG);
+            .insert("saorsa_transport::pacing".to_string(), Level::DEBUG);
         self
     }
 
     /// Configure for production use
     pub fn production(mut self) -> Self {
         self.filter.default_level = Level::WARN;
+        self.filter.component_levels.insert(
+            "saorsa_transport::connection::lifecycle".to_string(),
+            Level::INFO,
+        );
         self.filter
             .component_levels
-            .insert("ant_quic::connection::lifecycle".to_string(), Level::INFO);
+            .insert("saorsa_transport::endpoint".to_string(), Level::INFO);
         self.filter
             .component_levels
-            .insert("ant_quic::endpoint".to_string(), Level::INFO);
-        self.filter
-            .component_levels
-            .insert("ant_quic::metrics".to_string(), Level::INFO);
+            .insert("saorsa_transport::metrics".to_string(), Level::INFO);
         self
     }
 
@@ -273,13 +276,13 @@ mod tests {
             .quic_defaults()
             .build();
 
-        // ant_quic::connection is set to DEBUG, so it accepts ERROR, WARN, INFO, DEBUG but not TRACE
-        assert!(filter.should_log("ant_quic::connection::mod", Level::DEBUG, "test"));
-        assert!(!filter.should_log("ant_quic::connection::mod", Level::TRACE, "test"));
+        // saorsa_transport::connection is set to DEBUG, so it accepts ERROR, WARN, INFO, DEBUG but not TRACE
+        assert!(filter.should_log("saorsa_transport::connection::mod", Level::DEBUG, "test"));
+        assert!(!filter.should_log("saorsa_transport::connection::mod", Level::TRACE, "test"));
 
-        // ant_quic::endpoint is set to INFO, so it accepts ERROR, WARN, INFO but not DEBUG or TRACE
-        assert!(filter.should_log("ant_quic::endpoint", Level::INFO, "test"));
-        assert!(!filter.should_log("ant_quic::endpoint", Level::DEBUG, "test"));
+        // saorsa_transport::endpoint is set to INFO, so it accepts ERROR, WARN, INFO but not DEBUG or TRACE
+        assert!(filter.should_log("saorsa_transport::endpoint", Level::INFO, "test"));
+        assert!(!filter.should_log("saorsa_transport::endpoint", Level::DEBUG, "test"));
 
         // other::module uses default WARN, so it accepts ERROR, WARN but not INFO, DEBUG, or TRACE
         assert!(filter.should_log("other::module", Level::WARN, "test"));

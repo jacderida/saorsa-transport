@@ -19,7 +19,7 @@ A successful P2P network must connect nodes regardless of their network environm
 - **Firewalled networks**: Corporate proxies, hotel networks, restrictive ISPs
 - **Mobile networks**: Frequently changing IP addresses, aggressive NAT
 
-Traditional P2P networks often achieve only 60-80% connectivity, leaving significant portions of the network fragmented. ant-quic targets **100% connectivity** through a layered approach where each technique handles progressively more difficult network configurations.
+Traditional P2P networks often achieve only 60-80% connectivity, leaving significant portions of the network fragmented. saorsa-transport targets **100% connectivity** through a layered approach where each technique handles progressively more difficult network configurations.
 
 ## Decision
 
@@ -84,7 +84,7 @@ We implement a **Universal Connectivity Architecture** that combines five key de
 │                Symmetric Node Capabilities                   │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│    Every ant-quic node can:                                 │
+│    Every saorsa-transport node can:                                 │
 │                                                             │
 │    ✓ Accept incoming connections                            │
 │    ✓ Initiate outbound connections                          │

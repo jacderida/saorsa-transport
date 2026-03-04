@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ant_quic::{
+use saorsa_transport::{
     VarInt,
     NatTraversalEndpoint, NatTraversalConfig, EndpointRole, PeerId, NatTraversalError,
     CandidateSource, CandidateState, NatTraversalRole,
@@ -236,7 +236,7 @@ impl StressTestRunner {
     }
 
     async fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // For ant-quic stress testing, we'll test the NAT traversal components directly
+        // For saorsa-transport stress testing, we'll test the NAT traversal components directly
         // rather than full QUIC connections since this is a protocol-level library
         
         info!("Setting up NAT traversal stress test components");

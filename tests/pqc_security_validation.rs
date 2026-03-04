@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::crypto::pqc::{
+use saorsa_transport::crypto::pqc::{
     MlDsaOperations, MlKemOperations,
     ml_dsa::MlDsa65,
     ml_kem::MlKem768,

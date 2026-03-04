@@ -273,11 +273,11 @@ impl HybridPublicKeyEncryption {
         let mut ctx = digest::Context::new(&digest::SHA256);
 
         // Add salt for extraction phase (equivalent to HKDF-Extract)
-        ctx.update(b"ant-quic-ml-kem-aes-v1-salt");
+        ctx.update(b"saorsa-transport-ml-kem-aes-v1-salt");
         ctx.update(shared_secret.as_bytes());
 
         // Add context for expansion phase (equivalent to HKDF-Expand)
-        ctx.update(b"ant-quic-aes256-gcm-expand");
+        ctx.update(b"saorsa-transport-aes256-gcm-expand");
         ctx.update(&self.hash_associated_data(associated_data));
 
         // Add length encoding for proper domain separation
@@ -339,7 +339,7 @@ impl HybridPublicKeyEncryption {
     /// Hash associated data for integrity verification
     fn hash_associated_data(&self, data: &[u8]) -> [u8; 32] {
         let mut ctx = digest::Context::new(&digest::SHA256);
-        ctx.update(b"ant-quic-associated-data-v1");
+        ctx.update(b"saorsa-transport-associated-data-v1");
         ctx.update(data);
         let digest = ctx.finish();
 

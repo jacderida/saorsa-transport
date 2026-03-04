@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Terminal UI formatting and display helpers for ant-quic
+//! Terminal UI formatting and display helpers for saorsa-transport
 //!
 //! Provides colored output, formatting, and visual elements for better UX
 
@@ -232,7 +232,7 @@ pub fn draw_box(title: &str, width: usize) -> (String, String, String) {
 
 /// Print the startup banner
 pub fn print_banner(version: &str) {
-    let title = format!("ant-quic v{version}");
+    let title = format!("saorsa-transport v{version}");
     let (top, middle, bottom) = draw_box(&title, 60);
 
     println!("{top}");

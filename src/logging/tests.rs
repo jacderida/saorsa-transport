@@ -147,20 +147,23 @@ mod tests {
     fn test_log_filtering() {
         // Test module-based filtering
         let filter = LogFilter::new()
-            .with_module("ant_quic::connection", Level::DEBUG)
-            .with_module("ant_quic::frame", Level::TRACE)
-            .with_module("ant_quic::endpoint", Level::INFO);
+            .with_module("saorsa_transport::connection", Level::DEBUG)
+            .with_module("saorsa_transport::frame", Level::TRACE)
+            .with_module("saorsa_transport::endpoint", Level::INFO);
 
         assert_eq!(
-            filter.level_for("ant_quic::connection::mod"),
+            filter.level_for("saorsa_transport::connection::mod"),
             Some(Level::DEBUG)
         );
         assert_eq!(
-            filter.level_for("ant_quic::frame::encoding"),
+            filter.level_for("saorsa_transport::frame::encoding"),
             Some(Level::TRACE)
         );
-        assert_eq!(filter.level_for("ant_quic::endpoint"), Some(Level::INFO));
-        assert_eq!(filter.level_for("ant_quic::unknown"), None);
+        assert_eq!(
+            filter.level_for("saorsa_transport::endpoint"),
+            Some(Level::INFO)
+        );
+        assert_eq!(filter.level_for("saorsa_transport::unknown"), None);
     }
 
     #[test]
@@ -168,7 +171,7 @@ mod tests {
         let event = LogEvent {
             timestamp: Instant::now(),
             level: Level::INFO,
-            target: "ant_quic::connection".to_string(),
+            target: "saorsa_transport::connection".to_string(),
             message: "connection established".to_string(),
             fields: vec![
                 ("conn_id".to_string(), "abcd1234".to_string()),
@@ -182,7 +185,7 @@ mod tests {
 
         let json = crate::logging::formatters::format_as_json(&event);
         assert!(json.contains(r#""level":"INFO""#));
-        assert!(json.contains(r#""target":"ant_quic::connection""#));
+        assert!(json.contains(r#""target":"saorsa_transport::connection""#));
         assert!(json.contains(r#""message":"connection established""#));
         assert!(json.contains(r#""conn_id":"abcd1234""#));
     }

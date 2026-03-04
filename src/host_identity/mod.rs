@@ -51,7 +51,7 @@
 //! ## Usage
 //!
 //! ```ignore
-//! use ant_quic::host_identity::{HostIdentity, EndpointKeyPolicy};
+//! use saorsa_transport::host_identity::{HostIdentity, EndpointKeyPolicy};
 //!
 //! // Generate a new host identity (or load from storage)
 //! let host = HostIdentity::generate();

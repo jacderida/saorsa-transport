@@ -22,7 +22,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ant_quic::masque::relay_session::{RelaySession, RelaySessionConfig};
+//! use saorsa_transport::masque::relay_session::{RelaySession, RelaySessionConfig};
 //! use std::net::SocketAddr;
 //!
 //! let config = RelaySessionConfig::default();

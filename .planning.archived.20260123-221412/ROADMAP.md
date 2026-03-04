@@ -1,4 +1,4 @@
-# ant-quic Multi-Transport Core Roadmap
+# saorsa-transport Multi-Transport Core Roadmap
 
 ## Milestone: Multi-Transport Abstraction Layer
 
@@ -6,7 +6,7 @@ Extend the multi-transport core from `docs/research/CONSTRAINED_TRANSPORTS.md:23
 
 ## Overview
 
-Implement a transport abstraction layer that enables ant-quic to operate over multiple physical mediums beyond UDP/IP, including BLE, LoRa, serial links, and overlay networks, while maintaining pure PQC security.
+Implement a transport abstraction layer that enables saorsa-transport to operate over multiple physical mediums beyond UDP/IP, including BLE, LoRa, serial links, and overlay networks, while maintaining pure PQC security.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ Implement a transport abstraction layer that enables ant-quic to operate over mu
 │                            APPLICATION                                   │
 │                    (Node, P2pEndpoint, higher layers)                   │
 ├─────────────────────────────────────────────────────────────────────────┤
-│                          ant-quic API                                    │
+│                          saorsa-transport API                                    │
 │         P2pEndpoint, Streams, Datagrams, Connection Events              │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                        PROTOCOL ENGINES                                  │

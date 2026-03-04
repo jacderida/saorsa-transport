@@ -22,7 +22,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ant_quic::masque::integration::{RelayManager, RelayManagerConfig};
+//! use saorsa_transport::masque::integration::{RelayManager, RelayManagerConfig};
 //! use std::net::SocketAddr;
 //!
 //! let config = RelayManagerConfig::default();

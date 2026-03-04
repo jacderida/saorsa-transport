@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-//! Property-based tests for ant-quic
+//! Property-based tests for saorsa-transport
 //!
 //! This module contains property-based tests that verify invariants
 //! and properties of the QUIC protocol implementation.

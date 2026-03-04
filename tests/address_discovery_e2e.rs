@@ -1,13 +1,13 @@
 //! End-to-end integration tests for QUIC Address Discovery
 //!
 //! These tests verify the complete address discovery flow using
-//! the public APIs available in ant-quic.
+//! the public APIs available in saorsa-transport.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
 
-use ant_quic::{
+use saorsa_transport::{
     ClientConfig, Endpoint, EndpointConfig, ServerConfig, TransportConfig, VarInt,
     crypto::{
         pqc::PqcConfig,
@@ -127,7 +127,7 @@ fn create_client_endpoint() -> Endpoint {
 async fn test_address_discovery_enabled_by_default() {
     common::init_crypto();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     let _server = create_server_endpoint();
@@ -146,7 +146,7 @@ async fn test_address_discovery_enabled_by_default() {
 async fn test_client_server_address_discovery() {
     common::init_crypto();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     let server = create_server_endpoint();
@@ -227,7 +227,7 @@ async fn test_client_server_address_discovery() {
 async fn test_disable_address_discovery() {
     common::init_crypto();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     // Address discovery configuration is set at endpoint creation time
@@ -235,8 +235,8 @@ async fn test_disable_address_discovery() {
     let _server = create_server_endpoint();
     let _client = create_client_endpoint();
 
-    // Address discovery is enabled by default in ant-quic
-    info!("Address discovery is enabled by default in ant-quic");
+    // Address discovery is enabled by default in saorsa-transport
+    info!("Address discovery is enabled by default in saorsa-transport");
 
     // To disable address discovery, one would need to configure it
     // at endpoint creation time using a custom EndpointConfig
@@ -253,7 +253,7 @@ async fn test_disable_address_discovery() {
 async fn test_concurrent_connections_address_discovery() {
     common::init_crypto();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     let server = create_server_endpoint();
@@ -334,7 +334,7 @@ async fn test_concurrent_connections_address_discovery() {
 async fn test_address_discovery_during_migration() {
     common::init_crypto();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     let server = create_server_endpoint();
@@ -411,7 +411,7 @@ async fn test_address_discovery_during_migration() {
 async fn test_address_discovery_with_data_transfer() {
     common::init_crypto();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     let server = create_server_endpoint();

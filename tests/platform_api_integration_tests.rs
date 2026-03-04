@@ -4,12 +4,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::candidate_discovery::NetworkInterfaceDiscovery;
+use saorsa_transport::candidate_discovery::NetworkInterfaceDiscovery;
 
 #[cfg(target_os = "windows")]
 mod windows_tests {
     use super::*;
-    use ant_quic::candidate_discovery::windows::WindowsInterfaceDiscovery;
+    use saorsa_transport::candidate_discovery::windows::WindowsInterfaceDiscovery;
     use std::time::Duration;
 
     #[test]
@@ -103,7 +103,7 @@ mod windows_tests {
 #[cfg(target_os = "linux")]
 mod linux_tests {
     use super::*;
-    use ant_quic::candidate_discovery::linux::LinuxInterfaceDiscovery;
+    use saorsa_transport::candidate_discovery::linux::LinuxInterfaceDiscovery;
     use std::time::Duration;
 
     #[test]
@@ -238,7 +238,7 @@ mod linux_tests {
 #[cfg(target_os = "macos")]
 mod macos_tests {
     use super::*;
-    use ant_quic::candidate_discovery::macos::MacOSInterfaceDiscovery;
+    use saorsa_transport::candidate_discovery::macos::MacOSInterfaceDiscovery;
     use std::time::Duration;
 
     #[test]
@@ -377,13 +377,16 @@ mod macos_tests {
 #[test]
 fn test_platform_interface_consistency() {
     #[cfg(target_os = "windows")]
-    let mut discovery = ant_quic::candidate_discovery::windows::WindowsInterfaceDiscovery::new();
+    let mut discovery =
+        saorsa_transport::candidate_discovery::windows::WindowsInterfaceDiscovery::new();
 
     #[cfg(target_os = "linux")]
-    let mut discovery = ant_quic::candidate_discovery::linux::LinuxInterfaceDiscovery::new();
+    let mut discovery =
+        saorsa_transport::candidate_discovery::linux::LinuxInterfaceDiscovery::new();
 
     #[cfg(target_os = "macos")]
-    let mut discovery = ant_quic::candidate_discovery::macos::MacOSInterfaceDiscovery::new();
+    let mut discovery =
+        saorsa_transport::candidate_discovery::macos::MacOSInterfaceDiscovery::new();
 
     // All platforms should support the same trait
     match discovery.start_scan() {

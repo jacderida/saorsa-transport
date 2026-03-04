@@ -120,11 +120,11 @@ jobs:
     - name: Build test images
       run: |
         cd docker
-        echo "Building ant-quic runtime image..."
+        echo "Building saorsa-transport runtime image..."
         docker build \
-          -f Dockerfile.ant-quic \
+          -f Dockerfile.saorsa-transport \
           --target runtime \
-          -t ant-quic:runtime \
+          -t saorsa-transport:runtime \
           --build-arg CARGO_BUILD_JOBS=2 \
           .. || exit 1
 

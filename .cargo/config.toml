@@ -1,5 +1,5 @@
 # Windows-specific configuration to avoid PDB linker issues (LNK1318)
-# The PDB file generated for large binaries like ant-quic-test can exceed
+# The PDB file generated for large binaries like saorsa-transport-test can exceed
 # Windows limits when building in release mode with MSVC
 
 [target.x86_64-pc-windows-msvc]

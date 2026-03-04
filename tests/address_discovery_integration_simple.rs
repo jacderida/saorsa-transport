@@ -4,7 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     ClientConfig, Endpoint, ServerConfig, TransportConfig,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
@@ -76,7 +76,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
 async fn test_address_discovery_default_enabled() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting address discovery default enabled test");
@@ -164,7 +164,7 @@ async fn test_address_discovery_default_enabled() {
 async fn test_concurrent_connections() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting concurrent connections test");
@@ -253,7 +253,7 @@ async fn test_concurrent_connections() {
 async fn test_with_data_transfer() {
     ensure_crypto_provider();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("ant_quic=debug")
+        .with_env_filter("saorsa_transport=debug")
         .try_init();
 
     info!("Starting data transfer test");

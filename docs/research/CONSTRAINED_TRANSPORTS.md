@@ -1,4 +1,4 @@
-# Constrained Transport Support for ant-quic
+# Constrained Transport Support for saorsa-transport
 
 ## Research Document: LoRa, Serial, and Multi-Transport Architecture
 
@@ -11,9 +11,9 @@
 
 ## Executive Summary
 
-This document explores extending ant-quic beyond UDP/IP to support constrained transports including LoRa, serial links, packet radio, Bluetooth Low Energy, and overlay networks. The goal is to create a truly universal P2P networking layer that maintains quantum-resistant security across all mediums while adapting protocol behaviour to match transport capabilities.
+This document explores extending saorsa-transport beyond UDP/IP to support constrained transports including LoRa, serial links, packet radio, Bluetooth Low Energy, and overlay networks. The goal is to create a truly universal P2P networking layer that maintains quantum-resistant security across all mediums while adapting protocol behaviour to match transport capabilities.
 
-The approach draws heavily from the architectural lessons of the Reticulum Network Stack while preserving ant-quic's core differentiators: pure post-quantum cryptography (ML-KEM-768 + ML-DSA-65) and high-performance QUIC transport where bandwidth allows.
+The approach draws heavily from the architectural lessons of the Reticulum Network Stack while preserving saorsa-transport's core differentiators: pure post-quantum cryptography (ML-KEM-768 + ML-DSA-65) and high-performance QUIC transport where bandwidth allows.
 
 ---
 
@@ -40,7 +40,7 @@ The approach draws heavily from the architectural lessons of the Reticulum Netwo
 
 ### 1.1 The Vision
 
-ant-quic currently provides excellent P2P connectivity over UDP/IP networks with pure post-quantum cryptography. However, limiting ourselves to UDP excludes important use cases:
+saorsa-transport currently provides excellent P2P connectivity over UDP/IP networks with pure post-quantum cryptography. However, limiting ourselves to UDP excludes important use cases:
 
 - **Off-grid communication**: Disaster response, remote areas, wilderness operations
 - **Mesh networking**: Local community networks without Internet dependency
@@ -49,7 +49,7 @@ ant-quic currently provides excellent P2P connectivity over UDP/IP networks with
 - **Tactical applications**: Military, emergency services, field operations
 - **Robotics**: Saorsa Labs' robotics work requires communication across diverse mediums
 
-The goal is for any ant-quic peer to communicate with any other peer, regardless of whether they're connected via:
+The goal is for any saorsa-transport peer to communicate with any other peer, regardless of whether they're connected via:
 
 - Gigabit Ethernet
 - Mobile data
@@ -132,7 +132,7 @@ Reticulum uses cryptographic addresses derived from public keys, eliminating dep
 - Works identically across all transports
 - No configuration required for addressing
 
-This mirrors ant-quic's PeerId model (SHA-256 of ML-DSA-65 public key).
+This mirrors saorsa-transport's PeerId model (SHA-256 of ML-DSA-65 public key).
 
 #### 2.2.3 Delay-Tolerant Design
 
@@ -160,9 +160,9 @@ Reticulum has real-world users:
 
 This validates that the multi-transport approach works in practice.
 
-### 2.3 Where ant-quic Differs
+### 2.3 Where saorsa-transport Differs
 
-| Aspect | Reticulum | ant-quic |
+| Aspect | Reticulum | saorsa-transport |
 |--------|-----------|----------|
 | Cryptography | Classical (X25519/Ed25519/AES-256) | Pure PQC (ML-KEM-768/ML-DSA-65) |
 | Quantum resistance | None | NIST Level 3 |
@@ -175,17 +175,17 @@ This validates that the multi-transport approach works in practice.
 
 ### 2.4 Why Not Just Use Reticulum?
 
-Several factors make building on ant-quic preferable to adopting Reticulum:
+Several factors make building on saorsa-transport preferable to adopting Reticulum:
 
 1. **Post-Quantum Security**: Autonomi is a long-term project. Quantum computers will exist within its operational lifetime. Retrofitting PQC onto classical crypto is complex and error-prone.
 
 2. **Performance Requirements**: Autonomi needs to move large amounts of data efficiently. QUIC's stream multiplexing, congestion control, and 0-RTT resumption are essential for high-throughput scenarios.
 
-3. **Rust Ecosystem**: ant-quic integrates with the Rust-based Autonomi stack. A Python dependency would complicate deployment.
+3. **Rust Ecosystem**: saorsa-transport integrates with the Rust-based Autonomi stack. A Python dependency would complicate deployment.
 
 4. **Clean PQC Design**: Starting with PQC allows cleaner protocol design without hybrid complexity.
 
-5. **QUIC Compatibility**: ant-quic can interoperate with standard QUIC implementations for specific use cases.
+5. **QUIC Compatibility**: saorsa-transport can interoperate with standard QUIC implementations for specific use cases.
 
 However, Reticulum's architectural patterns are excellent and should be adopted where applicable.
 
@@ -200,7 +200,7 @@ However, Reticulum's architectural patterns are excellent and should be adopted 
 │                            APPLICATION                                   │
 │                    (Autonomi, Communitas, Robotics)                     │
 ├─────────────────────────────────────────────────────────────────────────┤
-│                          ant-quic API                                    │
+│                          saorsa-transport API                                    │
 │         P2pEndpoint, Streams, Datagrams, Connection Events              │
 │                                                                          │
 │   • Connect by PeerId (transport-agnostic)                              │
@@ -243,7 +243,7 @@ However, Reticulum's architectural patterns are excellent and should be adopted 
 
 #### 3.2.1 Dual Protocol Engine
 
-Rather than forcing one protocol to work everywhere, ant-quic will use two protocol engines:
+Rather than forcing one protocol to work everywhere, saorsa-transport will use two protocol engines:
 
 1. **QUIC Engine**: Full RFC 9000 implementation via Quinn for capable transports
 2. **Constrained Engine**: Minimal protocol for bandwidth/MTU-limited transports
@@ -815,7 +815,7 @@ Post-quantum cryptographic primitives have significantly larger key and signatur
 | **X25519** (classical) | 32 bytes | 32 bytes |
 | **Ed25519** (classical) | 32 bytes | 64 bytes |
 
-A full ant-quic PQC handshake requires transmitting:
+A full saorsa-transport PQC handshake requires transmitting:
 - Initiator → Responder: ML-KEM public key (1,184) + ML-DSA signature (~3,293) ≈ **4,477 bytes**
 - Responder → Initiator: ML-KEM ciphertext (1,088) + ML-DSA signature (~3,293) ≈ **4,381 bytes**
 - Total: **~8,858 bytes**
@@ -1076,7 +1076,7 @@ pub struct ReachableEntry {
 
 ### 7.4 Multi-Path Support
 
-When a peer is reachable via multiple transports, ant-quic can:
+When a peer is reachable via multiple transports, saorsa-transport can:
 
 1. **Select best path** based on requirements
 2. **Fail over** when primary path degrades
@@ -1454,7 +1454,7 @@ impl Message {
 
 ### 11.1 Reticulum Integration
 
-**Approach**: Make ant-quic a Reticulum-compatible interface.
+**Approach**: Make saorsa-transport a Reticulum-compatible interface.
 
 **Pros**:
 - Instant ecosystem (Sideband, Nomad Network, etc.)
@@ -1485,7 +1485,7 @@ impl Message {
 
 ### 11.3 Tunneling Over Reticulum
 
-**Approach**: Use Reticulum as transport for ant-quic traffic.
+**Approach**: Use Reticulum as transport for saorsa-transport traffic.
 
 **Pros**:
 - Leverage Reticulum's transport support
@@ -1526,7 +1526,7 @@ impl Message {
 - All existing tests pass unchanged
 
 **Deliverables**:
-- `ant-quic-transport` crate
+- `saorsa-transport-transport` crate
 - `UdpTransport` implementation
 - Updated Quinn integration
 - Test suite
@@ -1582,7 +1582,7 @@ impl Message {
 - Multi-transport peer discovery
 
 **Deliverables**:
-- `ant-quic-routing` crate
+- `saorsa-transport-routing` crate
 - Gateway node implementation
 - Route announcement protocol
 - Multi-path selection
@@ -1668,7 +1668,7 @@ impl Message {
 
 ### 13.4 Compatibility with Reticulum
 
-**Question**: Should ant-quic implement a Reticulum-compatible mode?
+**Question**: Should saorsa-transport implement a Reticulum-compatible mode?
 
 **Current Thinking**: Not initially, possibly later as a gateway mode.
 
@@ -1679,7 +1679,7 @@ impl Message {
 
 ### 13.5 Voice/Real-Time Support
 
-**Question**: Should ant-quic support LXST-like real-time voice?
+**Question**: Should saorsa-transport support LXST-like real-time voice?
 
 **Current Thinking**: Out of scope for initial implementation.
 
@@ -1709,7 +1709,7 @@ impl Message {
 - [LoRa Alliance Specifications](https://lora-alliance.org/resource_hub/)
 - [AX.25 Protocol](https://www.tapr.org/pdf/AX25.2.2.pdf)
 
-### ant-quic Documentation
+### saorsa-transport Documentation
 
 - [NAT Traversal Guide](../NAT_TRAVERSAL_GUIDE.md)
 - [PQC Security Analysis](../guides/pqc-security.md)

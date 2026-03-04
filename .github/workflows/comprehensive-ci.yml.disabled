@@ -174,14 +174,14 @@ jobs:
     
     - name: Test release binary
       run: |
-        ./target/release/ant-quic --version
-        ./target/release/ant-quic --help
+        ./target/release/saorsa-transport --version
+        ./target/release/saorsa-transport --help
     
     - name: Upload release binary
       uses: actions/upload-artifact@v4
       with:
-        name: ant-quic-linux-x64
-        path: target/release/ant-quic
+        name: saorsa-transport-linux-x64
+        path: target/release/saorsa-transport
         retention-days: 7
 
   # Docker build
@@ -232,15 +232,15 @@ jobs:
         # Deploy
         ssh $DO_USER@$DO_HOST << 'ENDSSH'
           set -e
-          cd ~/ant-quic || git clone https://github.com/dirvine/ant-quic ~/ant-quic
-          cd ~/ant-quic
+          cd ~/saorsa-transport || git clone https://github.com/saorsa-labs/saorsa-transport ~/saorsa-transport
+          cd ~/saorsa-transport
           git fetch origin
           git checkout ${{ github.sha }}
           cargo build --release --features "pqc aws-lc-rs"
           
           # Restart service if exists
-          if systemctl is-active --quiet ant-quic; then
-            sudo systemctl restart ant-quic
+          if systemctl is-active --quiet saorsa-transport; then
+            sudo systemctl restart saorsa-transport
           fi
         ENDSSH
 

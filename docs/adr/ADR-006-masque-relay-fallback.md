@@ -15,11 +15,11 @@ Native QUIC NAT traversal (ADR-005) has shown excellent results in testing, incl
 - **Hostile network environments**: Corporate proxies, captive portals
 - **Extremely restrictive CGNAT**: Some carriers may have unusually aggressive policies
 
-For ant-quic to deliver reliable P2P connectivity without central infrastructure, we need a **guaranteed fallback** that works in 100% of cases while still operating within our symmetric peer model.
+For saorsa-transport to deliver reliable P2P connectivity without central infrastructure, we need a **guaranteed fallback** that works in 100% of cases while still operating within our symmetric peer model.
 
 ### Requirements
 
-Per ant-quic's scope (ADR-005):
+Per saorsa-transport's scope (ADR-005):
 - Mandatory capability to relay (subject to rate limits/budgets)
 - No central coordinator dependency
 - Any peer can serve as relay

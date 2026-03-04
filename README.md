@@ -1,14 +1,14 @@
-# ant-quic
+# saorsa-transport
 
 **Pure Post-Quantum QUIC** transport with NAT traversal for P2P networks. Every node is symmetric - can connect AND accept connections.
 
-[![Documentation](https://docs.rs/ant-quic/badge.svg)](https://docs.rs/ant-quic/)
-[![Crates.io](https://img.shields.io/crates/v/ant-quic.svg)](https://crates.io/crates/ant-quic)
+[![Documentation](https://docs.rs/saorsa-transport/badge.svg)](https://docs.rs/saorsa-transport/)
+[![Crates.io](https://img.shields.io/crates/v/saorsa-transport.svg)](https://crates.io/crates/saorsa-transport)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
-[![CI Status](https://github.com/dirvine/ant-quic/actions/workflows/ci.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/ci.yml)
-[![Security Audit](https://github.com/dirvine/ant-quic/actions/workflows/security.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions/workflows/security.yml)
+[![CI Status](https://github.com/saorsa-labs/saorsa-transport/actions/workflows/ci.yml/badge.svg)](https://github.com/saorsa-labs/saorsa-transport/actions/workflows/ci.yml)
+[![Security Audit](https://github.com/saorsa-labs/saorsa-transport/actions/workflows/security.yml/badge.svg)](https://github.com/saorsa-labs/saorsa-transport/actions/workflows/security.yml)
 
 ## Key Features
 
@@ -16,14 +16,14 @@
 - **Symmetric P2P Nodes** - Every node is identical: connect, accept, coordinate
 - **Automatic NAT Traversal** - Per [draft-seemann-quic-nat-traversal-02](docs/rfcs/draft-seemann-quic-nat-traversal-02.txt)
 - **External Address Discovery** - Per [draft-ietf-quic-address-discovery-00](docs/rfcs/draft-ietf-quic-address-discovery-00.txt)
-- **Pure PQC Raw Public Keys** - ML-DSA-65 authentication per [our specification](docs/rfcs/ant-quic-pqc-authentication.md)
+- **Pure PQC Raw Public Keys** - ML-DSA-65 authentication per [our specification](docs/rfcs/saorsa-transport-pqc-authentication.md)
 - **Zero Configuration Required** - Sensible defaults, just create and connect
 - **Powered by [saorsa-pqc](https://crates.io/crates/saorsa-pqc)** - NIST FIPS 203/204 compliant implementations
 
 ## Quick Start
 
 ```rust
-use ant_quic::{P2pEndpoint, P2pConfig};
+use saorsa_transport::{P2pEndpoint, P2pConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
 
 ## Architecture
 
-ant-quic uses a **symmetric P2P model** where every node has identical capabilities:
+saorsa-transport uses a **symmetric P2P model** where every node has identical capabilities:
 
 ```
 ┌─────────────┐         ┌─────────────┐
@@ -88,7 +88,7 @@ self-asserted roles.
 
 ## Pure Post-Quantum Cryptography (v0.2)
 
-**ant-quic v0.2 uses PURE post-quantum cryptography** - no classical algorithms, no hybrid modes, no fallback.
+**saorsa-transport v0.2 uses PURE post-quantum cryptography** - no classical algorithms, no hybrid modes, no fallback.
 
 This is a greenfield network with no legacy compatibility requirements.
 
@@ -101,7 +101,7 @@ This is a greenfield network with no legacy compatibility requirements.
 
 ### Powered by saorsa-pqc
 
-ant-quic uses [saorsa-pqc](https://crates.io/crates/saorsa-pqc) for all PQC operations:
+saorsa-transport uses [saorsa-pqc](https://crates.io/crates/saorsa-pqc) for all PQC operations:
 
 - **NIST FIPS 203/204 compliant** implementations
 - **AVX2/AVX-512/NEON** hardware acceleration
@@ -109,7 +109,7 @@ ant-quic uses [saorsa-pqc](https://crates.io/crates/saorsa-pqc) for all PQC oper
 - **Extensively tested** against NIST Known Answer Tests (KATs)
 
 ```rust
-use ant_quic::crypto::pqc::PqcConfig;
+use saorsa_transport::crypto::pqc::PqcConfig;
 
 let pqc = PqcConfig::builder()
     .ml_kem(true)               // ML-KEM-768 key exchange
@@ -189,7 +189,7 @@ let (ml_dsa_pub, ml_dsa_sec) = generate_ml_dsa_65_keypair();
 let peer_id = derive_peer_id_from_public_key(&ml_dsa_pub);
 ```
 
-This follows our [Pure PQC Authentication specification](docs/rfcs/ant-quic-pqc-authentication.md).
+This follows our [Pure PQC Authentication specification](docs/rfcs/saorsa-transport-pqc-authentication.md).
 
 ### v0.2 Changes
 
@@ -210,21 +210,21 @@ This follows our [Pure PQC Authentication specification](docs/rfcs/ant-quic-pqc-
 ### From Crates.io
 
 ```bash
-cargo add ant-quic
+cargo add saorsa-transport
 ```
 
 ### Pre-built Binaries
 
-Download from [GitHub Releases](https://github.com/dirvine/ant-quic/releases):
-- Linux: `ant-quic-linux-x86_64`, `ant-quic-linux-aarch64`
-- Windows: `ant-quic-windows-x86_64.exe`
-- macOS: `ant-quic-macos-x86_64`, `ant-quic-macos-aarch64`
+Download from [GitHub Releases](https://github.com/saorsa-labs/saorsa-transport/releases):
+- Linux: `saorsa-transport-linux-x86_64`, `saorsa-transport-linux-aarch64`
+- Windows: `saorsa-transport-windows-x86_64.exe`
+- macOS: `saorsa-transport-macos-x86_64`, `saorsa-transport-macos-aarch64`
 
 ### From Source
 
 ```bash
-git clone https://github.com/dirvine/ant-quic
-cd ant-quic
+git clone https://github.com/saorsa-labs/saorsa-transport
+cd saorsa-transport
 cargo build --release
 ```
 
@@ -232,17 +232,17 @@ cargo build --release
 
 ```bash
 # Run as P2P node (auto-connects to default bootstrap nodes)
-ant-quic --listen 0.0.0.0:9000
+saorsa-transport --listen 0.0.0.0:9000
 
 # Connect to specific known peers
-ant-quic --listen 0.0.0.0:9000 --known-peers 1.2.3.4:9000 --known-peers 5.6.7.8:9000
+saorsa-transport --listen 0.0.0.0:9000 --known-peers 1.2.3.4:9000 --known-peers 5.6.7.8:9000
 
 # Show your external address (discovered via peers)
-ant-quic --listen 0.0.0.0:9000
+saorsa-transport --listen 0.0.0.0:9000
 # Output: External address: YOUR.PUBLIC.IP:PORT
 
 # Run with monitoring dashboard
-ant-quic --dashboard --listen 0.0.0.0:9000
+saorsa-transport --dashboard --listen 0.0.0.0:9000
 
 # Interactive commands while running:
 # /status - Show connections and discovered addresses
@@ -252,21 +252,21 @@ ant-quic --dashboard --listen 0.0.0.0:9000
 
 ### Default Bootstrap Nodes
 
-If no `--known-peers` are specified, ant-quic automatically connects to the Saorsa Labs bootstrap nodes:
+If no `--known-peers` are specified, saorsa-transport automatically connects to the Saorsa Labs bootstrap nodes:
 - `saorsa-1.saorsalabs.com:9000`
 - `saorsa-2.saorsalabs.com:9000`
 
-These nodes run the same ant-quic software as any peer - they help with initial peer discovery and external address observation.
+These nodes run the same saorsa-transport software as any peer - they help with initial peer discovery and external address observation.
 
 ### Bootstrap Cache
 
-ant-quic maintains a local cache of discovered peers to improve startup time and resilience. The cache is stored as a JSON file:
+saorsa-transport maintains a local cache of discovered peers to improve startup time and resilience. The cache is stored as a JSON file:
 
 | Platform | Cache Location |
 |----------|----------------|
-| **macOS** | `~/Library/Caches/ant-quic/bootstrap_cache.json` |
-| **Linux** | `~/.cache/ant-quic/bootstrap_cache.json` |
-| **Windows** | `%LOCALAPPDATA%\ant-quic\bootstrap_cache.json` |
+| **macOS** | `~/Library/Caches/saorsa-transport/bootstrap_cache.json` |
+| **Linux** | `~/.cache/saorsa-transport/bootstrap_cache.json` |
+| **Windows** | `%LOCALAPPDATA%\saorsa-transport\bootstrap_cache.json` |
 
 The cache includes:
 - Peer IDs and socket addresses
@@ -333,13 +333,13 @@ See [docs/API_GUIDE.md](docs/API_GUIDE.md) for the complete API reference.
 
 ## RFC Compliance
 
-ant-quic implements these specifications:
+saorsa-transport implements these specifications:
 
 | Specification | Status | Notes |
 |---------------|--------|-------|
 | [RFC 9000](docs/rfcs/rfc9000.txt) | Full | QUIC Transport Protocol |
 | [RFC 9001](docs/rfcs/rfc9001.txt) | Full | QUIC TLS |
-| [Pure PQC Auth](docs/rfcs/ant-quic-pqc-authentication.md) | Full | Raw Public Keys + Pure PQC (v0.2) |
+| [Pure PQC Auth](docs/rfcs/saorsa-transport-pqc-authentication.md) | Full | Raw Public Keys + Pure PQC (v0.2) |
 | [draft-seemann-quic-nat-traversal-02](docs/rfcs/draft-seemann-quic-nat-traversal-02.txt) | Full | NAT Traversal |
 | [draft-ietf-quic-address-discovery-00](docs/rfcs/draft-ietf-quic-address-discovery-00.txt) | Full | Address Discovery |
 | [FIPS 203](docs/rfcs/fips-203-ml-kem.pdf) | Full | ML-KEM (via saorsa-pqc) |
@@ -427,8 +427,8 @@ Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
 # Development setup
-git clone https://github.com/dirvine/ant-quic
-cd ant-quic
+git clone https://github.com/saorsa-labs/saorsa-transport
+cd saorsa-transport
 cargo fmt --all
 cargo clippy --all-targets -- -D warnings
 cargo test

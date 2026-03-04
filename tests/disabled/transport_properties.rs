@@ -4,7 +4,7 @@
 
 use super::config::*;
 use super::generators::*;
-use ant_quic::{VarInt, coding::Codec, transport_parameters::TransportParameters};
+use saorsa_transport::{VarInt, coding::Codec, transport_parameters::TransportParameters};
 use bytes::BytesMut;
 use proptest::prelude::*;
 
@@ -51,10 +51,10 @@ proptest! {
         use bytes::BytesMut;
         let mut buf = BytesMut::new();
         fn write_kv(buf: &mut BytesMut, id: u64, val: u64) {
-            ant_quic::VarInt::try_from(id).unwrap().encode(buf);
+            saorsa_transport::VarInt::try_from(id).unwrap().encode(buf);
             let mut tmp = BytesMut::new();
-            ant_quic::VarInt::try_from(val).unwrap().encode(&mut tmp);
-            ant_quic::VarInt::from_u32(tmp.len() as u32).encode(buf);
+            saorsa_transport::VarInt::try_from(val).unwrap().encode(&mut tmp);
+            saorsa_transport::VarInt::from_u32(tmp.len() as u32).encode(buf);
             buf.extend_from_slice(&tmp);
         }
 
@@ -72,7 +72,7 @@ proptest! {
         if let Ok(v) = VarInt::try_from(payload_size) { write_kv(&mut buf, 0x03, v.into_inner()); }
 
         let mut cursor = std::io::Cursor::new(&buf[..]);
-        params = TransportParameters::read(ant_quic::Side::Server, &mut cursor).expect("decode");
+        params = TransportParameters::read(saorsa_transport::Side::Server, &mut cursor).expect("decode");
 
         // Property: All stream data limits should be <= max data
         let max_data_val: u64 = params.initial_max_data.into();
@@ -101,20 +101,20 @@ proptest! {
         use bytes::BytesMut;
         let mut buf = BytesMut::new();
         fn write_kv(buf: &mut BytesMut, id: u64, val: u64) {
-            ant_quic::VarInt::try_from(id).unwrap().encode(buf);
+            saorsa_transport::VarInt::try_from(id).unwrap().encode(buf);
             let mut tmp = BytesMut::new();
-            ant_quic::VarInt::try_from(val).unwrap().encode(&mut tmp);
-            ant_quic::VarInt::from_u32(tmp.len() as u32).encode(buf);
+            saorsa_transport::VarInt::try_from(val).unwrap().encode(&mut tmp);
+            saorsa_transport::VarInt::from_u32(tmp.len() as u32).encode(buf);
             buf.extend_from_slice(&tmp);
         }
         // ack_delay_exponent id 0x0a
         if let Ok(v) = VarInt::try_from(exponent) { write_kv(&mut buf, 0x0a, v.into_inner()); }
         let mut cursor = std::io::Cursor::new(&buf[..]);
-        let mut params = TransportParameters::read(ant_quic::Side::Server, &mut cursor).unwrap_or_else(|_| {
+        let mut params = TransportParameters::read(saorsa_transport::Side::Server, &mut cursor).unwrap_or_else(|_| {
             // Fallback to an empty params set if decode fails
             let mut b = BytesMut::new();
             let mut c = std::io::Cursor::new(&b[..]);
-            TransportParameters::read(ant_quic::Side::Server, &mut c).unwrap_or_else(|_| panic!("decode failed"))
+            TransportParameters::read(saorsa_transport::Side::Server, &mut c).unwrap_or_else(|_| panic!("decode failed"))
         });
 
         if let Ok(v) = VarInt::try_from(exponent) {
@@ -138,18 +138,18 @@ proptest! {
         // Construct via encode/decode
         use bytes::BytesMut;
         fn write_kv(buf: &mut BytesMut, id: u64, val: u64) {
-            ant_quic::VarInt::try_from(id).unwrap().encode(buf);
+            saorsa_transport::VarInt::try_from(id).unwrap().encode(buf);
             let mut tmp = BytesMut::new();
-            ant_quic::VarInt::try_from(val).unwrap().encode(&mut tmp);
-            ant_quic::VarInt::from_u32(tmp.len() as u32).encode(buf);
+            saorsa_transport::VarInt::try_from(val).unwrap().encode(&mut tmp);
+            saorsa_transport::VarInt::from_u32(tmp.len() as u32).encode(buf);
             buf.extend_from_slice(&tmp);
         }
         let mut buf = BytesMut::new();
         let mut cursor = std::io::Cursor::new(&buf[..]);
-        let mut params = TransportParameters::read(ant_quic::Side::Server, &mut cursor).unwrap_or_else(|_| {
+        let mut params = TransportParameters::read(saorsa_transport::Side::Server, &mut cursor).unwrap_or_else(|_| {
             let mut b = BytesMut::new();
             let mut c = std::io::Cursor::new(&b[..]);
-            TransportParameters::read(ant_quic::Side::Server, &mut c).unwrap_or_else(|_| panic!("decode failed"))
+            TransportParameters::read(saorsa_transport::Side::Server, &mut c).unwrap_or_else(|_| panic!("decode failed"))
         });
 
         if token_bytes.len() == 16 {

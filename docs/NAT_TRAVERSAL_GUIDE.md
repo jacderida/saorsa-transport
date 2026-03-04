@@ -1,8 +1,8 @@
 # NAT Traversal Testing and Configuration Guide
 
-> **v0.13.0+ Note**: ant-quic uses a symmetric P2P architecture where all nodes have equal capabilities. There are no "client", "server", or "bootstrap" roles. Every node can connect to other nodes, accept connections, and coordinate NAT traversal for peers.
+> **v0.13.0+ Note**: saorsa-transport uses a symmetric P2P architecture where all nodes have equal capabilities. There are no "client", "server", or "bootstrap" roles. Every node can connect to other nodes, accept connections, and coordinate NAT traversal for peers.
 
-This guide provides detailed information on testing and configuring NAT traversal in ant-quic, including setup instructions for different NAT types and troubleshooting common issues.
+This guide provides detailed information on testing and configuring NAT traversal in saorsa-transport, including setup instructions for different NAT types and troubleshooting common issues.
 
 ## Table of Contents
 
@@ -16,7 +16,7 @@ This guide provides detailed information on testing and configuring NAT traversa
 
 ## NAT Types Overview
 
-ant-quic supports traversal through four primary NAT types:
+saorsa-transport supports traversal through four primary NAT types:
 
 ### 1. Full Cone NAT (One-to-One NAT)
 - **Characteristics**: Maps internal IP:port to external IP:port
@@ -122,8 +122,8 @@ sudo ip netns exec nat_ns sysctl -w net.ipv4.ip_forward=1
 
 ```bash
 # Clone the repository
-git clone https://github.com/dirvine/ant-quic.git
-cd ant-quic/docker
+git clone https://github.com/saorsa-labs/saorsa-transport.git
+cd saorsa-transport/docker
 
 # Build Docker images
 docker-compose build
@@ -154,7 +154,7 @@ services:
     networks:
       public_net:
         ipv4_address: 172.20.0.10
-    command: ["/app/ant-quic", "--listen", "0.0.0.0:9000"]
+    command: ["/app/saorsa-transport", "--listen", "0.0.0.0:9000"]
 
   nat-gateway-1:
     build:
@@ -178,7 +178,7 @@ services:
         ipv4_address: 10.1.0.10
     depends_on:
       - nat-gateway-1
-    command: ["/app/ant-quic", "--connect", "172.20.0.10:9000"]
+    command: ["/app/saorsa-transport", "--connect", "172.20.0.10:9000"]
 
 networks:
   public_net:
@@ -240,7 +240,7 @@ sysctl -w net.ipv4.ip_forward=1
 
 ### Transport Parameters
 
-Configure NAT traversal behavior in ant-quic:
+Configure NAT traversal behavior in saorsa-transport:
 
 ```rust
 // v0.13.0+: All nodes are symmetric - no role configuration needed
@@ -267,13 +267,13 @@ Configure via command-line arguments:
 ```bash
 # v0.13.0+: All nodes are symmetric P2P nodes
 # Connect to known peers
-ant-quic --connect quic.saorsalabs.com:9000 \
+saorsa-transport --connect quic.saorsalabs.com:9000 \
          --nat-traversal \
          --max-candidates 20 \
          --punch-timeout 10000
 
 # Listen for incoming connections
-ant-quic --listen 0.0.0.0:9000 \
+saorsa-transport --listen 0.0.0.0:9000 \
          --enable-relay
 ```
 
@@ -313,10 +313,10 @@ enable_observed_address = true # 0x9f81a6-a7
 ```bash
 # v0.13.0+: All nodes are symmetric - no "bootstrap" role distinction
 # 1. Start first peer (listening)
-cargo run --bin ant-quic -- --listen 0.0.0.0:9000
+cargo run --bin saorsa-transport -- --listen 0.0.0.0:9000
 
 # 2. Start second peer (connecting)
-cargo run --bin ant-quic -- --connect localhost:9000
+cargo run --bin saorsa-transport -- --connect localhost:9000
 
 # 3. Verify connection
 # Look for: "Successfully connected through NAT"
@@ -332,7 +332,7 @@ cargo test --test nat_traversal_comprehensive -- --nocapture
 cargo test --test nat_traversal_comprehensive test_symmetric_nat -- --nocapture
 
 # Run with detailed logging
-RUST_LOG=ant_quic::nat_traversal=trace cargo test nat_traversal
+RUST_LOG=saorsa_transport::nat_traversal=trace cargo test nat_traversal
 ```
 
 ### Performance Testing
@@ -353,11 +353,11 @@ cargo run --example nat_latency_test
 ```bash
 # v0.13.0+: All nodes are symmetric P2P nodes
 # Start first peer (as initial connection target)
-ant-quic --listen 0.0.0.0:9000 --log peer-0.log &
+saorsa-transport --listen 0.0.0.0:9000 --log peer-0.log &
 
 # Start multiple additional peers
 for i in {1..10}; do
-  ant-quic --connect localhost:9000 --peer-id "peer-$i" \
+  saorsa-transport --connect localhost:9000 --peer-id "peer-$i" \
            --log "peer-$i.log" &
 done
 
@@ -398,7 +398,7 @@ sudo iptables -L -n | grep 9000
 **Diagnosis**:
 ```bash
 # Enable detailed logging
-RUST_LOG=ant_quic::nat_traversal=debug cargo run --bin ant-quic
+RUST_LOG=saorsa_transport::nat_traversal=debug cargo run --bin saorsa-transport
 
 # Check candidate discovery
 grep "Discovered candidate" debug.log
@@ -509,7 +509,7 @@ let pool = ConnectionPool::new()
 
 ```bash
 # Enable metrics endpoint
-ant-quic --metrics-port 8080
+saorsa-transport --metrics-port 8080
 
 # Query metrics
 curl localhost:8080/metrics | grep nat_
@@ -581,7 +581,7 @@ impl NatTraversalStrategy for MobileNetworkStrategy {
 
 ### Protocol Extensions
 
-ant-quic implements QUIC NAT traversal extensions per draft-seemann-quic-nat-traversal-02:
+saorsa-transport implements QUIC NAT traversal extensions per draft-seemann-quic-nat-traversal-02:
 
 - **Transport Parameter 0x58**: Negotiates NAT traversal support
 - **ADD_ADDRESS (0x3d7e90-91)**: Advertise candidate addresses
@@ -614,4 +614,4 @@ Successful NAT traversal is critical for P2P connectivity. This guide provides:
 - Troubleshooting steps for common issues
 - Performance optimization techniques
 
-Regular testing with these procedures ensures ant-quic maintains high connectivity success rates across diverse network environments.
+Regular testing with these procedures ensures saorsa-transport maintains high connectivity success rates across diverse network environments.

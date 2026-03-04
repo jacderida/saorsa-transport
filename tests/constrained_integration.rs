@@ -10,10 +10,10 @@
 //! These tests verify that the constrained engine correctly handles various
 //! transport address types (BLE, LoRa) and provides reliable messaging.
 
-use ant_quic::constrained::{
+use saorsa_transport::constrained::{
     ConstrainedEngineAdapter, ConstrainedTransport, ConstrainedTransportConfig, EngineConfig,
 };
-use ant_quic::transport::{TransportAddr, TransportCapabilities};
+use saorsa_transport::transport::{TransportAddr, TransportCapabilities};
 
 /// Test that BLE addresses work with the constrained engine adapter
 #[test]
@@ -46,7 +46,7 @@ fn test_lora_address_integration() {
 
     let lora_addr = TransportAddr::LoRa {
         device_addr: [0x12, 0x34, 0x56, 0x78],
-        params: ant_quic::transport::LoRaParams::default(),
+        params: saorsa_transport::transport::LoRaParams::default(),
     };
 
     let result = adapter.connect(&lora_addr);
@@ -96,7 +96,7 @@ fn test_handshake_simulation() {
     while let Some(event) = client.next_event() {
         if matches!(
             event,
-            ant_quic::constrained::AdapterEvent::ConnectionEstablished { .. }
+            saorsa_transport::constrained::AdapterEvent::ConnectionEstablished { .. }
         ) {
             _client_established = true;
         }
@@ -230,7 +230,7 @@ fn test_data_transfer() {
     // Check for DataReceived event on server
     let mut _data_received = false;
     while let Some(event) = server.next_event() {
-        if let ant_quic::constrained::AdapterEvent::DataReceived { data, .. } = event {
+        if let saorsa_transport::constrained::AdapterEvent::DataReceived { data, .. } = event {
             assert_eq!(data.as_slice(), test_data);
             _data_received = true;
         }
@@ -264,8 +264,8 @@ fn test_connection_close() {
 // ============================================================================
 // These tests verify the multi-transport data path fixes from Phase 5.1
 
-use ant_quic::connection_router::{ConnectionRouter, RouterConfig};
-use ant_quic::transport::ProtocolEngine;
+use saorsa_transport::connection_router::{ConnectionRouter, RouterConfig};
+use saorsa_transport::transport::ProtocolEngine;
 
 /// Test that ConnectionRouter correctly selects Constrained engine for BLE addresses
 #[test]
@@ -318,7 +318,7 @@ fn test_mixed_transport_selection() {
     };
     let lora_addr = TransportAddr::LoRa {
         device_addr: [0xDE, 0xAD, 0xBE, 0xEF],
-        params: ant_quic::transport::LoRaParams::default(),
+        params: saorsa_transport::transport::LoRaParams::default(),
     };
 
     // Select engine for each
@@ -378,7 +378,7 @@ fn test_synthetic_addr_uniqueness() {
     };
     let lora = TransportAddr::LoRa {
         device_addr: [0x33, 0x44, 0x55, 0x66],
-        params: ant_quic::transport::LoRaParams::default(),
+        params: saorsa_transport::transport::LoRaParams::default(),
     };
 
     let syn1 = ble1.to_synthetic_socket_addr();
@@ -410,7 +410,7 @@ fn test_udp_synthetic_addr_passthrough() {
 /// This verifies Task 4 deliverables
 #[tokio::test]
 async fn test_constrained_connection_registration() {
-    use ant_quic::constrained::ConnectionId;
+    use saorsa_transport::constrained::ConnectionId;
     use std::collections::HashMap;
 
     // Create a mock public key fingerprint (replaces PeerId)
@@ -437,8 +437,8 @@ async fn test_constrained_connection_registration() {
 // ============================================================================
 // These tests verify the event channel and P2pEvent integration from Phase 5.2
 
-use ant_quic::constrained::EngineEvent;
-use ant_quic::nat_traversal_api::ConstrainedEventWithAddr;
+use saorsa_transport::constrained::EngineEvent;
+use saorsa_transport::nat_traversal_api::ConstrainedEventWithAddr;
 
 /// Test that ConstrainedEventWithAddr can be created and contains correct data
 #[test]
@@ -448,7 +448,7 @@ fn test_constrained_event_with_addr() {
         service_uuid: None,
     };
 
-    let conn_id = ant_quic::constrained::ConnectionId::new(42);
+    let conn_id = saorsa_transport::constrained::ConnectionId::new(42);
     let data = vec![1, 2, 3, 4, 5];
 
     let event = EngineEvent::DataReceived {
@@ -490,7 +490,7 @@ async fn test_constrained_event_channel() {
         service_uuid: None,
     };
 
-    let conn_id = ant_quic::constrained::ConnectionId::new(99);
+    let conn_id = saorsa_transport::constrained::ConnectionId::new(99);
     let test_data = b"Hello from BLE!".to_vec();
 
     // Send an event
@@ -525,10 +525,10 @@ async fn test_constrained_event_channel() {
 fn test_all_engine_event_types() {
     let lora_addr = TransportAddr::LoRa {
         device_addr: [0xDE, 0xAD, 0xBE, 0xEF],
-        params: ant_quic::transport::LoRaParams::default(),
+        params: saorsa_transport::transport::LoRaParams::default(),
     };
 
-    let conn_id = ant_quic::constrained::ConnectionId::new(1);
+    let conn_id = saorsa_transport::constrained::ConnectionId::new(1);
 
     // Test ConnectionAccepted
     let event1 = ConstrainedEventWithAddr {
@@ -578,7 +578,7 @@ fn test_all_engine_event_types() {
 /// Test P2pEvent::ConstrainedDataReceived creation
 #[test]
 fn test_p2p_event_constrained_data_received() {
-    use ant_quic::p2p_endpoint::P2pEvent;
+    use saorsa_transport::p2p_endpoint::P2pEvent;
 
     let ble_addr = TransportAddr::Ble {
         device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
@@ -618,7 +618,7 @@ fn test_p2p_event_constrained_data_received() {
 /// Test that TransportRegistry properly manages providers
 #[test]
 fn test_registry_provider_management() {
-    use ant_quic::transport::TransportRegistry;
+    use saorsa_transport::transport::TransportRegistry;
 
     // Create empty registry
     let registry = TransportRegistry::new();
@@ -643,7 +643,7 @@ fn test_registry_provider_management() {
 /// Test peer registration lookup methods
 #[test]
 fn test_constrained_connection_bidirectional_lookup() {
-    use ant_quic::constrained::ConnectionId;
+    use saorsa_transport::constrained::ConnectionId;
     use std::collections::HashMap;
 
     // Simulate the bidirectional maps used in P2pEndpoint
@@ -675,7 +675,7 @@ fn test_constrained_connection_bidirectional_lookup() {
 /// Test that unified DataReceived event structure works for both QUIC and constrained
 #[test]
 fn test_unified_data_received_event() {
-    use ant_quic::p2p_endpoint::P2pEvent;
+    use saorsa_transport::p2p_endpoint::P2pEvent;
 
     let quic_addr: std::net::SocketAddr = "192.168.1.100:8080".parse().unwrap();
 
@@ -713,7 +713,7 @@ fn test_unified_data_received_event() {
 /// Test that UdpTransport::bind_for_quinn creates shared socket
 #[tokio::test]
 async fn test_udp_transport_bind_for_quinn() {
-    use ant_quic::transport::{TransportProvider, UdpTransport};
+    use saorsa_transport::transport::{TransportProvider, UdpTransport};
 
     // Bind a socket for Quinn sharing
     let result = UdpTransport::bind_for_quinn("127.0.0.1:0".parse().unwrap()).await;
@@ -742,8 +742,8 @@ async fn test_udp_transport_bind_for_quinn() {
 /// Test PeerConnection stores TransportAddr correctly
 #[test]
 fn test_peer_connection_transport_addr() {
-    use ant_quic::p2p_endpoint::PeerConnection;
-    use ant_quic::transport::TransportType;
+    use saorsa_transport::p2p_endpoint::PeerConnection;
+    use saorsa_transport::transport::TransportType;
     use std::time::Instant;
 
     // Test with UDP address

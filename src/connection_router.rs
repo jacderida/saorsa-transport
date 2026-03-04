@@ -42,8 +42,8 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ant_quic::connection_router::{ConnectionRouter, RouterConfig};
-//! use ant_quic::transport::TransportAddr;
+//! use saorsa_transport::connection_router::{ConnectionRouter, RouterConfig};
+//! use saorsa_transport::transport::TransportAddr;
 //!
 //! // Create router with default config
 //! let router = ConnectionRouter::new(RouterConfig::default());

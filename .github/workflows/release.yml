@@ -161,47 +161,47 @@ jobs:
           # Linux x86_64
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            binary: ant-quic
-            archive: ant-quic-x86_64-linux.tar.gz
+            binary: saorsa-transport
+            archive: saorsa-transport-x86_64-linux.tar.gz
 
           # Linux musl (static, Alpine-compatible)
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-musl
-            binary: ant-quic
-            archive: ant-quic-x86_64-linux-musl.tar.gz
+            binary: saorsa-transport
+            archive: saorsa-transport-x86_64-linux-musl.tar.gz
             use-cross: true
 
           # Linux ARM64
           - os: ubuntu-24.04
             target: aarch64-unknown-linux-gnu
-            binary: ant-quic
-            archive: ant-quic-aarch64-linux.tar.gz
+            binary: saorsa-transport
+            archive: saorsa-transport-aarch64-linux.tar.gz
             use-cross: true
 
           # Linux ARMv7 (Raspberry Pi, etc.)
           - os: ubuntu-24.04
             target: armv7-unknown-linux-gnueabihf
-            binary: ant-quic
-            archive: ant-quic-armv7-linux.tar.gz
+            binary: saorsa-transport
+            archive: saorsa-transport-armv7-linux.tar.gz
             use-cross: true
 
           # macOS Intel
           - os: macos-latest
             target: x86_64-apple-darwin
-            binary: ant-quic
-            archive: ant-quic-x86_64-macos.tar.gz
+            binary: saorsa-transport
+            archive: saorsa-transport-x86_64-macos.tar.gz
 
           # macOS Apple Silicon
           - os: macos-latest
             target: aarch64-apple-darwin
-            binary: ant-quic
-            archive: ant-quic-aarch64-macos.tar.gz
+            binary: saorsa-transport
+            archive: saorsa-transport-aarch64-macos.tar.gz
 
           # Windows MSVC
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            binary: ant-quic.exe
-            archive: ant-quic-x86_64-windows.zip
+            binary: saorsa-transport.exe
+            archive: saorsa-transport-x86_64-windows.zip
 
     steps:
       - name: Checkout
@@ -213,13 +213,13 @@ jobs:
         uses: ilammy/setup-nasm@v1
 
       # Use actions-rust-cross for cross-compilation (handles everything)
-      - name: Build ant-quic (cross)
+      - name: Build saorsa-transport (cross)
         if: matrix.use-cross == true
         uses: houseabsolute/actions-rust-cross@v1
         with:
           command: build
           target: ${{ matrix.target }}
-          args: "--locked --release --bin ant-quic"
+          args: "--locked --release --bin saorsa-transport"
           strip: true
 
       # Native builds for non-cross targets
@@ -241,9 +241,9 @@ jobs:
             target/
           key: cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build ant-quic (native)
+      - name: Build saorsa-transport (native)
         if: matrix.use-cross != true
-        run: cargo build --release --target ${{ matrix.target }} --bin ant-quic
+        run: cargo build --release --target ${{ matrix.target }} --bin saorsa-transport
         shell: bash
 
       - name: Strip binaries (Unix, native builds only)
@@ -298,11 +298,11 @@ jobs:
         run: |
           # Create ZIP for notarization (required format)
           cd target/${{ matrix.target }}/release
-          zip ant-quic-notarize.zip ${{ matrix.binary }}
+          zip saorsa-transport-notarize.zip ${{ matrix.binary }}
 
           # Submit for notarization
-          echo "Submitting ant-quic for notarization..."
-          xcrun notarytool submit ant-quic-notarize.zip \
+          echo "Submitting saorsa-transport for notarization..."
+          xcrun notarytool submit saorsa-transport-notarize.zip \
             --apple-id "$MACOS_NOTARIZATION_APPLE_ID" \
             --password "$MACOS_NOTARIZATION_PASSWORD" \
             --team-id "$MACOS_NOTARIZATION_TEAM_ID" \
@@ -312,12 +312,12 @@ jobs:
           xcrun stapler staple ${{ matrix.binary }} || echo "Stapling binary (may fail for CLI tools)"
 
           # Cleanup
-          rm -f ant-quic-notarize.zip
+          rm -f saorsa-transport-notarize.zip
           cd -
 
           echo "✅ Notarization complete"
 
-      - name: Package ant-quic (Unix)
+      - name: Package saorsa-transport (Unix)
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
@@ -325,7 +325,7 @@ jobs:
           cd -
           sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
 
-      - name: Package ant-quic (Windows)
+      - name: Package saorsa-transport (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
@@ -333,7 +333,7 @@ jobs:
           cd -
           certutil -hashfile ${{ matrix.archive }} SHA256 > ${{ matrix.archive }}.sha256
 
-      - name: Upload ant-quic Artifact
+      - name: Upload saorsa-transport Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.archive }}
@@ -379,8 +379,8 @@ jobs:
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: ${{ github.event.inputs.dry_run != 'true' }}
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/ant-quic:${{ needs.validate.outputs.version_number }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/ant-quic:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/saorsa-transport:${{ needs.validate.outputs.version_number }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/saorsa-transport:latest
             ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.version_number }}
             ghcr.io/${{ github.repository }}:latest
           cache-from: type=gha
@@ -446,19 +446,19 @@ jobs:
           prerelease: ${{ needs.validate.outputs.is_prerelease }}
           generate_release_notes: false
           body: |
-            ## ant-quic ${{ needs.validate.outputs.version }}
+            ## saorsa-transport ${{ needs.validate.outputs.version }}
 
             ${{ needs.changelog.outputs.breaking_changes == 'true' && '⚠️ **This release contains breaking changes!**' || '' }}
 
             ### Overview
 
-            ant-quic is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks and the Autonomi ecosystem.
+            saorsa-transport is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks and the Autonomi ecosystem.
 
             ### Installation
 
             #### From crates.io
             ```bash
-            cargo install ant-quic
+            cargo install saorsa-transport
             ```
 
             #### Pre-built binaries
@@ -466,15 +466,15 @@ jobs:
 
             **Linux/macOS:**
             ```bash
-            tar -xzf ant-quic-*.tar.gz
-            chmod +x ant-quic
-            ./ant-quic --help
+            tar -xzf saorsa-transport-*.tar.gz
+            chmod +x saorsa-transport
+            ./saorsa-transport --help
             ```
 
             **Windows:**
             ```powershell
-            Expand-Archive ant-quic-*.zip
-            .\ant-quic.exe --help
+            Expand-Archive saorsa-transport-*.zip
+            .\saorsa-transport.exe --help
             ```
 
             #### Docker
@@ -502,5 +502,5 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           curl -H "Content-Type: application/json" \
-            -d "{\"content\": \"ant-quic ${{ needs.validate.outputs.version }} released! https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate.outputs.version }}\"}" \
+            -d "{\"content\": \"saorsa-transport ${{ needs.validate.outputs.version }} released! https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate.outputs.version }}\"}" \
             $DISCORD_WEBHOOK

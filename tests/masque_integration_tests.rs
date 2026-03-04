@@ -20,8 +20,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use ant_quic::VarInt;
-use ant_quic::masque::{
+use bytes::Bytes;
+use saorsa_transport::VarInt;
+use saorsa_transport::masque::{
     Capsule,
     // Datagram types
     CompressedDatagram,
@@ -52,7 +53,6 @@ use ant_quic::masque::{
     RelaySessionConfig,
     RelaySessionState,
 };
-use bytes::Bytes;
 
 /// Test address helper
 fn test_addr(port: u16) -> SocketAddr {

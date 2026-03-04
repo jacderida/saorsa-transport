@@ -4,7 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
+use saorsa_transport::{
     auth::AuthConfig,
     chat::{ChatError, ChatMessage, MAX_MESSAGE_SIZE, PeerInfo},
     nat_traversal_api::EndpointRole,

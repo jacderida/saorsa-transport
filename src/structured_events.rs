@@ -7,7 +7,7 @@
 
 //! Structured event logging for observability
 //!
-//! Provides consistent, structured event logging throughout ant-quic.
+//! Provides consistent, structured event logging throughout saorsa-transport.
 //! Events are categorized by component and severity for easy filtering
 //! and analysis.
 

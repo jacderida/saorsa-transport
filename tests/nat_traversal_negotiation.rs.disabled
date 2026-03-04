@@ -1,7 +1,7 @@
 //! Integration test for NAT traversal with Raw Public Keys using Endpoint API
 
 use std::{sync::Arc, net::SocketAddr};
-use ant_quic::{
+use saorsa_transport::{
     TransportConfig, ServerConfig, EndpointConfig, Endpoint,
     transport_parameters::{NatTraversalConfig, NatTraversalRole},
     VarInt, RandomConnectionIdGenerator,
@@ -41,7 +41,7 @@ async fn test_nat_traversal_with_raw_public_keys() {
     
     // Create server with NAT traversal enabled
     let mut server_config = ServerConfig::with_crypto(Arc::new(
-        ant_quic::crypto::rustls::QuicServerConfig::try_from(server_crypto_config).unwrap()
+        saorsa_transport::crypto::rustls::QuicServerConfig::try_from(server_crypto_config).unwrap()
     ));
     
     let mut server_transport_config = TransportConfig::default();

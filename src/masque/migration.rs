@@ -23,7 +23,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ant_quic::masque::migration::{MigrationCoordinator, MigrationConfig};
+//! use saorsa_transport::masque::migration::{MigrationCoordinator, MigrationConfig};
 //!
 //! let config = MigrationConfig::default();
 //! let coordinator = MigrationCoordinator::new(config);

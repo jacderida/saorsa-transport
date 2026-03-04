@@ -1,6 +1,6 @@
-# ant-quic API Reference
+# saorsa-transport API Reference
 
-This document provides a comprehensive API reference for ant-quic v0.13.0+.
+This document provides a comprehensive API reference for saorsa-transport v0.13.0+.
 
 ## Table of Contents
 
@@ -20,7 +20,7 @@ The primary entry point for all P2P operations. All nodes are symmetric - every 
 ### Creating an Endpoint
 
 ```rust
-use ant_quic::{P2pEndpoint, P2pConfig};
+use saorsa_transport::{P2pEndpoint, P2pConfig};
 
 // Simple endpoint
 let config = P2pConfig::builder()
@@ -310,7 +310,7 @@ pub enum NatTraversalError {
 ### Complete P2P Node
 
 ```rust
-use ant_quic::{P2pEndpoint, P2pConfig, P2pEvent, NatConfig};
+use saorsa_transport::{P2pEndpoint, P2pConfig, P2pEvent, NatConfig};
 use std::time::Duration;
 
 #[tokio::main]
@@ -393,7 +393,7 @@ The following types were **removed** in v0.13.0:
 
 ## Support
 
-- GitHub Issues: https://github.com/dirvine/ant-quic/issues
-- Documentation: https://docs.rs/ant-quic
-- Examples: https://github.com/dirvine/ant-quic/tree/main/examples
+- GitHub Issues: https://github.com/saorsa-labs/saorsa-transport/issues
+- Documentation: https://docs.rs/saorsa-transport
+- Examples: https://github.com/saorsa-labs/saorsa-transport/tree/main/examples
 
