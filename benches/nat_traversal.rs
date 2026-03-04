@@ -15,7 +15,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 use rand::{Rng, thread_rng};
 use uuid::Uuid;
 
-use ant_quic::{CandidateAddress, CandidateSource, CandidateState, PeerId};
+use ant_quic::{CandidateAddress, CandidateSource, CandidateState};
 
 /// Mock path validation state for benchmarking
 #[derive(Clone, Debug)]
@@ -40,8 +40,8 @@ enum ValidationState {
 #[allow(dead_code)]
 struct CoordinationState {
     pub round: u32,
-    pub participants: Vec<PeerId>,
-    pub responses: HashMap<PeerId, CoordinationResponse>,
+    pub participants: Vec<[u8; 32]>,
+    pub responses: HashMap<[u8; 32], CoordinationResponse>,
     pub started_at: Instant,
     pub timeout: Duration,
 }
@@ -49,7 +49,7 @@ struct CoordinationState {
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 struct CoordinationResponse {
-    pub peer_id: PeerId,
+    pub peer_id: [u8; 32],
     pub ready: bool,
     pub timestamp: Instant,
 }
@@ -262,13 +262,13 @@ fn bench_coordination(c: &mut Criterion) {
             &peer_count,
             |b, &size| {
                 b.iter(|| {
-                    let participants: Vec<PeerId> = (0..size)
+                    let participants: Vec<[u8; 32]> = (0..size)
                         .map(|_| {
                             let mut peer_id_bytes = [0u8; 32];
                             let uuid = Uuid::new_v4();
                             let uuid_bytes = uuid.as_bytes();
                             peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                            PeerId(peer_id_bytes)
+                            peer_id_bytes
                         })
                         .collect();
 
@@ -291,13 +291,13 @@ fn bench_coordination(c: &mut Criterion) {
             |b, &size| {
                 b.iter_batched(
                     || {
-                        let participants: Vec<PeerId> = (0..size)
+                        let participants: Vec<[u8; 32]> = (0..size)
                             .map(|_| {
                                 let mut peer_id_bytes = [0u8; 32];
                                 let uuid = Uuid::new_v4();
                                 let uuid_bytes = uuid.as_bytes();
                                 peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                                PeerId(peer_id_bytes)
+                                peer_id_bytes
                             })
                             .collect();
 

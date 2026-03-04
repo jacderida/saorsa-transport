@@ -411,9 +411,10 @@ fn test_udp_synthetic_addr_passthrough() {
 #[tokio::test]
 async fn test_constrained_connection_registration() {
     use ant_quic::constrained::ConnectionId;
+    use std::collections::HashMap;
 
-    // Create a mock PeerId
-    let peer_id = ant_quic::PeerId([0x42; 32]);
+    // Create a mock public key fingerprint (replaces PeerId)
+    let fingerprint: [u8; 32] = [0x42; 32];
     let conn_id = ConnectionId::new(123);
 
     // Since we can't easily create a full P2pEndpoint in tests,
@@ -424,12 +425,11 @@ async fn test_constrained_connection_registration() {
     let conn_id_copy = conn_id;
     assert_eq!(conn_id.value(), conn_id_copy.value());
 
-    // Verify PeerId can be used as HashMap key
-    use std::collections::HashMap;
-    let mut map: HashMap<ant_quic::PeerId, ConnectionId> = HashMap::new();
-    map.insert(peer_id, conn_id);
-    assert!(map.contains_key(&peer_id));
-    assert_eq!(map.get(&peer_id), Some(&conn_id));
+    // Verify fingerprint can be used as HashMap key
+    let mut map: HashMap<[u8; 32], ConnectionId> = HashMap::new();
+    map.insert(fingerprint, conn_id);
+    assert!(map.contains_key(&fingerprint));
+    assert_eq!(map.get(&fingerprint), Some(&conn_id));
 }
 
 // ============================================================================
@@ -647,28 +647,28 @@ fn test_constrained_connection_bidirectional_lookup() {
     use std::collections::HashMap;
 
     // Simulate the bidirectional maps used in P2pEndpoint
-    let peer_id = ant_quic::PeerId([0x42; 32]);
+    let fingerprint: [u8; 32] = [0x42; 32];
     let conn_id = ConnectionId::new(100);
     let addr = TransportAddr::Ble {
         device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
         service_uuid: None,
     };
 
-    // Forward map: PeerId → ConnectionId
-    let mut constrained_connections: HashMap<ant_quic::PeerId, ConnectionId> = HashMap::new();
-    constrained_connections.insert(peer_id, conn_id);
+    // Forward map: fingerprint → ConnectionId
+    let mut constrained_connections: HashMap<[u8; 32], ConnectionId> = HashMap::new();
+    constrained_connections.insert(fingerprint, conn_id);
 
-    // Reverse map: ConnectionId → (PeerId, TransportAddr)
-    let mut constrained_peer_addrs: HashMap<ConnectionId, (ant_quic::PeerId, TransportAddr)> =
+    // Reverse map: ConnectionId → (fingerprint, TransportAddr)
+    let mut constrained_peer_addrs: HashMap<ConnectionId, ([u8; 32], TransportAddr)> =
         HashMap::new();
-    constrained_peer_addrs.insert(conn_id, (peer_id, addr.clone()));
+    constrained_peer_addrs.insert(conn_id, (fingerprint, addr.clone()));
 
-    // Test forward lookup: PeerId → ConnectionId
-    assert_eq!(constrained_connections.get(&peer_id), Some(&conn_id));
+    // Test forward lookup: fingerprint → ConnectionId
+    assert_eq!(constrained_connections.get(&fingerprint), Some(&conn_id));
 
-    // Test reverse lookup: ConnectionId → PeerId
-    let (found_peer_id, found_addr) = constrained_peer_addrs.get(&conn_id).unwrap();
-    assert_eq!(*found_peer_id, peer_id);
+    // Test reverse lookup: ConnectionId → fingerprint
+    let (found_fingerprint, found_addr) = constrained_peer_addrs.get(&conn_id).unwrap();
+    assert_eq!(*found_fingerprint, fingerprint);
     assert_eq!(*found_addr, addr);
 }
 
@@ -677,39 +677,34 @@ fn test_constrained_connection_bidirectional_lookup() {
 fn test_unified_data_received_event() {
     use ant_quic::p2p_endpoint::P2pEvent;
 
-    let peer_id = ant_quic::PeerId([0x55; 32]);
+    let quic_addr: std::net::SocketAddr = "192.168.1.100:8080".parse().unwrap();
 
     // QUIC-style DataReceived
     let quic_event = P2pEvent::DataReceived {
-        peer_id,
+        addr: quic_addr,
         bytes: 1024,
     };
 
     match quic_event {
-        P2pEvent::DataReceived {
-            peer_id: p,
-            bytes: b,
-        } => {
-            assert_eq!(p, peer_id);
-            assert_eq!(b, 1024);
+        P2pEvent::DataReceived { addr, bytes } => {
+            assert_eq!(addr, quic_addr);
+            assert_eq!(bytes, 1024);
         }
         _ => panic!("Expected DataReceived"),
     }
 
     // Same event structure can be used for constrained data
-    // (after peer registration, we emit DataReceived instead of ConstrainedDataReceived)
+    // (after peer registration, we emit DataReceived with synthetic socket addr)
+    let synthetic_addr: std::net::SocketAddr = "10.0.0.1:0".parse().unwrap();
     let constrained_event = P2pEvent::DataReceived {
-        peer_id, // Derived from registered constrained connection
+        addr: synthetic_addr,
         bytes: 512,
     };
 
     match constrained_event {
-        P2pEvent::DataReceived {
-            peer_id: p,
-            bytes: b,
-        } => {
-            assert_eq!(p, peer_id);
-            assert_eq!(b, 512);
+        P2pEvent::DataReceived { addr, bytes } => {
+            assert_eq!(addr, synthetic_addr);
+            assert_eq!(bytes, 512);
         }
         _ => panic!("Expected DataReceived"),
     }
@@ -754,7 +749,7 @@ fn test_peer_connection_transport_addr() {
     // Test with UDP address
     let udp_addr = TransportAddr::Udp("192.168.1.100:8080".parse().unwrap());
     let peer_conn_udp = PeerConnection {
-        peer_id: ant_quic::PeerId([0x11; 32]),
+        public_key: Some(vec![0x11; 32]),
         remote_addr: udp_addr.clone(),
         authenticated: true,
         connected_at: Instant::now(),
@@ -774,7 +769,7 @@ fn test_peer_connection_transport_addr() {
         service_uuid: None,
     };
     let peer_conn_ble = PeerConnection {
-        peer_id: ant_quic::PeerId([0x22; 32]),
+        public_key: None,
         remote_addr: ble_addr.clone(),
         authenticated: false,
         connected_at: Instant::now(),

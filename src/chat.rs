@@ -10,7 +10,6 @@
 //! This module provides a structured chat protocol for P2P communication
 //! over QUIC streams, including message types, serialization, and handling.
 
-use crate::nat_traversal_api::PeerId;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use thiserror::Error;
@@ -189,38 +188,38 @@ struct ChatWireFormat {
 
 impl ChatMessage {
     /// Create a new join message
-    pub fn join(nickname: String, peer_id: PeerId) -> Self {
+    pub fn join(nickname: String, peer_id: [u8; 32]) -> Self {
         Self::Join {
             nickname,
-            peer_id: peer_id.0,
+            peer_id,
             timestamp: SystemTime::now(),
         }
     }
 
     /// Create a new leave message
-    pub fn leave(nickname: String, peer_id: PeerId) -> Self {
+    pub fn leave(nickname: String, peer_id: [u8; 32]) -> Self {
         Self::Leave {
             nickname,
-            peer_id: peer_id.0,
+            peer_id,
             timestamp: SystemTime::now(),
         }
     }
 
     /// Create a new text message
-    pub fn text(nickname: String, peer_id: PeerId, text: String) -> Self {
+    pub fn text(nickname: String, peer_id: [u8; 32], text: String) -> Self {
         Self::Text {
             nickname,
-            peer_id: peer_id.0,
+            peer_id,
             text,
             timestamp: SystemTime::now(),
         }
     }
 
     /// Create a new status message
-    pub fn status(nickname: String, peer_id: PeerId, status: String) -> Self {
+    pub fn status(nickname: String, peer_id: [u8; 32], status: String) -> Self {
         Self::Status {
             nickname,
-            peer_id: peer_id.0,
+            peer_id,
             status,
             timestamp: SystemTime::now(),
         }
@@ -229,24 +228,24 @@ impl ChatMessage {
     /// Create a new direct message
     pub fn direct(
         from_nickname: String,
-        from_peer_id: PeerId,
-        to_peer_id: PeerId,
+        from_peer_id: [u8; 32],
+        to_peer_id: [u8; 32],
         text: String,
     ) -> Self {
         Self::Direct {
             from_nickname,
-            from_peer_id: from_peer_id.0,
-            to_peer_id: to_peer_id.0,
+            from_peer_id,
+            to_peer_id,
             text,
             timestamp: SystemTime::now(),
         }
     }
 
     /// Create a typing indicator
-    pub fn typing(nickname: String, peer_id: PeerId, is_typing: bool) -> Self {
+    pub fn typing(nickname: String, peer_id: [u8; 32], is_typing: bool) -> Self {
         Self::Typing {
             nickname,
-            peer_id: peer_id.0,
+            peer_id,
             is_typing,
         }
     }
@@ -284,16 +283,16 @@ impl ChatMessage {
         Ok(wire_format.message)
     }
 
-    /// Get the peer ID from the message
-    pub fn peer_id(&self) -> Option<PeerId> {
+    /// Get the peer ID bytes from the message
+    pub fn peer_id(&self) -> Option<[u8; 32]> {
         match self {
             Self::Join { peer_id, .. }
             | Self::Leave { peer_id, .. }
             | Self::Text { peer_id, .. }
             | Self::Status { peer_id, .. }
             | Self::Typing { peer_id, .. }
-            | Self::PeerListRequest { peer_id, .. } => Some(PeerId(*peer_id)),
-            Self::Direct { from_peer_id, .. } => Some(PeerId(*from_peer_id)),
+            | Self::PeerListRequest { peer_id, .. } => Some(*peer_id),
+            Self::Direct { from_peer_id, .. } => Some(*from_peer_id),
             Self::PeerListResponse { .. } => None,
         }
     }
@@ -318,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_message_serialization() {
-        let peer_id = PeerId([1u8; 32]);
+        let peer_id = [1u8; 32];
         let message = ChatMessage::text(
             "test-user".to_string(),
             peer_id,
@@ -336,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_all_message_types() {
-        let peer_id = PeerId([2u8; 32]);
+        let peer_id = [2u8; 32];
         let messages = vec![
             ChatMessage::join("alice".to_string(), peer_id),
             ChatMessage::leave("alice".to_string(), peer_id),
@@ -345,14 +344,14 @@ mod tests {
             ChatMessage::direct(
                 "alice".to_string(),
                 peer_id,
-                PeerId([3u8; 32]),
+                [3u8; 32],
                 "Private message".to_string(),
             ),
             ChatMessage::typing("alice".to_string(), peer_id, true),
-            ChatMessage::PeerListRequest { peer_id: peer_id.0 },
+            ChatMessage::PeerListRequest { peer_id },
             ChatMessage::PeerListResponse {
                 peers: vec![PeerInfo {
-                    peer_id: peer_id.0,
+                    peer_id,
                     nickname: "alice".to_string(),
                     status: "Online".to_string(),
                     joined_at: SystemTime::now(),
@@ -386,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_message_too_large() {
-        let peer_id = PeerId([4u8; 32]);
+        let peer_id = [4u8; 32];
         let large_text = "a".repeat(MAX_MESSAGE_SIZE);
         let message = ChatMessage::text("user".to_string(), peer_id, large_text);
 
@@ -398,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_invalid_version() {
-        let peer_id = PeerId([5u8; 32]);
+        let peer_id = [5u8; 32];
         let message = ChatMessage::text("user".to_string(), peer_id, "test".to_string());
 
         // Create wire format with wrong version

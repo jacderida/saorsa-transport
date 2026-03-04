@@ -39,7 +39,6 @@ fn main() {
 
     // Test CandidateDiscoveryManager which uses the platform implementations internally
     use ant_quic::candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig};
-    use ant_quic::nat_traversal_api::PeerId;
 
     println!("Testing CandidateDiscoveryManager (uses platform discovery internally):\n");
 
@@ -51,13 +50,13 @@ fn main() {
     println!("  - Manages candidate discovery lifecycle");
     println!("  - Integrates with NAT traversal system\n");
 
-    // Generate a test peer ID
-    let peer_id = PeerId([42; 32]);
+    // Generate a test peer fingerprint (32-byte identity)
+    let peer_fingerprint: [u8; 32] = [42; 32];
 
     println!("Example usage:");
     println!(
         "  1. Manager starts discovery for peer: {:?}",
-        &peer_id.0[0..4]
+        &peer_fingerprint[0..4]
     );
     println!("  2. Platform-specific discovery runs automatically");
     println!("  3. Local interfaces enumerated");

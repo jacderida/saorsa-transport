@@ -418,8 +418,7 @@ async fn test_sustained_bridging_load_30s() {
 
 #[allow(dead_code)]
 fn create_test_peer(addr: SocketAddr, dual_stack: bool) -> CachedPeer {
-    use ant_quic::nat_traversal_api::PeerId;
-    use std::time::SystemTime;
+    use ant_quic::bootstrap_cache::PeerSource;
 
     let external_addresses = if dual_stack {
         vec![
@@ -433,62 +432,28 @@ fn create_test_peer(addr: SocketAddr, dual_stack: bool) -> CachedPeer {
         vec![addr]
     };
 
-    let caps = PeerCapabilities {
+    let mut peer = CachedPeer::new(addr, vec![addr], PeerSource::Seed);
+    peer.capabilities = PeerCapabilities {
         supports_relay: true,
         supports_coordination: true,
         external_addresses,
         ..PeerCapabilities::default()
     };
-
-    // Generate a simple test peer ID
-    let mut peer_id_bytes = [0u8; 32];
-    peer_id_bytes[0] = addr.port() as u8;
-    peer_id_bytes[1] = (addr.port() >> 8) as u8;
-
-    CachedPeer {
-        peer_id: PeerId(peer_id_bytes),
-        addresses: vec![addr],
-        capabilities: caps,
-        first_seen: SystemTime::now(),
-        last_seen: SystemTime::now(),
-        last_attempt: None,
-        stats: Default::default(),
-        quality_score: 0.8,
-        source: Default::default(),
-        relay_paths: vec![],
-        token: None,
-    }
+    peer.quality_score = 0.8;
+    peer
 }
 
 #[allow(dead_code)]
 fn create_test_peer_dual_stack(v4: SocketAddr, v6: SocketAddr) -> CachedPeer {
-    use ant_quic::nat_traversal_api::PeerId;
-    use std::time::SystemTime;
+    use ant_quic::bootstrap_cache::PeerSource;
 
-    let caps = PeerCapabilities {
+    let mut peer = CachedPeer::new(v4, vec![v4, v6], PeerSource::Seed);
+    peer.capabilities = PeerCapabilities {
         supports_relay: true,
         supports_coordination: true,
         external_addresses: vec![v4, v6],
         ..PeerCapabilities::default()
     };
-
-    // Generate a simple test peer ID
-    let mut peer_id_bytes = [0u8; 32];
-    peer_id_bytes[0] = v4.port() as u8;
-    peer_id_bytes[1] = (v4.port() >> 8) as u8;
-    peer_id_bytes[2] = 0xD5; // Mark as dual-stack
-
-    CachedPeer {
-        peer_id: PeerId(peer_id_bytes),
-        addresses: vec![v4, v6],
-        capabilities: caps,
-        first_seen: SystemTime::now(),
-        last_seen: SystemTime::now(),
-        last_attempt: None,
-        stats: Default::default(),
-        quality_score: 0.9, // Higher score for dual-stack
-        source: Default::default(),
-        relay_paths: vec![],
-        token: None,
-    }
+    peer.quality_score = 0.9; // Higher score for dual-stack
+    peer
 }

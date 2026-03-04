@@ -7,7 +7,9 @@
 //! Validates the entire event pipeline with new address types.
 
 use ant_quic::transport::TransportAddr;
-use ant_quic::{P2pConfig, P2pEndpoint, P2pEvent, PeerId};
+use ant_quic::{P2pConfig, P2pEndpoint, P2pEvent};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -63,23 +65,23 @@ async fn test_event_pipeline_uses_transport_addr() {
 #[test]
 fn test_peer_connected_event_construction_udp() {
     let socket_addr: SocketAddr = "192.168.1.100:9000".parse().expect("valid addr");
-    let peer_id = PeerId([0x42; 32]);
+    let test_public_key: Vec<u8> = vec![0x42; 32];
 
     // Construct event as would happen in P2pEndpoint
     let event = P2pEvent::PeerConnected {
-        peer_id,
         addr: TransportAddr::Udp(socket_addr),
+        public_key: Some(test_public_key.clone()),
         side: ant_quic::Side::Client,
     };
 
     // Verify we can destructure it correctly
     if let P2pEvent::PeerConnected {
-        peer_id: p,
         addr,
+        public_key,
         side,
     } = event
     {
-        assert_eq!(p.0, [0x42; 32]);
+        assert_eq!(public_key.unwrap(), test_public_key);
         assert_eq!(addr, TransportAddr::Udp(socket_addr));
         assert!(side.is_client());
 
@@ -119,8 +121,8 @@ fn test_event_clone_for_broadcast() {
     let socket_addr: SocketAddr = "10.0.0.1:8080".parse().expect("valid addr");
 
     let original = P2pEvent::PeerConnected {
-        peer_id: PeerId([0xaa; 32]),
         addr: TransportAddr::Udp(socket_addr),
+        public_key: Some(vec![0xaa; 32]),
         side: ant_quic::Side::Server,
     };
 
@@ -131,17 +133,17 @@ fn test_event_clone_for_broadcast() {
     match (&original, &cloned) {
         (
             P2pEvent::PeerConnected {
-                peer_id: p1,
                 addr: a1,
+                public_key: pk1,
                 side: s1,
             },
             P2pEvent::PeerConnected {
-                peer_id: p2,
                 addr: a2,
+                public_key: pk2,
                 side: s2,
             },
         ) => {
-            assert_eq!(p1.0, p2.0);
+            assert_eq!(pk1, pk2);
             assert_eq!(a1, a2);
             assert_eq!(s1, s2);
         }
@@ -157,18 +159,18 @@ fn test_multi_transport_events() {
 
     // UDP event
     let udp_event = P2pEvent::PeerConnected {
-        peer_id: PeerId([0x01; 32]),
         addr: TransportAddr::Udp(udp_addr),
+        public_key: Some(vec![0x01; 32]),
         side: ant_quic::Side::Client,
     };
 
     // BLE event
     let ble_event = P2pEvent::PeerConnected {
-        peer_id: PeerId([0x02; 32]),
         addr: TransportAddr::Ble {
             device_id: ble_device,
             service_uuid: None,
         },
+        public_key: Some(vec![0x02; 32]),
         side: ant_quic::Side::Server,
     };
 
@@ -193,16 +195,16 @@ fn test_multi_transport_events() {
 fn test_transport_aware_event_handling() {
     let events = vec![
         P2pEvent::PeerConnected {
-            peer_id: PeerId([0x01; 32]),
             addr: TransportAddr::Udp("10.0.0.1:8080".parse().expect("valid")),
+            public_key: Some(vec![0x01; 32]),
             side: ant_quic::Side::Client,
         },
         P2pEvent::PeerConnected {
-            peer_id: PeerId([0x02; 32]),
             addr: TransportAddr::Ble {
                 device_id: [0xaa; 6],
                 service_uuid: None,
             },
+            public_key: Some(vec![0x02; 32]),
             side: ant_quic::Side::Server,
         },
         P2pEvent::ExternalAddressDiscovered {
@@ -239,8 +241,8 @@ fn test_backward_compatibility_with_as_socket_addr() {
     let socket_addr: SocketAddr = "172.16.0.1:5000".parse().expect("valid addr");
 
     let event = P2pEvent::PeerConnected {
-        peer_id: PeerId([0xff; 32]),
         addr: TransportAddr::Udp(socket_addr),
+        public_key: Some(vec![0xff; 32]),
         side: ant_quic::Side::Client,
     };
 
@@ -271,9 +273,6 @@ fn test_transport_addr_udp_wrapping() {
     assert_eq!(transport1, transport2);
 
     // Should have same hash (for HashMap usage)
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
     let mut h1 = DefaultHasher::new();
     let mut h2 = DefaultHasher::new();
     transport1.hash(&mut h1);
@@ -285,8 +284,8 @@ fn test_transport_addr_udp_wrapping() {
 #[test]
 fn test_event_debug_formatting() {
     let event = P2pEvent::PeerConnected {
-        peer_id: PeerId([0x55; 32]),
         addr: TransportAddr::Udp("192.168.0.100:9001".parse().expect("valid")),
+        public_key: Some(vec![0x55; 32]),
         side: ant_quic::Side::Client,
     };
 

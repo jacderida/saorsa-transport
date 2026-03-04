@@ -13,7 +13,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::crypto::raw_public_keys::pqc::generate_ml_dsa_keypair;
+use ant_quic::crypto::raw_public_keys::pqc::{ML_DSA_65_PUBLIC_KEY_SIZE, generate_ml_dsa_keypair};
 use ant_quic::transport::TransportAddr;
 use ant_quic::{NatType, Node, NodeConfig, NodeStatus};
 use std::collections::HashSet;
@@ -38,13 +38,17 @@ mod zero_config_tests {
         assert!(local_addr.port() > 0, "Node should bind to a valid port");
         println!("Zero-config node listening on: {}", local_addr);
 
-        // Verify it has a peer ID
-        let peer_id = node.peer_id();
-        println!("Zero-config node peer ID: {:?}", peer_id);
-
-        // Verify it has a public key (PeerId is 32-byte SHA256 hash of ML-DSA-65 public key)
+        // Verify it has a public key (ML-DSA-65 SPKI, 1952 bytes)
         let public_key = node.public_key_bytes();
-        assert_eq!(public_key.len(), 32, "PeerId should be 32 bytes");
+        assert_eq!(
+            public_key.len(),
+            ML_DSA_65_PUBLIC_KEY_SIZE,
+            "Public key should be ML-DSA-65 size"
+        );
+        println!(
+            "Zero-config node public key: {}...",
+            hex::encode(&public_key[..16])
+        );
 
         node.shutdown().await;
     }
@@ -84,13 +88,16 @@ mod zero_config_tests {
 
         let node2_addr = node2.local_addr().expect("Should have address");
         println!("Second node at: {}", node2_addr);
-        println!("Second node peer ID: {:?}", node2.peer_id());
+        println!(
+            "Second node public key: {}...",
+            hex::encode(&node2.public_key_bytes()[..16])
+        );
 
-        // Peer IDs should be different
+        // Public keys should be different
         assert_ne!(
-            node1.peer_id(),
-            node2.peer_id(),
-            "Nodes should have different peer IDs"
+            node1.public_key_bytes(),
+            node2.public_key_bytes(),
+            "Nodes should have different public keys"
         );
 
         node1.shutdown().await;
@@ -112,10 +119,10 @@ mod zero_config_tests {
         let public_key_bytes = node.public_key_bytes();
 
         println!("Node with keypair at: {}", local_addr);
-        println!("Public key (peer ID): {}", hex::encode(public_key_bytes));
+        println!("Public key: {}...", hex::encode(&public_key_bytes[..16]));
 
-        // PeerId is 32-byte SHA256 hash of ML-DSA-65 public key
-        assert_eq!(public_key_bytes.len(), 32);
+        // ML-DSA-65 SPKI public key is 1952 bytes
+        assert_eq!(public_key_bytes.len(), ML_DSA_65_PUBLIC_KEY_SIZE);
 
         node.shutdown().await;
     }
@@ -157,10 +164,14 @@ mod status_tests {
         let status: NodeStatus = node.status().await;
 
         // Verify basic identity fields
+        assert!(
+            status.public_key.is_some(),
+            "Status should have a public key"
+        );
         assert_eq!(
-            status.peer_id,
-            node.peer_id(),
-            "Status peer_id should match"
+            status.public_key.as_deref().unwrap(),
+            node.public_key_bytes(),
+            "Status public_key should match node's public key"
         );
         assert_eq!(
             status.local_addr, local_addr,
@@ -175,7 +186,10 @@ mod status_tests {
         );
 
         println!("NodeStatus:");
-        println!("  peer_id: {:?}", status.peer_id);
+        println!(
+            "  public_key: {}...",
+            hex::encode(&status.public_key.as_ref().unwrap()[..16])
+        );
         println!("  local_addr: {}", status.local_addr);
         println!("  nat_type: {:?}", status.nat_type);
         println!("  can_receive_direct: {}", status.can_receive_direct);
@@ -399,16 +413,32 @@ mod three_node_tests {
         let addr2 = node2.local_addr().expect("Should have address");
         let addr3 = node3.local_addr().expect("Should have address");
 
-        println!("Node 1: {} -> {:?}", addr1, node1.peer_id());
-        println!("Node 2: {} -> {:?}", addr2, node2.peer_id());
-        println!("Node 3: {} -> {:?}", addr3, node3.peer_id());
+        println!(
+            "Node 1: {} -> {}...",
+            addr1,
+            hex::encode(&node1.public_key_bytes()[..16])
+        );
+        println!(
+            "Node 2: {} -> {}...",
+            addr2,
+            hex::encode(&node2.public_key_bytes()[..16])
+        );
+        println!(
+            "Node 3: {} -> {}...",
+            addr3,
+            hex::encode(&node3.public_key_bytes()[..16])
+        );
 
-        // Verify all peer IDs are unique
-        let mut peer_ids = HashSet::new();
-        peer_ids.insert(node1.peer_id());
-        peer_ids.insert(node2.peer_id());
-        peer_ids.insert(node3.peer_id());
-        assert_eq!(peer_ids.len(), 3, "All nodes should have unique peer IDs");
+        // Verify all public keys are unique
+        let mut public_keys: HashSet<Vec<u8>> = HashSet::new();
+        public_keys.insert(node1.public_key_bytes().to_vec());
+        public_keys.insert(node2.public_key_bytes().to_vec());
+        public_keys.insert(node3.public_key_bytes().to_vec());
+        assert_eq!(
+            public_keys.len(),
+            3,
+            "All nodes should have unique public keys"
+        );
 
         // Verify all addresses are unique
         let mut addrs = HashSet::new();
@@ -581,7 +611,11 @@ async fn test_simple_api_integration_summary() {
         .await
         .expect("Node::bind() failed");
     let local_addr = node.local_addr().expect("Should have address");
-    println!("   Success: {} / {:?}", local_addr, node.peer_id());
+    println!(
+        "   Success: {} / {}...",
+        local_addr,
+        hex::encode(&node.public_key_bytes()[..16])
+    );
 
     // 2. Status observability
     println!("\n2. Status observability...");
@@ -612,7 +646,11 @@ async fn test_simple_api_integration_summary() {
         .await
         .expect("Node::with_config() failed");
     let node2_addr = node2.local_addr().expect("Should have address");
-    println!("   Second node: {} / {:?}", node2_addr, node2.peer_id());
+    println!(
+        "   Second node: {} / {}...",
+        node2_addr,
+        hex::encode(&node2.public_key_bytes()[..16])
+    );
 
     // Cleanup
     node.shutdown().await;

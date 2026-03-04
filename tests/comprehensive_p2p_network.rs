@@ -100,9 +100,9 @@ mod first_node_tests {
         assert!(addr.port() > 0, "First node should have valid port");
         println!("First node listening on: {}", addr);
 
-        // First node should have a peer ID
-        let peer_id = node.peer_id();
-        println!("First node peer ID: {:?}", peer_id);
+        // First node should have a public key fingerprint
+        let fingerprint = hex::encode(&node.public_key_bytes()[..32]);
+        println!("First node fingerprint: {}", fingerprint);
 
         // First node should have a public key (ML-DSA-65 in Pure PQC v0.2.0+)
         let public_key = node.public_key_bytes();
@@ -144,10 +144,7 @@ mod first_node_tests {
         // Verify connection succeeded
         match connect_result {
             Ok(Ok(peer_conn)) => {
-                println!(
-                    "Connected to peer {:?} at {}",
-                    peer_conn.peer_id, peer_conn.remote_addr
-                );
+                println!("Connected to peer at {}", peer_conn.remote_addr);
             }
             Ok(Err(e)) => {
                 // Connection errors may happen in test environment
@@ -253,17 +250,30 @@ mod bootstrap_tests {
         let node3 = create_test_node(vec![seed_addr, node2_addr]).await;
         println!("Node 3 at: {:?}", node3.local_addr());
 
-        // All nodes should have unique peer IDs
-        let mut peer_ids = HashSet::new();
-        peer_ids.insert(seed.peer_id());
-        peer_ids.insert(node2.peer_id());
-        peer_ids.insert(node3.peer_id());
+        // All nodes should have unique public keys
+        let mut public_keys = HashSet::new();
+        public_keys.insert(seed.public_key_bytes().to_vec());
+        public_keys.insert(node2.public_key_bytes().to_vec());
+        public_keys.insert(node3.public_key_bytes().to_vec());
 
-        assert_eq!(peer_ids.len(), 3, "All nodes should have unique peer IDs");
+        assert_eq!(
+            public_keys.len(),
+            3,
+            "All nodes should have unique public keys"
+        );
 
-        println!("Seed peer ID: {:?}", seed.peer_id());
-        println!("Node 2 peer ID: {:?}", node2.peer_id());
-        println!("Node 3 peer ID: {:?}", node3.peer_id());
+        println!(
+            "Seed key fingerprint: {}",
+            hex::encode(&seed.public_key_bytes()[..32])
+        );
+        println!(
+            "Node 2 key fingerprint: {}",
+            hex::encode(&node2.public_key_bytes()[..32])
+        );
+        println!(
+            "Node 3 key fingerprint: {}",
+            hex::encode(&node3.public_key_bytes()[..32])
+        );
 
         shutdown_with_timeout(seed).await;
         shutdown_with_timeout(node2).await;
@@ -332,8 +342,8 @@ mod address_discovery_tests {
                 P2pEvent::ExternalAddressDiscovered { addr } => {
                     println!("Discovered external address: {}", addr);
                 }
-                P2pEvent::PeerConnected { peer_id, addr, .. } => {
-                    println!("Peer connected: {:?} at {}", peer_id, addr);
+                P2pEvent::PeerConnected { addr, .. } => {
+                    println!("Peer connected at {}", addr);
                 }
                 _ => {}
             }
@@ -375,12 +385,13 @@ mod data_transfer_tests {
 
         match connect_result {
             Ok(Ok(peer_conn)) => {
-                println!("Connected to server, peer_id: {:?}", peer_conn.peer_id);
+                let remote_addr = peer_conn.remote_addr.as_socket_addr().expect("UDP addr");
+                println!("Connected to server at {}", remote_addr);
 
                 // Try to send data
                 let test_data = b"Hello from client!";
                 let send_result =
-                    timeout(SHORT_TIMEOUT, client.send(&peer_conn.peer_id, test_data)).await;
+                    timeout(SHORT_TIMEOUT, client.send(&remote_addr, test_data)).await;
 
                 match send_result {
                     Ok(Ok(())) => {
@@ -425,8 +436,8 @@ mod data_transfer_tests {
         match timeout(SHORT_TIMEOUT, node2.connect(node1_addr)).await {
             Ok(Ok(peer)) => {
                 println!(
-                    "Bidirectional connection established with {:?}",
-                    peer.peer_id
+                    "Bidirectional connection established with {}",
+                    peer.remote_addr
                 );
 
                 // Note: Full bidirectional test would require stream handling
@@ -488,19 +499,22 @@ mod raw_public_key_tests {
     }
 
     #[test]
-    fn test_peer_id_derivation() {
+    fn test_public_key_fingerprint_derivation() {
         let (public_key, _secret_key) = key_utils::generate_keypair().expect("keygen");
-        let peer_id = key_utils::peer_id_from_public_key(&public_key);
+        let fingerprint = key_utils::fingerprint_public_key(&public_key);
 
-        println!("Peer ID from ML-DSA-65 public key: {:?}", peer_id);
+        println!(
+            "Fingerprint from ML-DSA-65 public key: {}",
+            hex::encode(fingerprint)
+        );
 
-        // Generate another keypair and verify different peer ID
+        // Generate another keypair and verify different fingerprint
         let (public_key2, _secret_key2) = key_utils::generate_keypair().expect("keygen2");
-        let peer_id2 = key_utils::peer_id_from_public_key(&public_key2);
+        let fingerprint2 = key_utils::fingerprint_public_key(&public_key2);
 
         assert_ne!(
-            peer_id, peer_id2,
-            "Different keys should yield different peer IDs"
+            fingerprint, fingerprint2,
+            "Different keys should yield different fingerprints"
         );
     }
 
@@ -534,13 +548,11 @@ mod raw_public_key_tests {
         let public_key_bytes = node.public_key_bytes();
         assert_eq!(public_key_bytes.len(), ML_DSA_65_PUBLIC_KEY_SIZE);
 
-        // Verify it matches peer ID derivation
-        let peer_id = node.peer_id();
+        // Display public key fingerprint
         println!(
             "Node public key (first 32 bytes): {}",
             hex::encode(&public_key_bytes[..32])
         );
-        println!("Node peer ID: {:?}", peer_id);
 
         shutdown_with_timeout(node).await;
     }
@@ -728,11 +740,11 @@ mod nat_traversal_tests {
 
         for event in events {
             match event {
-                P2pEvent::NatTraversalProgress { peer_id, phase } => {
-                    println!("NAT traversal progress: {:?} -> {:?}", peer_id, phase);
+                P2pEvent::NatTraversalProgress { addr, phase } => {
+                    println!("NAT traversal progress: {} -> {:?}", addr, phase);
                 }
-                P2pEvent::PeerConnected { peer_id, addr, .. } => {
-                    println!("Connection established: {:?} at {}", peer_id, addr);
+                P2pEvent::PeerConnected { addr, .. } => {
+                    println!("Connection established at {}", addr);
                 }
                 _ => {}
             }
@@ -758,20 +770,20 @@ mod three_node_network_tests {
         // Create three nodes
         let node1 = create_test_node(vec![]).await;
         let addr1 = node1.local_addr().unwrap();
-        println!("Node 1 at {} (peer: {:?})", addr1, node1.peer_id());
+        println!("Node 1 at {}", addr1);
 
         let node2 = create_test_node(vec![addr1]).await;
         let addr2 = node2.local_addr().unwrap();
-        println!("Node 2 at {} (peer: {:?})", addr2, node2.peer_id());
+        println!("Node 2 at {}", addr2);
 
         let node3 = create_test_node(vec![addr1, addr2]).await;
         let addr3 = node3.local_addr().unwrap();
-        println!("Node 3 at {} (peer: {:?})", addr3, node3.peer_id());
+        println!("Node 3 at {}", addr3);
 
-        // Verify all nodes are unique
-        assert_ne!(node1.peer_id(), node2.peer_id());
-        assert_ne!(node2.peer_id(), node3.peer_id());
-        assert_ne!(node1.peer_id(), node3.peer_id());
+        // Verify all nodes have unique public keys
+        assert_ne!(node1.public_key_bytes(), node2.public_key_bytes());
+        assert_ne!(node2.public_key_bytes(), node3.public_key_bytes());
+        assert_ne!(node1.public_key_bytes(), node3.public_key_bytes());
 
         // Verify all addresses are unique
         assert_ne!(addr1, addr2);
@@ -793,19 +805,19 @@ mod three_node_network_tests {
         // Create central node
         let hub = create_test_node(vec![]).await;
         let hub_addr = hub.local_addr().unwrap();
-        println!("Hub at {} (peer: {:?})", hub_addr, hub.peer_id());
+        println!("Hub at {}", hub_addr);
 
         // Create spoke nodes that only know the hub
         let spoke1 = create_test_node(vec![hub_addr]).await;
         let spoke2 = create_test_node(vec![hub_addr]).await;
 
-        println!("Spoke 1 (peer: {:?})", spoke1.peer_id());
-        println!("Spoke 2 (peer: {:?})", spoke2.peer_id());
+        println!("Spoke 1 addr: {:?}", spoke1.local_addr());
+        println!("Spoke 2 addr: {:?}", spoke2.local_addr());
 
-        // Verify topology
-        assert_ne!(hub.peer_id(), spoke1.peer_id());
-        assert_ne!(hub.peer_id(), spoke2.peer_id());
-        assert_ne!(spoke1.peer_id(), spoke2.peer_id());
+        // Verify topology - all nodes have unique public keys
+        assert_ne!(hub.public_key_bytes(), spoke1.public_key_bytes());
+        assert_ne!(hub.public_key_bytes(), spoke2.public_key_bytes());
+        assert_ne!(spoke1.public_key_bytes(), spoke2.public_key_bytes());
 
         println!("Star topology verified:");
         println!("  Spoke1 -> Hub <- Spoke2");
@@ -831,9 +843,9 @@ mod three_node_network_tests {
         let addr3 = node3.local_addr().unwrap();
 
         println!("Full mesh:");
-        println!("  Node 1: {} -> {:?}", addr1, node1.peer_id());
-        println!("  Node 2: {} -> {:?}", addr2, node2.peer_id());
-        println!("  Node 3: {} -> {:?}", addr3, node3.peer_id());
+        println!("  Node 1: {}", addr1);
+        println!("  Node 2: {}", addr2);
+        println!("  Node 3: {}", addr3);
 
         // All nodes should be ready to accept connections
         assert!(node1.local_addr().is_some());
@@ -878,18 +890,18 @@ mod proptest_tests {
             prop_assert_ne!(pk1.as_bytes(), pk2.as_bytes());
         }
 
-        /// Test peer ID derivation is deterministic (ML-DSA-65)
+        /// Test public key fingerprint derivation is deterministic (ML-DSA-65)
         #[test]
-        fn test_peer_id_deterministic(_seed in 0u64..100u64) {
+        fn test_fingerprint_deterministic(_seed in 0u64..100u64) {
             use ant_quic::crypto::raw_public_keys::key_utils;
 
             let (public_key, _) = key_utils::generate_keypair().expect("keygen");
 
-            // Same public key should always yield same peer ID
-            let peer_id1 = key_utils::peer_id_from_public_key(&public_key);
-            let peer_id2 = key_utils::peer_id_from_public_key(&public_key);
+            // Same public key should always yield same fingerprint
+            let fingerprint1 = key_utils::fingerprint_public_key(&public_key);
+            let fingerprint2 = key_utils::fingerprint_public_key(&public_key);
 
-            prop_assert_eq!(peer_id1, peer_id2);
+            prop_assert_eq!(fingerprint1, fingerprint2);
         }
 
         /// Test PQC config validation
@@ -932,35 +944,32 @@ async fn test_comprehensive_integration_summary() {
     let first_node = create_test_node(vec![]).await;
     let first_addr = first_node.local_addr().expect("First node needs address");
     println!("   First node at: {}", first_addr);
-    println!("   Peer ID: {:?}", first_node.peer_id());
     println!(
-        "   Public key: {}",
-        hex::encode(first_node.public_key_bytes())
+        "   Public key fingerprint: {}",
+        hex::encode(&first_node.public_key_bytes()[..32])
     );
 
     // 2. Second node with bootstrap
     println!("\n2. Testing bootstrap connection...");
     let second_node = create_test_node(vec![first_addr]).await;
     println!("   Second node at: {:?}", second_node.local_addr());
-    println!("   Peer ID: {:?}", second_node.peer_id());
 
     // 3. Third node (mesh)
     println!("\n3. Testing three-node mesh...");
     let third_node = create_test_node(vec![first_addr]).await;
     println!("   Third node at: {:?}", third_node.local_addr());
-    println!("   Peer ID: {:?}", third_node.peer_id());
 
     // 4. Verify uniqueness
     println!("\n4. Verifying node uniqueness...");
-    let peer_ids: HashSet<_> = [
-        first_node.peer_id(),
-        second_node.peer_id(),
-        third_node.peer_id(),
+    let public_keys: HashSet<_> = [
+        first_node.public_key_bytes().to_vec(),
+        second_node.public_key_bytes().to_vec(),
+        third_node.public_key_bytes().to_vec(),
     ]
     .into_iter()
     .collect();
-    assert_eq!(peer_ids.len(), 3, "All peer IDs should be unique");
-    println!("   All 3 nodes have unique peer IDs");
+    assert_eq!(public_keys.len(), 3, "All public keys should be unique");
+    println!("   All 3 nodes have unique public keys");
 
     // 5. Address discovery
     println!("\n5. Testing address discovery API...");
@@ -1027,7 +1036,8 @@ mod channel_recv_and_shutdown_tests {
 
         // Client sends data
         let test_data = b"channel-recv proof";
-        let send_result = timeout(SHORT_TIMEOUT, client.send(&peer_conn.peer_id, test_data)).await;
+        let remote_addr = peer_conn.remote_addr.as_socket_addr().expect("UDP addr");
+        let send_result = timeout(SHORT_TIMEOUT, client.send(&remote_addr, test_data)).await;
         match send_result {
             Ok(Ok(())) => println!("Data sent successfully"),
             other => {
@@ -1045,12 +1055,8 @@ mod channel_recv_and_shutdown_tests {
         // If the background reader task isn't running, this will time out.
         let recv_result = timeout(SHORT_TIMEOUT, server.recv()).await;
         match recv_result {
-            Ok(Ok((peer_id, data))) => {
-                println!(
-                    "Received {} bytes from {:?} via channel",
-                    data.len(),
-                    peer_id
-                );
+            Ok(Ok((addr, data))) => {
+                println!("Received {} bytes from {} via channel", data.len(), addr);
                 assert_eq!(data, test_data, "Received data should match sent data");
             }
             Ok(Err(e)) => {
@@ -1129,8 +1135,10 @@ mod channel_recv_and_shutdown_tests {
         // Send some data so buffers are non-empty
         // (We don't care about success — just that there's activity.)
         let peers = client.connected_peers().await;
-        if let Some(pc) = peers.first() {
-            let _ = client.send(&pc.peer_id, b"pre-shutdown payload").await;
+        if let Some(pc) = peers.first()
+            && let Some(addr) = pc.remote_addr.as_socket_addr()
+        {
+            let _ = client.send(&addr, b"pre-shutdown payload").await;
         }
 
         // Shutdown both endpoints and assert bounded completion.

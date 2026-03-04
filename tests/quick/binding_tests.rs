@@ -9,13 +9,12 @@ use ant_quic::{
     crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey},
     crypto::raw_public_keys::pqc::{create_subject_public_key_info, generate_ml_dsa_keypair},
     high_level::Endpoint,
-    nat_traversal_api::PeerId,
     trust::{self, EventCollector, FsPinStore, TransportPolicy},
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::{net::SocketAddr, sync::Arc};
 use tempfile::TempDir;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 fn gen_self_signed_cert() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
@@ -35,16 +34,6 @@ fn spki_from_pk(pk: &MlDsaPublicKey) -> Vec<u8> {
     create_subject_public_key_info(pk).expect("SPKI creation")
 }
 
-fn peer_id_from_spki(spki: &[u8]) -> PeerId {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(spki);
-    let r = h.finalize();
-    let mut id = [0u8; 32];
-    id.copy_from_slice(&r);
-    PeerId(id)
-}
-
 async fn loopback_pair() -> (ant_quic::Connection, ant_quic::Connection) {
     let (chain, key) = gen_self_signed_cert();
     let server_cfg = ServerConfig::with_single_cert(chain.clone(), key).expect("server cfg");
@@ -56,7 +45,10 @@ async fn loopback_pair() -> (ant_quic::Connection, ant_quic::Connection) {
             .await
             .unwrap()
             .unwrap();
-        timeout(Duration::from_secs(10), inc).await.unwrap().unwrap()
+        timeout(Duration::from_secs(10), inc)
+            .await
+            .unwrap()
+            .unwrap()
     });
 
     let mut roots = rustls::RootCertStore::empty();
@@ -86,9 +78,6 @@ async fn binding_success_with_pinned_key() {
     let (s_pk, _s_sk) = ml_dsa_keypair();
     let c_spki = spki_from_pk(&c_pk);
     let s_spki = spki_from_pk(&s_pk);
-    let _c_peer = peer_id_from_spki(&c_spki);
-    let _s_peer = peer_id_from_spki(&s_spki);
-
     // Pin each other's keys
     let client_store_dir = TempDir::new().unwrap();
     let server_store_dir = TempDir::new().unwrap();

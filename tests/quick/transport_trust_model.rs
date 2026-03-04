@@ -7,20 +7,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use ant_quic as quic;
+use ant_quic::crypto::raw_public_keys::pqc::{
+    create_subject_public_key_info, generate_ml_dsa_keypair,
+};
 
-use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
-use quic::nat_traversal_api::PeerId;
-
-// Helper: compute PeerId and fingerprint (H(SPKI))
-fn peer_id_and_fpr(spki: &[u8]) -> (PeerId, [u8; 32]) {
-    let mut h = Sha256::new();
-    h.update(spki);
-    let f = h.finalize();
-    let mut fpr = [0u8; 32];
-    fpr.copy_from_slice(&f);
-    (PeerId(fpr), fpr)
+// Helper: compute SPKI fingerprint (BLAKE3 hash) from SPKI bytes
+fn spki_fingerprint(spki: &[u8]) -> [u8; 32] {
+    *blake3::hash(spki).as_bytes()
 }
 
 #[test]
@@ -35,20 +30,18 @@ fn tofu_first_contact_pins_and_emits_event() {
         .with_require_continuity(true)
         .with_event_sink(events.clone());
 
-    // Peer SPKI (ed25519 for now)
-    let (_, ed_pub) = quic::generate_ed25519_keypair();
-    let spki = quic::crypto::raw_public_keys::ExtendedRawPublicKey::Ed25519(ed_pub)
-        .to_subject_public_key_info()
-        .unwrap();
-    let (peer_id, fpr) = peer_id_and_fpr(&spki);
+    // Peer SPKI (ML-DSA-65)
+    let (pk, _sk) = generate_ml_dsa_keypair().unwrap();
+    let spki = create_subject_public_key_info(&pk).unwrap();
+    let fpr = spki_fingerprint(&spki);
 
     // Act: first seen
     quic::trust::register_first_seen(&pinstore, &policy, &spki).expect("TOFU should accept");
 
     // Assert: pin persisted and event emitted
-    let rec = pinstore.load(&peer_id).expect("load ok").expect("present");
+    let rec = pinstore.load(&fpr).expect("load ok").expect("present");
     assert_eq!(rec.current_fingerprint, fpr);
-    assert!(events.first_seen_called_with(&peer_id, &fpr));
+    assert!(events.first_seen_called_with(&fpr, &fpr));
 }
 
 #[test]
@@ -57,27 +50,23 @@ fn rotation_with_continuity_is_accepted() {
     let pinstore = quic::trust::FsPinStore::new(dir.path());
     let policy = quic::trust::TransportPolicy::default().with_require_continuity(true);
 
-    // Old key
-    let (old_sk, old_pk) = quic::generate_ed25519_keypair();
-    let old_spki = quic::crypto::raw_public_keys::ExtendedRawPublicKey::Ed25519(old_pk)
-        .to_subject_public_key_info()
-        .unwrap();
-    let (peer_id, old_fpr) = peer_id_and_fpr(&old_spki);
+    // Old key (ML-DSA-65)
+    let (old_pk, old_sk) = generate_ml_dsa_keypair().unwrap();
+    let old_spki = create_subject_public_key_info(&old_pk).unwrap();
+    let old_fpr = spki_fingerprint(&old_spki);
     quic::trust::register_first_seen(&pinstore, &policy, &old_spki).unwrap();
 
     // New key + continuity signature by old key over new SPKI fingerprint
-    let (_new_sk_unused, new_pk) = quic::generate_ed25519_keypair();
-    let new_spki = quic::crypto::raw_public_keys::ExtendedRawPublicKey::Ed25519(new_pk)
-        .to_subject_public_key_info()
-        .unwrap();
-    let (_pid2, new_fpr) = peer_id_and_fpr(&new_spki);
+    let (new_pk, _new_sk) = generate_ml_dsa_keypair().unwrap();
+    let new_spki = create_subject_public_key_info(&new_pk).unwrap();
+    let new_fpr = spki_fingerprint(&new_spki);
 
     let continuity_sig = quic::trust::sign_continuity(&old_sk, &new_fpr);
 
-    quic::trust::register_rotation(&pinstore, &policy, &peer_id, &old_fpr, &new_spki, &continuity_sig)
+    quic::trust::register_rotation(&pinstore, &policy, &old_fpr, &new_spki, &continuity_sig)
         .expect("rotation accepted");
 
-    let rec = pinstore.load(&peer_id).unwrap().unwrap();
+    let rec = pinstore.load(&old_fpr).unwrap().unwrap();
     assert_eq!(rec.current_fingerprint, new_fpr);
     assert_eq!(rec.previous_fingerprint, Some(old_fpr));
 }
@@ -88,21 +77,17 @@ fn rotation_without_continuity_is_rejected() {
     let pinstore = quic::trust::FsPinStore::new(dir.path());
     let policy = quic::trust::TransportPolicy::default().with_require_continuity(true);
 
-    // Old key
-    let (_old_sk, old_pk) = quic::generate_ed25519_keypair();
-    let old_spki = quic::crypto::raw_public_keys::ExtendedRawPublicKey::Ed25519(old_pk)
-        .to_subject_public_key_info()
-        .unwrap();
-    let (peer_id, old_fpr) = peer_id_and_fpr(&old_spki);
+    // Old key (ML-DSA-65)
+    let (old_pk, _old_sk) = generate_ml_dsa_keypair().unwrap();
+    let old_spki = create_subject_public_key_info(&old_pk).unwrap();
+    let old_fpr = spki_fingerprint(&old_spki);
     quic::trust::register_first_seen(&pinstore, &policy, &old_spki).unwrap();
 
     // New key, but no continuity signature provided
-    let (_new_sk_unused, new_pk) = quic::generate_ed25519_keypair();
-    let new_spki = quic::crypto::raw_public_keys::ExtendedRawPublicKey::Ed25519(new_pk)
-        .to_subject_public_key_info()
-        .unwrap();
+    let (new_pk, _new_sk) = generate_ml_dsa_keypair().unwrap();
+    let new_spki = create_subject_public_key_info(&new_pk).unwrap();
 
-    let err = quic::trust::register_rotation(&pinstore, &policy, &peer_id, &old_fpr, &new_spki, &[]) // empty sig
+    let err = quic::trust::register_rotation(&pinstore, &policy, &old_fpr, &new_spki, &[]) // empty sig
         .expect_err("rotation must be rejected without continuity");
     let _ = err; // documented error type TBD
 }
@@ -122,9 +107,9 @@ fn channel_binding_verifies_and_emits_event() {
 }
 
 #[test]
-fn token_binding_uses_peerid_cid_nonce() {
-    // Arrange: fake PeerId and CID
-    let peer_id = PeerId([7u8; 32]);
+fn token_binding_uses_fingerprint_cid_nonce() {
+    // Arrange: fake fingerprint and CID
+    let fingerprint: [u8; 32] = [7u8; 32];
     let cid = quic::shared::ConnectionId::from_bytes(&[9u8; quic::MAX_CID_SIZE]);
 
     // Key and nonce
@@ -132,10 +117,10 @@ fn token_binding_uses_peerid_cid_nonce() {
     let token_key = quic::token_v2::test_key_from_rng(&mut rng);
 
     // Act: encode
-    let token = quic::token_v2::encode_binding_token(&token_key, &peer_id, &cid).unwrap();
+    let token = quic::token_v2::encode_binding_token(&token_key, &fingerprint, &cid).unwrap();
 
     // Assert: decode and verify binding
     let decoded = quic::token_v2::decode_binding_token(&token_key, &token).expect("decodes");
-    assert_eq!(decoded.peer_id, peer_id);
+    assert_eq!(decoded.spki_fingerprint, fingerprint);
     assert_eq!(decoded.cid, cid);
 }

@@ -23,7 +23,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Create the endpoint
     let endpoint = P2pEndpoint::new(config).await?;
-    println!("Endpoint created with Peer ID: {:?}", endpoint.peer_id());
+    println!(
+        "Endpoint created at local addr: {:?}",
+        endpoint.local_addr()
+    );
 
     // Verify PQC is enabled
     println!("Verification passed: P2pEndpoint initialized with PQC config.");

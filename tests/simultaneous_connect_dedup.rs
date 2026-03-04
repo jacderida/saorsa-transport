@@ -10,10 +10,17 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{ConnectionHealth, Node, PeerConnection};
+use ant_quic::{ConnectionHealth, Node};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 use tokio::time::timeout;
+
+/// Extract the remote socket address from a PeerConnection.
+fn remote_socket_addr(conn: &ant_quic::PeerConnection) -> SocketAddr {
+    conn.remote_addr
+        .as_socket_addr()
+        .expect("test connections use UDP")
+}
 
 /// Helper to create a node bound to localhost with an ephemeral port.
 async fn create_localhost_node() -> Node {
@@ -64,7 +71,8 @@ async fn test_connect_addr_dedup_same_address() {
 
     // Both should be to the same peer
     assert_eq!(
-        conn1.peer_id, conn2.peer_id,
+        remote_socket_addr(&conn1),
+        remote_socket_addr(&conn2),
         "Both connect_addr calls should return connections to the same peer"
     );
 
@@ -132,11 +140,11 @@ async fn test_simultaneous_connect_no_phantom() {
     );
 
     // Both should succeed (either with a new or deduped connection)
-    let conn_a_to_b: PeerConnection = result_a
+    let conn_a_to_b = result_a
         .expect("A→B should not time out")
         .expect("A→B should succeed");
 
-    let conn_b_to_a: PeerConnection = result_b
+    let conn_b_to_a = result_b
         .expect("B→A should not time out")
         .expect("B→A should succeed");
 
@@ -159,16 +167,16 @@ async fn test_simultaneous_connect_no_phantom() {
         peers_b.len()
     );
 
-    // The connections should reference each other's peer IDs
+    // The connections should reference each other's addresses
     assert_eq!(
-        conn_a_to_b.peer_id,
-        node_b.peer_id(),
-        "A's connection should point to B's peer ID"
+        remote_socket_addr(&conn_a_to_b),
+        addr_b,
+        "A's connection should point to B's address"
     );
     assert_eq!(
-        conn_b_to_a.peer_id,
-        node_a.peer_id(),
-        "B's connection should point to A's peer ID"
+        remote_socket_addr(&conn_b_to_a),
+        addr_a,
+        "B's connection should point to A's address"
     );
 
     // Clean up
@@ -257,39 +265,28 @@ async fn test_simultaneous_connect_repeated() {
     }
 }
 
-/// Test that the PeerId-based tiebreaker is deterministic.
+/// Test that the public-key-based tiebreaker is deterministic.
 /// Both sides should agree on which connection to keep.
 #[tokio::test]
 async fn test_tiebreaker_deterministic() {
     let node_a = create_localhost_node().await;
     let node_b = create_localhost_node().await;
 
-    let peer_id_a = node_a.peer_id();
-    let peer_id_b = node_b.peer_id();
+    let pk_a = node_a.public_key_bytes().to_vec();
+    let pk_b = node_b.public_key_bytes().to_vec();
 
-    // The node with the lower PeerId should keep its Client connection.
-    // This means the node with the lower PeerId "wins" as the initiator.
-    let lower_is_a = peer_id_a < peer_id_b;
+    // The node with the lexicographically lower public key keeps its Client
+    // connection. This means the lower-key node "wins" as the initiator.
+    let lower_is_a = pk_a < pk_b;
     println!(
-        "PeerId comparison: A={:?}... B={:?}... lower_is_a={}",
-        &peer_id_a.0[..4],
-        &peer_id_b.0[..4],
-        lower_is_a
+        "Public key comparison: A={:02x}{:02x}... B={:02x}{:02x}... lower_is_a={}",
+        pk_a[0], pk_a[1], pk_b[0], pk_b[1], lower_is_a
     );
 
     // The tiebreaker rule is deterministic and doesn't depend on timing.
     // Both sides can independently compute which connection to keep.
-    // This test just verifies the PeerIds are different and ordered.
-    assert_ne!(
-        peer_id_a, peer_id_b,
-        "Two nodes should have different peer IDs"
-    );
-
-    // Verify ordering is total (one is strictly less than the other)
-    assert!(
-        peer_id_a != peer_id_b,
-        "PeerIds should have a strict total order"
-    );
+    // This test just verifies the public keys are different and ordered.
+    assert_ne!(pk_a, pk_b, "Two nodes should have different public keys");
 
     node_a.shutdown().await;
     node_b.shutdown().await;
@@ -401,8 +398,10 @@ async fn test_connection_health_status() {
 
     let _ = accept_handle.await;
 
+    let conn_addr = remote_socket_addr(&conn);
+
     // Immediately after connect, health should be Healthy (not yet probed)
-    let health = node_a.connection_health(&conn.peer_id).await;
+    let health = node_a.connection_health(&conn_addr).await;
     assert_eq!(
         health,
         Some(ConnectionHealth::Healthy),
@@ -415,7 +414,7 @@ async fn test_connection_health_status() {
     tokio::time::sleep(Duration::from_secs(35)).await;
 
     // After one cycle, the peer should still be Healthy (PONG received)
-    let health_after = node_a.connection_health(&conn.peer_id).await;
+    let health_after = node_a.connection_health(&conn_addr).await;
     assert!(
         matches!(
             health_after,
@@ -443,8 +442,8 @@ async fn test_connection_health_status() {
 async fn test_connection_health_unknown_peer() {
     let node = create_localhost_node().await;
 
-    let unknown_peer = ant_quic::PeerId([0xDE; 32]);
-    let health = node.connection_health(&unknown_peer).await;
+    let unknown_addr: SocketAddr = "127.0.0.1:59999".parse().unwrap();
+    let health = node.connection_health(&unknown_addr).await;
     assert_eq!(health, None, "Unknown peer should return None");
 
     node.shutdown().await;
@@ -470,20 +469,22 @@ async fn test_connection_health_after_disconnect() {
 
     let _ = accept_handle.await;
 
+    let conn_addr = remote_socket_addr(&conn);
+
     // Verify connected
     assert_eq!(
-        node_a.connection_health(&conn.peer_id).await,
+        node_a.connection_health(&conn_addr).await,
         Some(ConnectionHealth::Healthy),
     );
 
     // Disconnect
     node_a
-        .disconnect(&conn.peer_id)
+        .disconnect(&conn_addr)
         .await
         .expect("disconnect should succeed");
 
     // After disconnect, health should be None
-    let health = node_a.connection_health(&conn.peer_id).await;
+    let health = node_a.connection_health(&conn_addr).await;
     assert_eq!(
         health, None,
         "Disconnected peer should return None, got {:?}",
@@ -632,7 +633,8 @@ async fn test_rapid_connect_disconnect_cycles() {
         );
 
         // Disconnect
-        let _ = node_a.disconnect(&conn.peer_id).await;
+        let conn_addr = remote_socket_addr(&conn);
+        let _ = node_a.disconnect(&conn_addr).await;
 
         // Small delay for cleanup
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -722,13 +724,15 @@ async fn test_simultaneous_connect_send_succeeds() {
         // during dedup but never re-added.
         let payload = format!("iteration {}", iteration);
 
+        let addr_conn_a = remote_socket_addr(&conn_a);
         node_a
-            .send(&conn_a.peer_id, payload.as_bytes())
+            .send(&addr_conn_a, payload.as_bytes())
             .await
             .unwrap_or_else(|e| panic!("Iteration {}: A→B send failed: {}", iteration, e));
 
+        let addr_conn_b = remote_socket_addr(&conn_b);
         node_b
-            .send(&conn_b.peer_id, payload.as_bytes())
+            .send(&addr_conn_b, payload.as_bytes())
             .await
             .unwrap_or_else(|e| panic!("Iteration {}: B→A send failed: {}", iteration, e));
 

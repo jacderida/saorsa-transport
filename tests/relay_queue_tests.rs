@@ -13,64 +13,12 @@ use std::time::Duration;
 use ant_quic::{
     VarInt,
     config::nat_timeouts::TimeoutConfig,
-    nat_traversal_api::{NatTraversalConfig, NatTraversalEndpoint, NatTraversalError, PeerId},
+    nat_traversal_api::{NatTraversalConfig, NatTraversalEndpoint, NatTraversalError},
 };
-
-/// Create a test peer ID
-fn create_test_peer_id(id: u8) -> PeerId {
-    let mut bytes = [0u8; 32];
-    bytes[0] = id;
-    bytes[31] = id; // Add variety to make unique
-    PeerId(bytes)
-}
 
 #[cfg(test)]
 mod nat_traversal_api_tests {
     use super::*;
-
-    #[test]
-    fn test_peer_id_creation_and_display() {
-        let peer_id = create_test_peer_id(42);
-
-        // Verify peer ID format
-        assert_eq!(peer_id.0[0], 42);
-        assert_eq!(peer_id.0[31], 42);
-
-        // Test display format (first 8 bytes as hex)
-        let display_string = format!("{peer_id}");
-        assert_eq!(display_string.len(), 16); // 8 bytes * 2 hex chars
-        assert!(display_string.starts_with("2a")); // 42 in hex
-    }
-
-    #[test]
-    fn test_peer_id_from_bytes() {
-        let bytes = [1u8; 32];
-        let peer_id = PeerId::from(bytes);
-
-        assert_eq!(peer_id.0, bytes);
-    }
-
-    #[test]
-    fn test_peer_id_uniqueness() {
-        let peer1 = create_test_peer_id(1);
-        let peer2 = create_test_peer_id(2);
-        let peer1_copy = create_test_peer_id(1);
-
-        // Different IDs should be different
-        assert_ne!(peer1, peer2);
-
-        // Same construction should be equal
-        assert_eq!(peer1, peer1_copy);
-
-        // Test hash consistency (important for HashMap usage)
-        use std::collections::HashMap;
-        let mut map = HashMap::new();
-        map.insert(peer1, "peer1");
-        map.insert(peer2, "peer2");
-
-        assert_eq!(map.get(&peer1_copy), Some(&"peer1"));
-        assert_eq!(map.len(), 2);
-    }
 
     #[test]
     fn test_nat_traversal_config_default() {
@@ -337,10 +285,10 @@ mod nat_traversal_integration_tests {
         };
 
         if let Ok(endpoint) = NatTraversalEndpoint::new(config, None, None).await {
-            let target_peer = create_test_peer_id(42);
+            let target_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 42)), 8080);
 
             // Test NAT traversal initiation
-            let result = endpoint.initiate_nat_traversal(target_peer, known_peer_addr);
+            let result = endpoint.initiate_nat_traversal(target_addr, known_peer_addr);
             // This might fail due to missing implementation details, but should not panic
             let _ = result;
         }
@@ -401,26 +349,32 @@ mod performance_tests {
 
     #[test]
     #[ignore = "performance test"]
-    fn bench_peer_id_operations() {
+    fn bench_socket_addr_map_operations() {
         use std::collections::HashMap;
 
         let start = std::time::Instant::now();
 
-        // Create many peer IDs and test map operations
+        // Create many socket addresses and test map operations
         let mut peer_map = HashMap::new();
-        for i in 0..10000 {
-            let peer_id = create_test_peer_id(i as u8);
-            peer_map.insert(peer_id, i);
+        for i in 0..10000u32 {
+            let addr = SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new((i >> 8) as u8, (i & 0xFF) as u8, 0, 1)),
+                8080,
+            );
+            peer_map.insert(addr, i);
         }
 
         // Test lookups
-        for i in 0..1000 {
-            let peer_id = create_test_peer_id(i as u8);
-            let _value = peer_map.get(&peer_id);
+        for i in 0..1000u32 {
+            let addr = SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new((i >> 8) as u8, (i & 0xFF) as u8, 0, 1)),
+                8080,
+            );
+            let _value = peer_map.get(&addr);
         }
 
         let duration = start.elapsed();
-        println!("Created and looked up peer IDs in {duration:?}");
+        println!("Created and looked up socket addresses in {duration:?}");
         assert!(duration < Duration::from_millis(100));
     }
 

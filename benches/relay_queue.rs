@@ -14,20 +14,18 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 use rand::{Rng, thread_rng};
 use uuid::Uuid;
 
-use ant_quic::PeerId;
-
 /// Mock RelayQueueItem for benchmarking
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 struct RelayQueueItem {
-    pub peer_id: PeerId,
+    pub peer_id: [u8; 32],
     pub data: Vec<u8>,
     pub timestamp: Instant,
     pub attempts: u32,
 }
 
 impl RelayQueueItem {
-    fn new(peer_id: PeerId, data_size: usize) -> Self {
+    fn new(peer_id: [u8; 32], data_size: usize) -> Self {
         let mut rng = thread_rng();
         let data = (0..data_size).map(|_| rng.r#gen::<u8>()).collect();
 
@@ -59,7 +57,7 @@ fn bench_vecdeque_relay_queue(c: &mut Criterion) {
                         let uuid = Uuid::new_v4();
                         let uuid_bytes = uuid.as_bytes();
                         peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                        let peer_id = PeerId(peer_id_bytes);
+                        let peer_id = peer_id_bytes;
                         let item = RelayQueueItem::new(peer_id, 1024);
                         queue.push_back(black_box(item));
                     }
@@ -80,7 +78,7 @@ fn bench_vecdeque_relay_queue(c: &mut Criterion) {
                             let uuid = Uuid::new_v4();
                             let uuid_bytes = uuid.as_bytes();
                             peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                            let peer_id = PeerId(peer_id_bytes);
+                            let peer_id = peer_id_bytes;
                             let item = RelayQueueItem::new(peer_id, 1024);
                             queue.push_back(item);
                         }
@@ -109,7 +107,7 @@ fn bench_vecdeque_relay_queue(c: &mut Criterion) {
                             let uuid = Uuid::new_v4();
                             let uuid_bytes = uuid.as_bytes();
                             peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                            let peer_id = PeerId(peer_id_bytes);
+                            let peer_id = peer_id_bytes;
                             let item = RelayQueueItem::new(peer_id, 1024);
                             if i % 10 == 0 {
                                 target_peers.push(peer_id);
@@ -158,7 +156,7 @@ fn bench_rate_limit_cleanup(c: &mut Criterion) {
                             let uuid = Uuid::new_v4();
                             let uuid_bytes = uuid.as_bytes();
                             peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                            let peer_id = PeerId(peer_id_bytes);
+                            let peer_id = peer_id_bytes;
                             let mut timestamps = VecDeque::new();
 
                             // Add some old and some recent timestamps
@@ -213,7 +211,7 @@ fn bench_memory_allocations(c: &mut Criterion) {
                 let uuid = Uuid::new_v4();
                 let uuid_bytes = uuid.as_bytes();
                 peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                let peer_id = PeerId(peer_id_bytes);
+                let peer_id = peer_id_bytes;
                 let item = RelayQueueItem::new(peer_id, 256);
                 vecdeque.push_back(item);
             }
@@ -241,7 +239,7 @@ fn bench_memory_allocations(c: &mut Criterion) {
                     let uuid = Uuid::new_v4();
                     let uuid_bytes = uuid.as_bytes();
                     peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                    let peer_id = PeerId(peer_id_bytes);
+                    let peer_id = peer_id_bytes;
                     let item = RelayQueueItem::new(peer_id, 64);
                     queue.push_back(item);
                 }
@@ -277,7 +275,7 @@ fn bench_alternatives(c: &mut Criterion) {
                 let uuid = Uuid::new_v4();
                 let uuid_bytes = uuid.as_bytes();
                 peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                let peer_id = PeerId(peer_id_bytes);
+                let peer_id = peer_id_bytes;
                 let item = RelayQueueItem::new(peer_id, 256);
                 map.insert(counter, item);
             }

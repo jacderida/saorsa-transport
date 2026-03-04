@@ -25,7 +25,6 @@
 //!     // Create a node - that's it!
 //!     let node = Node::new().await?;
 //!
-//!     println!("I am: {:?}", node.peer_id());
 //!     println!("Listening on: {:?}", node.local_addr());
 //!
 //!     // Check status

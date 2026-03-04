@@ -76,9 +76,9 @@ mod connection_lifecycle {
         let local_addr = node.local_addr();
         assert!(local_addr.is_some(), "Node should have local address");
 
-        // Verify node has a peer ID (32-byte SHA256 of ML-DSA-65 public key)
-        let peer_id = node.peer_id();
-        println!("Node created with peer ID: {:?}", peer_id);
+        // Verify node has a public key (ML-DSA-65 SPKI bytes)
+        let public_key = node.public_key_bytes();
+        println!("Node created with public key ({} bytes)", public_key.len());
 
         shutdown_with_timeout(node).await;
     }
@@ -112,7 +112,7 @@ mod connection_lifecycle {
 
         match connect_result {
             Ok(Ok(connection)) => {
-                println!("Connection established to {:?}", connection.peer_id);
+                println!("Connection established to {:?}", connection.remote_addr);
                 // Connection remote_addr is TransportAddr, compare socket addresses
                 if let TransportAddr::Udp(addr) = connection.remote_addr {
                     assert_eq!(addr, listener_addr);
@@ -182,7 +182,10 @@ mod connection_lifecycle {
 
         match connect_result {
             Ok(Ok(connection)) => {
-                println!("Connection state: Connected to {:?}", connection.peer_id);
+                println!(
+                    "Connection state: Connected to {:?}",
+                    connection.remote_addr
+                );
                 // Connection is in Connected state
             }
             Ok(Err(e)) => {
@@ -217,20 +220,20 @@ mod connection_lifecycle {
         println!("Node shutdown gracefully");
     }
 
-    /// Test peer ID persistence
+    /// Test public key persistence
     #[tokio::test]
-    async fn test_peer_id_persistence() {
+    async fn test_public_key_persistence() {
         let config = test_node_config(vec![]);
         let node = P2pEndpoint::new(config)
             .await
             .expect("Failed to create node");
 
-        let peer_id1 = node.peer_id();
-        println!("Initial peer ID: {:?}", peer_id1);
+        let pk1 = node.public_key_bytes().to_vec();
+        println!("Initial public key ({} bytes)", pk1.len());
 
-        // Peer ID should remain the same (it's derived from the keypair)
-        let peer_id2 = node.peer_id();
-        assert_eq!(peer_id1, peer_id2, "Peer ID should be stable");
+        // Public key should remain the same (it's derived from the keypair)
+        let pk2 = node.public_key_bytes().to_vec();
+        assert_eq!(pk1, pk2, "Public key should be stable");
 
         shutdown_with_timeout(node).await;
     }

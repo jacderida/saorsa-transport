@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create the P2P endpoint
     let endpoint = P2pEndpoint::new(config).await?;
-    println!("Peer ID: {:?}", endpoint.peer_id());
+    println!("Local address: {:?}", endpoint.local_addr());
 
     if let Some(addr) = endpoint.local_addr() {
         println!("Local address: {}", addr);
@@ -35,8 +35,17 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         while let Ok(event) = events.recv().await {
             match event {
-                P2pEvent::PeerConnected { peer_id, addr, .. } => {
-                    println!("Connected to peer {:?} at {}", peer_id, addr);
+                P2pEvent::PeerConnected {
+                    addr,
+                    public_key,
+                    side,
+                } => {
+                    println!(
+                        "Connected to peer at {} (side: {:?}, has key: {})",
+                        addr,
+                        side,
+                        public_key.is_some()
+                    );
                 }
                 P2pEvent::ExternalAddressDiscovered { addr } => {
                     println!("Discovered external address: {}", addr);

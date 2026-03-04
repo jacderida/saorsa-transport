@@ -16,12 +16,10 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 use rand::{Rng, thread_rng};
 use uuid::Uuid;
 
-use ant_quic::PeerId;
-
 /// Mock connection state for benchmarking
 #[derive(Clone, Debug)]
 struct MockConnection {
-    pub peer_id: PeerId,
+    pub peer_id: [u8; 32],
     #[allow(dead_code)]
     pub local_addr: SocketAddr,
     #[allow(dead_code)]
@@ -45,8 +43,8 @@ enum ConnectionState {
 /// Mock connection manager for benchmarking
 #[derive(Clone)]
 struct MockConnectionManager {
-    pub connections: Arc<RwLock<HashMap<PeerId, MockConnection>>>,
-    pub active_connections: Arc<RwLock<Vec<PeerId>>>,
+    pub connections: Arc<RwLock<HashMap<[u8; 32], MockConnection>>>,
+    pub active_connections: Arc<RwLock<Vec<[u8; 32]>>>,
     pub _connection_events: Arc<RwLock<VecDeque<ConnectionEvent>>>,
 }
 
@@ -103,7 +101,7 @@ fn generate_connections(count: usize) -> Vec<MockConnection> {
                 let uuid = Uuid::new_v4();
                 let uuid_bytes = uuid.as_bytes();
                 peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                PeerId(peer_id_bytes)
+                peer_id_bytes
             },
             local_addr: local,
             remote_addr: remote,
@@ -274,13 +272,13 @@ fn bench_event_processing(c: &mut Criterion) {
             BenchmarkId::new("queue_events", event_count),
             &event_count,
             |b, &size| {
-                let peer_ids: Vec<PeerId> = (0..100)
+                let peer_ids: Vec<[u8; 32]> = (0..100)
                     .map(|_| {
                         let mut peer_id_bytes = [0u8; 32];
                         let uuid = Uuid::new_v4();
                         let uuid_bytes = uuid.as_bytes();
                         peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                        PeerId(peer_id_bytes)
+                        peer_id_bytes
                     })
                     .collect();
                 let mut rng = thread_rng();
@@ -310,13 +308,13 @@ fn bench_event_processing(c: &mut Criterion) {
             BenchmarkId::new("process_events", event_count),
             &event_count,
             |b, &size| {
-                let peer_ids: Vec<PeerId> = (0..100)
+                let peer_ids: Vec<[u8; 32]> = (0..100)
                     .map(|_| {
                         let mut peer_id_bytes = [0u8; 32];
                         let uuid = Uuid::new_v4();
                         let uuid_bytes = uuid.as_bytes();
                         peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                        PeerId(peer_id_bytes)
+                        peer_id_bytes
                     })
                     .collect();
                 let mut rng = thread_rng();
@@ -396,7 +394,7 @@ fn bench_resource_cleanup(c: &mut Criterion) {
                                 let uuid = Uuid::new_v4();
                                 let uuid_bytes = uuid.as_bytes();
                                 peer_id_bytes[..16].copy_from_slice(uuid_bytes);
-                                let peer_id = PeerId(peer_id_bytes);
+                                let peer_id = peer_id_bytes;
                                 let age = Duration::from_secs(rng.gen_range(0..3600));
                                 let local_addr = generate_socket_addresses(1)[0];
                                 let remote_addr = generate_socket_addresses(1)[0];

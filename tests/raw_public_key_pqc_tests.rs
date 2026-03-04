@@ -7,8 +7,8 @@
 mod pqc_raw_public_key_tests {
     use ant_quic::crypto::pqc::{MlDsaOperations, ml_dsa::MlDsa65};
     use ant_quic::crypto::raw_public_keys::pqc::{
-        PqcRawPublicKeyVerifier, create_subject_public_key_info, derive_peer_id_from_public_key,
-        extract_public_key_from_spki, generate_ml_dsa_keypair, sign_with_ml_dsa,
+        PqcRawPublicKeyVerifier, create_subject_public_key_info, extract_public_key_from_spki,
+        fingerprint_public_key, generate_ml_dsa_keypair, sign_with_ml_dsa,
         supported_signature_schemes, verify_signature, verify_with_ml_dsa,
     };
     use rustls::SignatureScheme;
@@ -103,23 +103,23 @@ mod pqc_raw_public_key_tests {
     }
 
     #[test]
-    fn test_peer_id_derivation() {
+    fn test_fingerprint_derivation() {
         let (public_key, _secret_key) = generate_ml_dsa_keypair().expect("keygen");
 
-        // Derive peer ID
-        let peer_id = derive_peer_id_from_public_key(&public_key);
+        // Derive fingerprint from public key
+        let fingerprint = fingerprint_public_key(&public_key);
 
-        // Peer ID should be 32 bytes (PeerId is tuple struct with pub [u8; 32])
-        assert_eq!(peer_id.0.len(), 32);
+        // Fingerprint should be 32 bytes
+        assert_eq!(fingerprint.len(), 32);
 
-        // Same key should produce same peer ID
-        let peer_id2 = derive_peer_id_from_public_key(&public_key);
-        assert_eq!(peer_id.0, peer_id2.0);
+        // Same key should produce same fingerprint
+        let fingerprint2 = fingerprint_public_key(&public_key);
+        assert_eq!(fingerprint, fingerprint2);
 
-        // Different key should produce different peer ID
+        // Different key should produce different fingerprint
         let (pk2, _sk2) = generate_ml_dsa_keypair().expect("keygen2");
-        let peer_id3 = derive_peer_id_from_public_key(&pk2);
-        assert_ne!(peer_id.0, peer_id3.0);
+        let fingerprint3 = fingerprint_public_key(&pk2);
+        assert_ne!(fingerprint, fingerprint3);
     }
 
     #[test]

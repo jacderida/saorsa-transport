@@ -77,7 +77,7 @@ async fn auto_binding_emits_new_token_v2() {
     let policy = quic::trust::TransportPolicy::default().with_event_sink(events.clone());
 
     // Pin the client key on first use (server-side pin for test)
-    let _peer_id = quic::trust::register_first_seen(&store, &policy, &spki).expect("pin ok");
+    let _fingerprint = quic::trust::register_first_seen(&store, &policy, &spki).expect("pin ok");
 
     // Install global runtime (used by driver integration)
     quic::trust::set_global_runtime(Arc::new(quic::trust::GlobalTrustRuntime {

@@ -2,18 +2,15 @@
 //!
 //! This example demonstrates basic chat message serialization and handling.
 
-use ant_quic::{
-    chat::{ChatMessage, PeerInfo},
-    nat_traversal_api::PeerId,
-};
+use ant_quic::chat::{ChatMessage, PeerInfo};
 use std::time::SystemTime;
 
 fn main() {
     println!("=== Chat Protocol Demo ===\n");
 
-    // Create some peer IDs
-    let alice_id = PeerId([1u8; 32]);
-    let bob_id = PeerId([2u8; 32]);
+    // Create some peer ID byte arrays
+    let alice_id: [u8; 32] = [1u8; 32];
+    let bob_id: [u8; 32] = [2u8; 32];
 
     // Create different message types
     let messages = vec![
@@ -89,13 +86,13 @@ fn main() {
 
     let peer_list = vec![
         PeerInfo {
-            peer_id: alice_id.0,
+            peer_id: alice_id,
             nickname: "Alice".to_string(),
             status: "Online".to_string(),
             joined_at: SystemTime::now(),
         },
         PeerInfo {
-            peer_id: bob_id.0,
+            peer_id: bob_id,
             nickname: "Bob".to_string(),
             status: "Away".to_string(),
             joined_at: SystemTime::now(),
@@ -131,7 +128,7 @@ fn main() {
     // Test metadata extraction
     for msg in &messages[0..3] {
         if let Some(peer_id) = msg.peer_id() {
-            println!("Peer ID: {}", hex::encode(&peer_id.0[..8]));
+            println!("Peer ID: {}", hex::encode(&peer_id[..8]));
         }
         if let Some(nickname) = msg.nickname() {
             println!("Nickname: {nickname}");

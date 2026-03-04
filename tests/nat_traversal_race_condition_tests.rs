@@ -15,17 +15,14 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ant_quic::{
-    crypto::raw_public_keys::pqc::{derive_peer_id_from_public_key, generate_ml_dsa_keypair},
-    nat_traversal_api::{
-        NatTraversalConfig, NatTraversalEndpoint, NatTraversalError, NatTraversalEvent, PeerId,
-    },
+use ant_quic::nat_traversal_api::{
+    NatTraversalConfig, NatTraversalEndpoint, NatTraversalError, NatTraversalEvent,
 };
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU16, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -64,10 +61,14 @@ async fn create_endpoint_with_event_counter(
     Ok((endpoint, rx, coordination_count))
 }
 
-/// Helper to generate a random peer ID
-fn generate_random_peer_id() -> PeerId {
-    let (public_key, _) = generate_ml_dsa_keypair().expect("Failed to generate keypair");
-    derive_peer_id_from_public_key(&public_key)
+/// Helper to generate a random target address for NAT traversal tests.
+///
+/// Uses a counter to produce unique addresses in the `198.51.100.0/24` (TEST-NET-2) range,
+/// avoiding collisions between tests.
+fn generate_random_target_addr() -> SocketAddr {
+    static PORT_COUNTER: AtomicU16 = AtomicU16::new(30_000);
+    let port = PORT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1)), port)
 }
 
 // ===== Test 1: initiate_nat_traversal() MUST skip when connection exists =====
@@ -102,14 +103,9 @@ async fn test_initiate_nat_traversal_must_skip_when_connection_exists() {
     let b_endpoint = endpoint_b.get_endpoint().expect("B should have endpoint");
     let b_addr = b_endpoint.local_addr().expect("B should have local addr");
 
-    // Generate peer ID for B
-    let peer_id_b = endpoint_b.local_peer_id();
-
     // Establish direct connection from A to B
     info!("Attempting direct connection from A to B at {}", b_addr);
-    let connect_result = endpoint_a
-        .connect_to_peer(peer_id_b, "localhost", b_addr)
-        .await;
+    let connect_result = endpoint_a.connect_to("localhost", b_addr).await;
 
     // Connection should succeed (both endpoints on localhost)
     if connect_result.is_err() {
@@ -126,12 +122,12 @@ async fn test_initiate_nat_traversal_must_skip_when_connection_exists() {
     // Connection succeeded - now add it to A's connection map
     let connection = connect_result.unwrap();
     endpoint_a
-        .add_connection(peer_id_b, connection)
+        .add_connection(b_addr, connection)
         .expect("Should add connection");
 
     // Verify connection exists
     let existing = endpoint_a
-        .get_connection(&peer_id_b)
+        .get_connection(&b_addr)
         .expect("Should be able to check");
     assert!(
         existing.is_some(),
@@ -144,7 +140,7 @@ async fn test_initiate_nat_traversal_must_skip_when_connection_exists() {
     // Now call initiate_nat_traversal - WITH the connection already existing
     // This should return immediately without creating a session
     let coordinator = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 9000);
-    let result = endpoint_a.initiate_nat_traversal(peer_id_b, coordinator);
+    let result = endpoint_a.initiate_nat_traversal(b_addr, coordinator);
     assert!(result.is_ok(), "Should return Ok even when skipping");
 
     // Allow time for events to be processed
@@ -198,11 +194,11 @@ async fn test_initiate_hole_punching_must_skip_when_connection_exists() {
             .unwrap(),
     );
 
-    let peer_id = generate_random_peer_id();
+    let target_addr = generate_random_target_addr();
     let coordinator = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 9000);
 
     // Start NAT traversal (no connection exists yet)
-    let _ = endpoint.initiate_nat_traversal(peer_id, coordinator);
+    let _ = endpoint.initiate_nat_traversal(target_addr, coordinator);
 
     // Reset counter before polling
     hole_punch_count.store(0, Ordering::SeqCst);
@@ -242,11 +238,11 @@ async fn test_deferred_hole_punch_must_recheck_connections() {
         .await
         .expect("Failed to create endpoint");
 
-    let peer_id = generate_random_peer_id();
+    let target_addr = generate_random_target_addr();
     let coordinator = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 9000);
 
     // Start traversal
-    let _ = endpoint.initiate_nat_traversal(peer_id, coordinator);
+    let _ = endpoint.initiate_nat_traversal(target_addr, coordinator);
 
     // Poll to trigger deferred execution
     for _ in 0..10 {
@@ -271,11 +267,11 @@ async fn test_candidate_attempt_must_check_existing_connection() {
         .await
         .expect("Failed to create endpoint");
 
-    let peer_id = generate_random_peer_id();
+    let target_addr = generate_random_target_addr();
     let coordinator = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 9000);
 
     // Start traversal
-    let _ = endpoint.initiate_nat_traversal(peer_id, coordinator);
+    let _ = endpoint.initiate_nat_traversal(target_addr, coordinator);
 
     // Poll to advance through phases
     for _ in 0..5 {
@@ -300,11 +296,11 @@ async fn test_async_task_spawn_must_check_connection() {
         .await
         .expect("Failed to create endpoint");
 
-    let peer_id = generate_random_peer_id();
+    let target_addr = generate_random_target_addr();
     let coordinator = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 9000);
 
     // Start traversal
-    let _ = endpoint.initiate_nat_traversal(peer_id, coordinator);
+    let _ = endpoint.initiate_nat_traversal(target_addr, coordinator);
 
     // Poll to trigger candidate connection attempts
     for _ in 0..5 {
@@ -331,16 +327,16 @@ async fn test_coordinator_connection_must_check_existing() {
         .await
         .expect("Failed to create endpoint");
 
-    let peer_id1 = generate_random_peer_id();
-    let peer_id2 = generate_random_peer_id();
+    let target_addr1 = generate_random_target_addr();
+    let target_addr2 = generate_random_target_addr();
 
     // Start first traversal - this will try to connect to coordinator
-    let result1 = endpoint.initiate_nat_traversal(peer_id1, coordinator_addr);
+    let result1 = endpoint.initiate_nat_traversal(target_addr1, coordinator_addr);
     assert!(result1.is_ok());
 
     // Start second traversal with same coordinator
     // Should reuse existing coordinator connection
-    let result2 = endpoint.initiate_nat_traversal(peer_id2, coordinator_addr);
+    let result2 = endpoint.initiate_nat_traversal(target_addr2, coordinator_addr);
     assert!(result2.is_ok());
 
     // Poll to trigger coordinator connections
@@ -356,7 +352,7 @@ async fn test_coordinator_connection_must_check_existing() {
 
 // ===== Test 7: Concurrent calls MUST not create duplicate work =====
 
-/// Test that concurrent calls to initiate_nat_traversal() for the same peer
+/// Test that concurrent calls to initiate_nat_traversal() for the same address
 /// are properly handled without duplicate sessions.
 #[tokio::test]
 async fn test_concurrent_initiate_nat_traversal_same_peer() {
@@ -366,7 +362,7 @@ async fn test_concurrent_initiate_nat_traversal_same_peer() {
         .await
         .expect("Failed to create endpoint");
 
-    let peer_id = generate_random_peer_id();
+    let target_addr = generate_random_target_addr();
     let coordinator = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 9000);
 
     // Spawn multiple concurrent calls
@@ -374,7 +370,7 @@ async fn test_concurrent_initiate_nat_traversal_same_peer() {
         .map(|i| {
             let ep = endpoint.clone();
             tokio::spawn(async move {
-                let result = ep.initiate_nat_traversal(peer_id, coordinator);
+                let result = ep.initiate_nat_traversal(target_addr, coordinator);
                 info!("Concurrent call {} result: {:?}", i, result);
                 result
             })
@@ -421,11 +417,11 @@ async fn test_full_roundtrip_connection_check() {
         .await
         .expect("Failed to create endpoint");
 
-    let peer_id = generate_random_peer_id();
+    let target_addr = generate_random_target_addr();
     let coordinator = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 9000);
 
     // First, verify no connection exists
-    let conn = endpoint.get_connection(&peer_id);
+    let conn = endpoint.get_connection(&target_addr);
     assert!(conn.is_ok());
     assert!(
         conn.unwrap().is_none(),
@@ -433,15 +429,15 @@ async fn test_full_roundtrip_connection_check() {
     );
 
     // Start first NAT traversal - should proceed normally
-    let result1 = endpoint.initiate_nat_traversal(peer_id, coordinator);
+    let result1 = endpoint.initiate_nat_traversal(target_addr, coordinator);
     assert!(result1.is_ok(), "First traversal should start");
 
     tokio::time::sleep(Duration::from_millis(50)).await;
     let first_count = coord_count.load(Ordering::SeqCst);
     info!("Events from first call: {}", first_count);
 
-    // Second call for same peer - should be skipped (session exists)
-    let result2 = endpoint.initiate_nat_traversal(peer_id, coordinator);
+    // Second call for same address - should be skipped (session exists)
+    let result2 = endpoint.initiate_nat_traversal(target_addr, coordinator);
     assert!(result2.is_ok(), "Second call should return Ok");
 
     tokio::time::sleep(Duration::from_millis(50)).await;
