@@ -12,7 +12,14 @@
 //! QUIC connections through NATs using sophisticated hole punching and
 //! coordination protocols.
 
-use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::hash_map::DefaultHasher,
+    fmt,
+    hash::{Hash, Hasher},
+    net::SocketAddr,
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::constrained::{ConstrainedEngine, EngineConfig, EngineEvent};
 use crate::transport::TransportRegistry;
@@ -177,7 +184,9 @@ use crate::high_level::default_runtime;
 
 use crate::{
     VarInt,
-    candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig, DiscoveryEvent},
+    candidate_discovery::{
+        CandidateDiscoveryManager, DiscoveryConfig, DiscoveryEvent, DiscoverySessionId,
+    },
     // v0.13.0: NatTraversalRole removed - all nodes are symmetric P2P nodes
     connection::nat_traversal::{CandidateSource, CandidateState},
     masque::connect::{ConnectUdpRequest, ConnectUdpResponse},
@@ -470,8 +479,8 @@ fn varint_from_max_message_size(max_message_size: usize) -> VarInt {
 // and coordinate NAT traversal. No role configuration is needed.
 
 // v0.14.0: PeerId re-export removed. NatTraversalEndpoint now uses SocketAddr
-// as the connection key. PeerId is defined locally for legacy
-// CandidateDiscoveryManager calls and internal coordination.
+// as the connection key. PeerId remains for relay queue, token binding,
+// pending buffers, and wire protocol coordination frames.
 
 /// Crate-internal peer identifier wrapping a 32-byte BLAKE3 fingerprint.
 ///
@@ -1540,10 +1549,7 @@ impl NatTraversalEndpoint {
         let event_tx_clone = event_tx;
         let connections_clone = endpoint.connections.clone();
 
-        // v0.14.0: local_peer_id removed. Use a zero PeerId for local discovery
-        // sessions. The CandidateDiscoveryManager still expects PeerId internally.
-        let local_discovery_peer_id = PeerId([0u8; 32]);
-        let local_discovery_peer_id_for_poll = local_discovery_peer_id;
+        let local_session_id = DiscoverySessionId::Local;
         tokio::spawn(async move {
             Self::poll_discovery(
                 discovery_manager_clone,
@@ -1551,7 +1557,7 @@ impl NatTraversalEndpoint {
                 event_tx_clone,
                 connections_clone,
                 event_callback_for_poll,
-                local_discovery_peer_id_for_poll,
+                local_session_id,
             )
             .await;
         });
@@ -1566,7 +1572,7 @@ impl NatTraversalEndpoint {
             let bootstrap_nodes = endpoint.bootstrap_nodes.read().clone();
 
             discovery
-                .start_discovery(local_discovery_peer_id, bootstrap_nodes)
+                .start_discovery(local_session_id, bootstrap_nodes)
                 .map_err(|e| NatTraversalError::CandidateDiscoveryFailed(e.to_string()))?;
 
             info!("Started local candidate discovery");
@@ -1940,10 +1946,7 @@ impl NatTraversalEndpoint {
         let event_tx_clone = event_tx;
         let connections_clone = endpoint.connections.clone();
 
-        // v0.14.0: local_peer_id removed. Use a zero PeerId for local discovery
-        // sessions. The CandidateDiscoveryManager still expects PeerId internally.
-        let local_discovery_peer_id = PeerId([0u8; 32]);
-        let local_discovery_peer_id_for_poll = local_discovery_peer_id;
+        let local_session_id = DiscoverySessionId::Local;
         tokio::spawn(async move {
             Self::poll_discovery(
                 discovery_manager_clone,
@@ -1951,7 +1954,7 @@ impl NatTraversalEndpoint {
                 event_tx_clone,
                 connections_clone,
                 event_callback_for_poll,
-                local_discovery_peer_id_for_poll,
+                local_session_id,
             )
             .await;
         });
@@ -1966,7 +1969,7 @@ impl NatTraversalEndpoint {
             let bootstrap_nodes = endpoint.bootstrap_nodes.read().clone();
 
             discovery
-                .start_discovery(local_discovery_peer_id, bootstrap_nodes)
+                .start_discovery(local_session_id, bootstrap_nodes)
                 .map_err(|e| NatTraversalError::CandidateDiscoveryFailed(e.to_string()))?;
 
             info!("Started local candidate discovery");
@@ -2112,8 +2115,7 @@ impl NatTraversalEndpoint {
         // DashMap provides lock-free .insert()
         self.active_sessions.insert(target_addr, session);
 
-        // Legacy: CandidateDiscoveryManager still uses PeerId internally
-        let discovery_peer_id = Self::peer_id_from_addr(target_addr);
+        let discovery_session_id = DiscoverySessionId::Remote(target_addr);
 
         // Start candidate discovery - parking_lot::RwLock doesn't poison
         let bootstrap_nodes_vec = self.bootstrap_nodes.read().clone();
@@ -2123,7 +2125,7 @@ impl NatTraversalEndpoint {
             let mut discovery = self.discovery_manager.lock();
 
             discovery
-                .start_discovery(discovery_peer_id, bootstrap_nodes_vec)
+                .start_discovery(discovery_session_id, bootstrap_nodes_vec)
                 .map_err(|e| NatTraversalError::CandidateDiscoveryFailed(e.to_string()))?;
         }
 
@@ -2139,12 +2141,10 @@ impl NatTraversalEndpoint {
         Ok(())
     }
 
-    /// Generate a deterministic PeerId from a SocketAddr for legacy
-    /// CandidateDiscoveryManager compatibility.
-    fn peer_id_from_addr(addr: SocketAddr) -> PeerId {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
+    /// Generate a deterministic 32-byte identifier from a SocketAddr for wire
+    /// protocol frames (PUNCH_ME_NOW, ADDRESS_DISCOVERY). This is a legacy
+    /// format used in coordination messages, not a session key.
+    fn wire_id_from_addr(addr: SocketAddr) -> [u8; 32] {
         let mut hasher = DefaultHasher::new();
         addr.hash(&mut hasher);
 
@@ -2156,7 +2156,7 @@ impl NatTraversalEndpoint {
         bytes[16..24].copy_from_slice(&hash.to_be_bytes());
         bytes[24..32].copy_from_slice(&hash.to_le_bytes());
 
-        PeerId(bytes)
+        bytes
     }
 
     /// Poll all active sessions and update their states
@@ -2944,7 +2944,7 @@ impl NatTraversalEndpoint {
         event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
         connections: Arc<dashmap::DashMap<SocketAddr, InnerConnection>>,
         event_callback: Option<Arc<dyn Fn(NatTraversalEvent) + Send + Sync>>,
-        local_peer_id: PeerId, // Legacy: still needed for CandidateDiscoveryManager
+        local_session_id: DiscoverySessionId,
     ) {
         use tokio::time::{Duration, interval};
 
@@ -3005,7 +3005,8 @@ impl NatTraversalEndpoint {
                     // (OBSERVED_ADDRESS tells us our external address as seen by the remote peer)
                     // parking_lot::Mutex doesn't poison - always succeeds
                     let mut discovery = discovery_manager.lock();
-                    let _ = discovery.accept_quic_discovered_address(local_peer_id, observed_addr);
+                    let _ =
+                        discovery.accept_quic_discovered_address(local_session_id, observed_addr);
                 }
             }
 
@@ -4136,9 +4137,7 @@ impl NatTraversalEndpoint {
 
         let mut candidates = Vec::new();
 
-        // Legacy: CandidateDiscoveryManager still uses PeerId internally.
-        // Generate a deterministic PeerId from the target address for the session key.
-        let discovery_peer_id = Self::peer_id_from_addr(target_addr);
+        let discovery_session_id = DiscoverySessionId::Remote(target_addr);
 
         // Get bootstrap nodes - parking_lot::RwLock doesn't poison
         let bootstrap_nodes = self.bootstrap_nodes.read().clone();
@@ -4148,7 +4147,7 @@ impl NatTraversalEndpoint {
             let mut discovery = self.discovery_manager.lock();
 
             discovery
-                .start_discovery(discovery_peer_id, bootstrap_nodes)
+                .start_discovery(discovery_session_id, bootstrap_nodes)
                 .map_err(|e| NatTraversalError::CandidateDiscoveryFailed(e.to_string()))?;
         }
 
@@ -4243,9 +4242,9 @@ impl NatTraversalEndpoint {
         // Frame type
         frame.push(0x41);
 
-        // Peer ID (32 bytes) - legacy format, derived from address
-        let legacy_peer_id = Self::peer_id_from_addr(target_addr);
-        frame.extend_from_slice(&legacy_peer_id.0);
+        // Wire ID (32 bytes) - legacy format, derived from address
+        let wire_id = Self::wire_id_from_addr(target_addr);
+        frame.extend_from_slice(&wire_id);
 
         // Timestamp (8 bytes, current time as milliseconds since epoch)
         let timestamp = std::time::SystemTime::now()
@@ -4292,14 +4291,13 @@ impl NatTraversalEndpoint {
         &self,
         target_addr: SocketAddr,
     ) -> Result<Vec<CandidatePair>, NatTraversalError> {
-        // Legacy: CandidateDiscoveryManager still uses PeerId internally
-        let discovery_peer_id = Self::peer_id_from_addr(target_addr);
+        let discovery_session_id = DiscoverySessionId::Remote(target_addr);
 
         // Get discovered candidates from the discovery manager
         // parking_lot::Mutex doesn't poison
         let discovery_candidates = {
             let discovery = self.discovery_manager.lock();
-            discovery.get_candidates_for_peer(discovery_peer_id)
+            discovery.get_candidates(discovery_session_id)
         };
 
         if discovery_candidates.is_empty() {
@@ -4739,13 +4737,12 @@ impl NatTraversalEndpoint {
             if elapsed > timeout {
                 match session.phase {
                     TraversalPhase::Discovery => {
-                        // Legacy: CandidateDiscoveryManager still uses PeerId
-                        let discovery_peer_id = Self::peer_id_from_addr(target_addr);
+                        let discovery_session_id = DiscoverySessionId::Remote(target_addr);
                         // Get candidates from discovery manager (safe - different lock)
                         let discovered_candidates = self
                             .discovery_manager
                             .lock()
-                            .get_candidates_for_peer(discovery_peer_id);
+                            .get_candidates(discovery_session_id);
 
                         // Update session candidates
                         session.candidates = discovered_candidates.clone();
@@ -5087,7 +5084,7 @@ impl NatTraversalEndpoint {
         target_addr: SocketAddr,
         coordinator: SocketAddr,
     ) -> Result<(), NatTraversalError> {
-        let target_id = Self::peer_id_from_addr(target_addr);
+        let target_wire_id = Self::wire_id_from_addr(target_addr);
         info!(
             "Sending PUNCH_ME_NOW coordination request for {} to coordinator {}",
             target_addr, coordinator
@@ -5126,14 +5123,14 @@ impl NatTraversalEndpoint {
             let conn = entry.value_mut();
             let normalized_remote = normalize_socket_addr(conn.remote_address());
             if normalized_remote == normalized_coordinator {
-                // Found connection to coordinator - send PUNCH_ME_NOW with target_id bytes
+                // Found connection to coordinator - send PUNCH_ME_NOW with wire ID bytes
                 info!(
                     "Sending PUNCH_ME_NOW via coordinator {} (normalized: {}) to target {}",
                     coordinator, normalized_coordinator, target_addr
                 );
 
                 // Use round 1 for initial coordination
-                match conn.send_nat_punch_via_relay(target_id.0, our_external_address, 1) {
+                match conn.send_nat_punch_via_relay(target_wire_id, our_external_address, 1) {
                     Ok(()) => {
                         info!(
                             "Successfully queued PUNCH_ME_NOW for relay to {}",
@@ -5193,7 +5190,7 @@ impl NatTraversalEndpoint {
 
                                 // Now send the PUNCH_ME_NOW via this new connection
                                 match connection.send_nat_punch_via_relay(
-                                    target_id.0,
+                                    target_wire_id,
                                     external_addr,
                                     1,
                                 ) {

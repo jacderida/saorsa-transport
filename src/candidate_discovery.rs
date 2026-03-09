@@ -25,8 +25,21 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     connection::nat_traversal::{CandidateSource, CandidateState},
-    nat_traversal_api::{BootstrapNode, CandidateAddress, PeerId},
+    nat_traversal_api::{BootstrapNode, CandidateAddress},
 };
+
+/// Session identifier for the candidate discovery manager.
+///
+/// Replaces the legacy `PeerId` key. Each discovery session is either for
+/// discovering the local node's own network candidates, or for a specific
+/// remote peer identified by its socket address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum DiscoverySessionId {
+    /// Local self-discovery (finding our own network candidates)
+    Local,
+    /// Discovery for a remote peer at a specific address
+    Remote(SocketAddr),
+}
 
 // Platform-specific implementations
 #[cfg(all(target_os = "windows", feature = "network-discovery"))]
@@ -194,8 +207,8 @@ pub struct CandidateDiscoveryManager {
     /// tokio runtime deadlocks. parking_lot locks are faster, don't poison,
     /// and have fair locking semantics.
     interface_discovery: Arc<parking_lot::Mutex<Box<dyn NetworkInterfaceDiscovery + Send>>>,
-    /// Active discovery sessions per peer
-    active_sessions: HashMap<PeerId, DiscoverySession>,
+    /// Active discovery sessions keyed by session ID
+    active_sessions: HashMap<DiscoverySessionId, DiscoverySession>,
     /// Cached local interface results (shared across all sessions)
     cached_local_candidates: Option<(Instant, Vec<ValidatedCandidate>)>,
 }
@@ -299,7 +312,7 @@ pub enum DiscoveryPhase {
 pub enum DiscoveryEvent {
     /// Discovery process started
     DiscoveryStarted {
-        peer_id: PeerId,
+        session_id: DiscoverySessionId,
         bootstrap_count: usize,
     },
     /// Local interface scanning started
@@ -365,12 +378,12 @@ impl std::fmt::Display for DiscoveryEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::DiscoveryStarted {
-                peer_id,
+                session_id,
                 bootstrap_count,
             } => {
                 write!(
                     f,
-                    "Discovery started for peer {peer_id:?} with {bootstrap_count} bootstrap nodes"
+                    "Discovery started for {session_id:?} with {bootstrap_count} bootstrap nodes"
                 )
             }
             Self::LocalScanningStarted => {
@@ -722,43 +735,43 @@ impl CandidateDiscoveryManager {
         }
     }
 
-    /// Start candidate discovery for a specific peer
+    /// Start candidate discovery for a session
     pub fn start_discovery(
         &mut self,
-        peer_id: PeerId,
+        session_id: DiscoverySessionId,
         _bootstrap_nodes: Vec<BootstrapNode>,
     ) -> Result<(), DiscoveryError> {
-        // Check if session already exists for this peer
-        if let Some(existing) = self.active_sessions.get(&peer_id) {
+        // Check if session already exists
+        if let Some(existing) = self.active_sessions.get(&session_id) {
             match &existing.current_phase {
                 DiscoveryPhase::Completed { .. } | DiscoveryPhase::Failed { .. } => {
                     // Old session is done - remove it and allow new discovery
                     debug!(
-                        "Removing old completed/failed session for peer {:?} to start new discovery",
-                        peer_id
+                        "Removing old completed/failed session for {:?} to start new discovery",
+                        session_id
                     );
-                    self.active_sessions.remove(&peer_id);
+                    self.active_sessions.remove(&session_id);
                 }
                 DiscoveryPhase::LocalInterfaceScanning { .. } => {
                     // Discovery is actively in progress
                     return Err(DiscoveryError::InternalError(format!(
-                        "Discovery already in progress for peer {peer_id:?}"
+                        "Discovery already in progress for {session_id:?}"
                     )));
                 }
                 DiscoveryPhase::Idle => {
                     // Session exists but is idle - remove and restart
-                    self.active_sessions.remove(&peer_id);
+                    self.active_sessions.remove(&session_id);
                 }
                 _ => {
                     // Other phases - discovery is in progress
                     return Err(DiscoveryError::InternalError(format!(
-                        "Discovery already in progress for peer {peer_id:?}"
+                        "Discovery already in progress for {session_id:?}"
                     )));
                 }
             }
         }
 
-        info!("Starting candidate discovery for peer {:?}", peer_id);
+        info!("Starting candidate discovery for {:?}", session_id);
 
         // Create new session
         let mut session = DiscoverySession::new(&self.config);
@@ -769,7 +782,7 @@ impl CandidateDiscoveryManager {
         };
 
         // Add session to active sessions
-        self.active_sessions.insert(peer_id, session);
+        self.active_sessions.insert(session_id, session);
 
         Ok(())
     }
@@ -778,14 +791,14 @@ impl CandidateDiscoveryManager {
     pub fn poll(&mut self, now: Instant) -> Vec<DiscoveryEvent> {
         let mut all_events = Vec::new();
 
-        // Collect peer IDs to process (avoid borrowing issues)
-        let peer_ids: Vec<PeerId> = self.active_sessions.keys().copied().collect();
+        // Collect session IDs to process (avoid borrowing issues)
+        let session_ids: Vec<DiscoverySessionId> = self.active_sessions.keys().copied().collect();
 
-        for peer_id in peer_ids {
+        for session_id in session_ids {
             // Get the current phase by cloning the needed data
             let phase_info = self
                 .active_sessions
-                .get(&peer_id)
+                .get(&session_id)
                 .map(|s| (s.current_phase.clone(), s.started_at));
 
             if let Some((DiscoveryPhase::LocalInterfaceScanning { started_at }, session_start)) =
@@ -800,7 +813,7 @@ impl CandidateDiscoveryManager {
                 });
 
                 if let Some(bound_addr) = bound_candidate {
-                    if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+                    if let Some(session) = self.active_sessions.get_mut(&session_id) {
                         let already_present = session
                             .discovered_candidates
                             .iter()
@@ -820,8 +833,8 @@ impl CandidateDiscoveryManager {
                             });
 
                             debug!(
-                                "Added bound address {} as local candidate for peer {:?} before scan completion",
-                                bound_addr, peer_id
+                                "Added bound address {} as local candidate for {:?} before scan completion",
+                                bound_addr, session_id
                             );
                         }
                     }
@@ -831,9 +844,9 @@ impl CandidateDiscoveryManager {
                 if started_at.elapsed().as_millis() < 50 {
                     let scan_result = self.interface_discovery.lock().start_scan();
                     if let Err(e) = scan_result {
-                        error!("Failed to start interface scan for {:?}: {}", peer_id, e);
+                        error!("Failed to start interface scan for {:?}: {}", session_id, e);
                     } else {
-                        debug!("Started local interface scan for peer {:?}", peer_id);
+                        debug!("Started local interface scan for {:?}", session_id);
                         all_events.push(DiscoveryEvent::LocalScanningStarted);
                     }
                 }
@@ -844,9 +857,9 @@ impl CandidateDiscoveryManager {
                 if let Some(interfaces) = scan_complete_result {
                     // Step 3: Process interfaces and add candidates
                     debug!(
-                        "Processing {} network interfaces for peer {:?}",
+                        "Processing {} network interfaces for {:?}",
                         interfaces.len(),
-                        peer_id
+                        session_id
                     );
 
                     let mut candidates_added = 0;
@@ -862,7 +875,7 @@ impl CandidateDiscoveryManager {
                                 state: CandidateState::New,
                             };
 
-                            if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+                            if let Some(session) = self.active_sessions.get_mut(&session_id) {
                                 session.discovered_candidates.push(candidate.clone());
                                 session.statistics.local_candidates_found += 1;
                                 candidates_added += 1;
@@ -872,8 +885,8 @@ impl CandidateDiscoveryManager {
                                 });
 
                                 debug!(
-                                    "Added bound address {} as local candidate for peer {:?}",
-                                    bound_addr, peer_id
+                                    "Added bound address {} as local candidate for {:?}",
+                                    bound_addr, session_id
                                 );
                             }
                         }
@@ -906,7 +919,7 @@ impl CandidateDiscoveryManager {
                                 // Calculate priority before borrowing session mutably
                                 let priority =
                                     self.calculate_local_priority(&candidate_addr, interface);
-                                if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+                                if let Some(session) = self.active_sessions.get_mut(&session_id) {
                                     let candidate = DiscoveryCandidate {
                                         address: candidate_addr,
                                         priority,
@@ -919,8 +932,8 @@ impl CandidateDiscoveryManager {
                                     candidates_added += 1;
 
                                     debug!(
-                                        "Added local candidate {} for peer {:?}",
-                                        candidate_addr, peer_id
+                                        "Added local candidate {} for {:?}",
+                                        candidate_addr, session_id
                                     );
 
                                     all_events.push(DiscoveryEvent::LocalCandidateDiscovered {
@@ -941,12 +954,12 @@ impl CandidateDiscoveryManager {
                     let elapsed = now.duration_since(session_start);
                     let has_external = self
                         .active_sessions
-                        .get(&peer_id)
+                        .get(&session_id)
                         .is_some_and(|s| s.statistics.server_reflexive_candidates_found > 0);
 
                     if elapsed >= self.config.min_discovery_time || has_external {
                         // Complete discovery
-                        if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+                        if let Some(session) = self.active_sessions.get_mut(&session_id) {
                             let final_candidates: Vec<ValidatedCandidate> = session
                                 .discovered_candidates
                                 .iter()
@@ -960,8 +973,8 @@ impl CandidateDiscoveryManager {
                             };
 
                             info!(
-                                "Discovery completed for peer {:?}: {} candidates found",
-                                peer_id, candidate_count
+                                "Discovery completed for {:?}: {} candidates found",
+                                session_id, candidate_count
                             );
 
                             all_events.push(DiscoveryEvent::DiscoveryCompleted {
@@ -972,15 +985,15 @@ impl CandidateDiscoveryManager {
                         }
                     } else {
                         debug!(
-                            "Delaying discovery completion for peer {:?}: elapsed {:?} < min {:?}",
-                            peer_id, elapsed, self.config.min_discovery_time
+                            "Delaying discovery completion for {:?}: elapsed {:?} < min {:?}",
+                            session_id, elapsed, self.config.min_discovery_time
                         );
                     }
                 } else if started_at.elapsed() > self.config.local_scan_timeout {
                     // Timeout - complete with whatever we have
                     warn!(
-                        "Local interface scan timeout for peer {:?}, proceeding with available candidates",
-                        peer_id
+                        "Local interface scan timeout for {:?}, proceeding with available candidates",
+                        session_id
                     );
 
                     let bound_candidate = self.config.bound_address.and_then(|addr| {
@@ -991,7 +1004,7 @@ impl CandidateDiscoveryManager {
                         }
                     });
 
-                    if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+                    if let Some(session) = self.active_sessions.get_mut(&session_id) {
                         if let Some(bound_addr) = bound_candidate {
                             let already_present = session
                                 .discovered_candidates
@@ -1012,8 +1025,8 @@ impl CandidateDiscoveryManager {
                                 });
 
                                 debug!(
-                                    "Added bound address {} as local candidate after scan timeout for peer {:?}",
-                                    bound_addr, peer_id
+                                    "Added bound address {} as local candidate after scan timeout for {:?}",
+                                    bound_addr, session_id
                                 );
                             }
                         }
@@ -1043,8 +1056,8 @@ impl CandidateDiscoveryManager {
                         });
 
                         info!(
-                            "Discovery completed (timeout) for peer {:?}: {} candidates",
-                            peer_id, candidate_count
+                            "Discovery completed (timeout) for {:?}: {} candidates",
+                            session_id, candidate_count
                         );
                     }
                 }
@@ -1052,7 +1065,7 @@ impl CandidateDiscoveryManager {
         }
 
         // Note: We intentionally do NOT remove completed sessions here.
-        // Sessions remain in active_sessions so get_candidates_for_peer() can access them.
+        // Sessions remain in active_sessions so get_candidates() can access them.
         // They will be cleaned up when a new discovery is started for the same peer,
         // or via cleanup_stale_sessions() if needed.
 
@@ -1062,25 +1075,25 @@ impl CandidateDiscoveryManager {
     /// Clean up sessions that have been completed for longer than the specified duration
     pub fn cleanup_stale_sessions(&mut self, max_age: Duration) {
         let now = Instant::now();
-        let stale: Vec<PeerId> = self
+        let stale: Vec<DiscoverySessionId> = self
             .active_sessions
             .iter()
-            .filter_map(|(peer_id, session)| {
+            .filter_map(|(session_id, session)| {
                 if let DiscoveryPhase::Completed {
                     completion_time, ..
                 } = &session.current_phase
                 {
                     if now.duration_since(*completion_time) > max_age {
-                        return Some(*peer_id);
+                        return Some(*session_id);
                     }
                 }
                 None
             })
             .collect();
 
-        for peer_id in stale {
-            self.active_sessions.remove(&peer_id);
-            debug!("Cleaned up stale discovery session for peer {:?}", peer_id);
+        for session_id in stale {
+            self.active_sessions.remove(&session_id);
+            debug!("Cleaned up stale discovery session for {:?}", session_id);
         }
     }
 
@@ -1163,19 +1176,16 @@ impl CandidateDiscoveryManager {
         }
     }
 
-    /// Get all discovered candidates for a specific peer
-    pub fn get_candidates_for_peer(&self, peer_id: PeerId) -> Vec<CandidateAddress> {
-        // Look up the specific session for this peer
-        if let Some(session) = self.active_sessions.get(&peer_id) {
-            // Return all discovered candidates converted to CandidateAddress
+    /// Get all discovered candidates for a specific session
+    pub fn get_candidates(&self, session_id: DiscoverySessionId) -> Vec<CandidateAddress> {
+        if let Some(session) = self.active_sessions.get(&session_id) {
             session
                 .discovered_candidates
                 .iter()
                 .map(|c| c.to_candidate_address())
                 .collect()
         } else {
-            // No active session for this peer
-            debug!("No active discovery session found for peer {:?}", peer_id);
+            debug!("No active discovery session found for {:?}", session_id);
             Vec::new()
         }
     }
@@ -1185,8 +1195,12 @@ impl CandidateDiscoveryManager {
     /// This is called when a connected peer reports our external address via the
     /// OBSERVED_ADDRESS frame (draft-ietf-quic-address-discovery). These addresses
     /// are server-reflexive and represent how we appear to external peers.
-    pub fn add_external_address(&mut self, peer_id: PeerId, external_addr: SocketAddr) {
-        if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+    pub fn add_external_address(
+        &mut self,
+        session_id: DiscoverySessionId,
+        external_addr: SocketAddr,
+    ) {
+        if let Some(session) = self.active_sessions.get_mut(&session_id) {
             // Check if we already have this address
             if session
                 .discovered_candidates
@@ -1194,8 +1208,8 @@ impl CandidateDiscoveryManager {
                 .any(|c| c.address == external_addr)
             {
                 debug!(
-                    "External address {} already known for peer {:?}",
-                    external_addr, peer_id
+                    "External address {} already known for {:?}",
+                    external_addr, session_id
                 );
                 return;
             }
@@ -1211,13 +1225,13 @@ impl CandidateDiscoveryManager {
             session.statistics.server_reflexive_candidates_found += 1;
 
             info!(
-                "Added external address {} for peer {:?} (from OBSERVED_ADDRESS)",
-                external_addr, peer_id
+                "Added external address {} for {:?} (from OBSERVED_ADDRESS)",
+                external_addr, session_id
             );
         } else {
             debug!(
-                "No active session for peer {:?}, cannot add external address {}",
-                peer_id, external_addr
+                "No active session for {:?}, cannot add external address {}",
+                session_id, external_addr
             );
         }
     }
@@ -1227,11 +1241,11 @@ impl CandidateDiscoveryManager {
     /// This is useful when we discover our external address from any connected peer -
     /// it can be used for NAT traversal to other peers as well.
     pub fn add_external_address_to_all(&mut self, external_addr: SocketAddr) {
-        let peer_ids: Vec<PeerId> = self.active_sessions.keys().copied().collect();
+        let session_ids: Vec<DiscoverySessionId> = self.active_sessions.keys().copied().collect();
         let mut added_count = 0;
 
-        for peer_id in peer_ids {
-            if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+        for session_id in session_ids {
+            if let Some(session) = self.active_sessions.get_mut(&session_id) {
                 // Check if we already have this address
                 if session
                     .discovered_candidates
@@ -1354,17 +1368,15 @@ impl CandidateDiscoveryManager {
     /// This replaces the need for STUN-based server reflexive discovery
     pub fn accept_quic_discovered_address(
         &mut self,
-        peer_id: PeerId,
+        session_id: DiscoverySessionId,
         discovered_address: SocketAddr,
     ) -> Result<bool, DiscoveryError> {
         // Calculate priority for the discovered address first to avoid borrow issues
         let priority = self.calculate_quic_discovered_priority(&discovered_address);
 
-        // Get the active session for this peer
-        let session = self.active_sessions.get_mut(&peer_id).ok_or_else(|| {
-            DiscoveryError::InternalError(format!(
-                "No active discovery session for peer {peer_id:?}"
-            ))
+        // Get the active session
+        let session = self.active_sessions.get_mut(&session_id).ok_or_else(|| {
+            DiscoveryError::InternalError(format!("No active discovery session for {session_id:?}"))
         })?;
 
         // Check if address already exists
@@ -1434,10 +1446,13 @@ impl CandidateDiscoveryManager {
     }
 
     /// Poll discovery progress and get pending events
-    pub fn poll_discovery_progress(&mut self, peer_id: PeerId) -> Vec<DiscoveryEvent> {
+    pub fn poll_discovery_progress(
+        &mut self,
+        session_id: DiscoverySessionId,
+    ) -> Vec<DiscoveryEvent> {
         let mut events = Vec::new();
 
-        if let Some(session) = self.active_sessions.get_mut(&peer_id) {
+        if let Some(session) = self.active_sessions.get_mut(&session_id) {
             // Check if we have new candidates to report
             for candidate in &session.discovered_candidates {
                 if matches!(candidate.state, CandidateState::New) {
@@ -1459,9 +1474,9 @@ impl CandidateDiscoveryManager {
         events
     }
 
-    /// Get the current discovery status for a peer
-    pub fn get_discovery_status(&self, peer_id: PeerId) -> Option<DiscoveryStatus> {
-        self.active_sessions.get(&peer_id).map(|session| {
+    /// Get the current discovery status for a session
+    pub fn get_discovery_status(&self, session_id: DiscoverySessionId) -> Option<DiscoveryStatus> {
+        self.active_sessions.get(&session_id).map(|session| {
             let discovered_candidates = session
                 .discovered_candidates
                 .iter()
@@ -1643,26 +1658,30 @@ mod tests {
         CandidateDiscoveryManager::new(DiscoveryConfig::test_default())
     }
 
+    fn test_session_id() -> DiscoverySessionId {
+        DiscoverySessionId::Remote("127.0.0.1:10000".parse().unwrap())
+    }
+
     #[test]
     fn test_accept_quic_discovered_addresses() {
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Create a discovery session
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Test accepting QUIC-discovered addresses
         let discovered_addr = "192.168.1.100:5000"
             .parse()
             .expect("Failed to parse test address");
-        let result = manager.accept_quic_discovered_address(peer_id, discovered_addr);
+        let result = manager.accept_quic_discovered_address(session_id, discovered_addr);
 
         assert!(result.is_ok());
 
         // Verify the address was added to the session
-        if let Some(session) = manager.active_sessions.get(&peer_id) {
+        if let Some(session) = manager.active_sessions.get(&session_id) {
             let found = session.discovered_candidates.iter().any(|c| {
                 c.address == discovered_addr
                     && matches!(c.source, DiscoverySourceType::ServerReflexive)
@@ -1674,13 +1693,13 @@ mod tests {
     #[test]
     fn test_accept_quic_discovered_addresses_no_session() {
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
         let discovered_addr = "192.168.1.100:5000"
             .parse()
             .expect("Failed to parse test address");
 
         // Try to add address without an active session
-        let result = manager.accept_quic_discovered_address(peer_id, discovered_addr);
+        let result = manager.accept_quic_discovered_address(session_id, discovered_addr);
 
         assert!(result.is_err());
         match result {
@@ -1694,25 +1713,25 @@ mod tests {
     #[test]
     fn test_accept_quic_discovered_addresses_deduplication() {
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Create a discovery session
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Add the same address twice
         let discovered_addr = "192.168.1.100:5000"
             .parse()
             .expect("Failed to parse test address");
-        let result1 = manager.accept_quic_discovered_address(peer_id, discovered_addr);
-        let result2 = manager.accept_quic_discovered_address(peer_id, discovered_addr);
+        let result1 = manager.accept_quic_discovered_address(session_id, discovered_addr);
+        let result2 = manager.accept_quic_discovered_address(session_id, discovered_addr);
 
         assert!(result1.is_ok());
         assert!(result2.is_ok()); // Should succeed but not duplicate
 
         // Verify no duplicates
-        if let Some(session) = manager.active_sessions.get(&peer_id) {
+        if let Some(session) = manager.active_sessions.get(&session_id) {
             let count = session
                 .discovered_candidates
                 .iter()
@@ -1725,11 +1744,11 @@ mod tests {
     #[test]
     fn test_accept_quic_discovered_addresses_priority() {
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Create a discovery session
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Add different types of addresses
@@ -1744,17 +1763,17 @@ mod tests {
             .expect("Failed to parse test address");
 
         manager
-            .accept_quic_discovered_address(peer_id, public_addr)
+            .accept_quic_discovered_address(session_id, public_addr)
             .expect("Failed to accept public address in test");
         manager
-            .accept_quic_discovered_address(peer_id, private_addr)
+            .accept_quic_discovered_address(session_id, private_addr)
             .expect("Failed to accept private address in test");
         manager
-            .accept_quic_discovered_address(peer_id, ipv6_addr)
+            .accept_quic_discovered_address(session_id, ipv6_addr)
             .unwrap();
 
         // Verify priorities are assigned correctly
-        if let Some(session) = manager.active_sessions.get(&peer_id) {
+        if let Some(session) = manager.active_sessions.get(&session_id) {
             for candidate in &session.discovered_candidates {
                 assert!(
                     candidate.priority > 0,
@@ -1780,11 +1799,11 @@ mod tests {
     #[test]
     fn test_accept_quic_discovered_addresses_event_generation() {
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Create a discovery session
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Add address and check for events
@@ -1792,11 +1811,11 @@ mod tests {
             .parse()
             .expect("Failed to parse test address");
         manager
-            .accept_quic_discovered_address(peer_id, discovered_addr)
+            .accept_quic_discovered_address(session_id, discovered_addr)
             .expect("Failed to accept address in test");
 
         // Poll for events
-        let events = manager.poll_discovery_progress(peer_id);
+        let events = manager.poll_discovery_progress(session_id);
 
         // Should have a ServerReflexiveCandidateDiscovered event
         let has_event = events.iter().any(|e| {
@@ -1815,11 +1834,11 @@ mod tests {
     #[test]
     fn test_discovery_completes_without_server_reflexive_phase() {
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Start discovery
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Add a QUIC-discovered address
@@ -1827,12 +1846,12 @@ mod tests {
             .parse()
             .expect("Failed to parse test address");
         manager
-            .accept_quic_discovered_address(peer_id, discovered_addr)
+            .accept_quic_discovered_address(session_id, discovered_addr)
             .expect("Failed to accept address in test");
 
         // Poll discovery to advance state
         let status = manager
-            .get_discovery_status(peer_id)
+            .get_discovery_status(session_id)
             .expect("Failed to get discovery status in test");
 
         // Should not be in ServerReflexiveQuerying phase
@@ -1847,11 +1866,11 @@ mod tests {
     #[test]
     fn test_no_bootstrap_queries_when_using_quic_discovery() {
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Start discovery
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Immediately add QUIC-discovered addresses
@@ -1862,22 +1881,22 @@ mod tests {
             .parse()
             .expect("Failed to parse test address");
         manager
-            .accept_quic_discovered_address(peer_id, addr1)
+            .accept_quic_discovered_address(session_id, addr1)
             .expect("Failed to accept address in test");
         manager
-            .accept_quic_discovered_address(peer_id, addr2)
+            .accept_quic_discovered_address(session_id, addr2)
             .expect("Failed to accept address in test");
 
         // Get status to check phase
         let status = manager
-            .get_discovery_status(peer_id)
+            .get_discovery_status(session_id)
             .expect("Failed to get discovery status in test");
 
         // Verify we have candidates from QUIC discovery
         assert!(status.discovered_candidates.len() >= 2);
 
         // Verify no bootstrap queries were made
-        if let Some(session) = manager.active_sessions.get(&peer_id) {
+        if let Some(session) = manager.active_sessions.get(&session_id) {
             // Check that we didn't record any bootstrap query statistics
             assert_eq!(
                 session.statistics.bootstrap_queries_sent, 0,
@@ -1889,11 +1908,11 @@ mod tests {
     #[test]
     fn test_priority_differences_quic_vs_placeholder() {
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Start discovery
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Add QUIC-discovered address
@@ -1901,11 +1920,11 @@ mod tests {
             .parse()
             .expect("Failed to parse test address");
         manager
-            .accept_quic_discovered_address(peer_id, discovered_addr)
+            .accept_quic_discovered_address(session_id, discovered_addr)
             .expect("Failed to accept address in test");
 
         // Check the priority assigned
-        if let Some(session) = manager.active_sessions.get(&peer_id) {
+        if let Some(session) = manager.active_sessions.get(&session_id) {
             let candidate = session
                 .discovered_candidates
                 .iter()
@@ -1931,11 +1950,11 @@ mod tests {
     fn test_quic_discovered_address_priority_calculation() {
         // Test that QUIC-discovered addresses get appropriate priorities based on characteristics
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Start discovery
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Test different types of addresses
@@ -1953,12 +1972,12 @@ mod tests {
         for (addr_str, (min_priority, max_priority), description) in test_cases {
             let addr: SocketAddr = addr_str.parse().expect("Failed to parse test address");
             manager
-                .accept_quic_discovered_address(peer_id, addr)
+                .accept_quic_discovered_address(session_id, addr)
                 .expect("Failed to accept address in test");
 
             let session = manager
                 .active_sessions
-                .get(&peer_id)
+                .get(&session_id)
                 .expect("Session should exist in test");
             let candidate = session
                 .discovered_candidates
@@ -2031,17 +2050,17 @@ mod tests {
     fn test_quic_discovered_addresses_override_stale_server_reflexive() {
         // Test that QUIC-discovered addresses can replace stale server reflexive candidates
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Start discovery
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Simulate adding an old server reflexive candidate (from placeholder STUN)
         let session = manager
             .active_sessions
-            .get_mut(&peer_id)
+            .get_mut(&session_id)
             .expect("Session should exist in test");
         let old_candidate = DiscoveryCandidate {
             address: "1.2.3.4:1234"
@@ -2058,13 +2077,13 @@ mod tests {
             .parse()
             .expect("Failed to parse test address");
         manager
-            .accept_quic_discovered_address(peer_id, new_addr)
+            .accept_quic_discovered_address(session_id, new_addr)
             .expect("Failed to accept address in test");
 
         // Check that we have both candidates
         let session = manager
             .active_sessions
-            .get(&peer_id)
+            .get(&session_id)
             .expect("Session should exist in test");
         let candidates: Vec<_> = session
             .discovered_candidates
@@ -2093,26 +2112,26 @@ mod tests {
     fn test_quic_discovered_address_generates_events() {
         // Test that adding a QUIC-discovered address generates appropriate events
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Start discovery
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Clear any startup events
-        manager.poll_discovery_progress(peer_id);
+        manager.poll_discovery_progress(session_id);
 
         // Add a QUIC-discovered address
         let discovered_addr = "8.8.8.8:5000"
             .parse()
             .expect("Failed to parse test address");
         manager
-            .accept_quic_discovered_address(peer_id, discovered_addr)
+            .accept_quic_discovered_address(session_id, discovered_addr)
             .expect("Failed to accept address in test");
 
         // Poll for events
-        let events = manager.poll_discovery_progress(peer_id);
+        let events = manager.poll_discovery_progress(session_id);
 
         // Should have at least one event about the new candidate
         assert!(
@@ -2137,15 +2156,15 @@ mod tests {
     fn test_multiple_quic_discovered_addresses_generate_events() {
         // Test that multiple QUIC-discovered addresses each generate events
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Start discovery
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Clear startup events
-        manager.poll_discovery_progress(peer_id);
+        manager.poll_discovery_progress(session_id);
 
         // Add multiple QUIC-discovered addresses
         let addresses = vec![
@@ -2162,12 +2181,12 @@ mod tests {
 
         for addr in &addresses {
             manager
-                .accept_quic_discovered_address(peer_id, *addr)
+                .accept_quic_discovered_address(session_id, *addr)
                 .expect("Failed to accept address in test");
         }
 
         // Poll for events
-        let events = manager.poll_discovery_progress(peer_id);
+        let events = manager.poll_discovery_progress(session_id);
 
         // Should have events for all addresses
         for addr in &addresses {
@@ -2185,11 +2204,11 @@ mod tests {
     fn test_duplicate_quic_discovered_address_no_event() {
         // Test that duplicate addresses don't generate duplicate events
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Start discovery
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Add a QUIC-discovered address
@@ -2197,19 +2216,19 @@ mod tests {
             .parse()
             .expect("Failed to parse test address");
         manager
-            .accept_quic_discovered_address(peer_id, discovered_addr)
+            .accept_quic_discovered_address(session_id, discovered_addr)
             .expect("Failed to accept address in test");
 
         // Poll and clear events
-        manager.poll_discovery_progress(peer_id);
+        manager.poll_discovery_progress(session_id);
 
         // Try to add the same address again
         manager
-            .accept_quic_discovered_address(peer_id, discovered_addr)
+            .accept_quic_discovered_address(session_id, discovered_addr)
             .expect("Failed to accept address in test");
 
         // Poll for events
-        let events = manager.poll_discovery_progress(peer_id);
+        let events = manager.poll_discovery_progress(session_id);
 
         // Should not generate any new events for duplicate
         let has_duplicate_event = events.iter().any(|e| {
@@ -2229,15 +2248,15 @@ mod tests {
     fn test_quic_discovered_address_event_timing() {
         // Test that events are queued and delivered on poll
         let mut manager = create_test_manager();
-        let peer_id = PeerId([1; 32]);
+        let session_id = test_session_id();
 
         // Start discovery
         manager
-            .start_discovery(peer_id, vec![])
+            .start_discovery(session_id, vec![])
             .expect("Failed to start discovery in test");
 
         // Clear startup events
-        manager.poll_discovery_progress(peer_id);
+        manager.poll_discovery_progress(session_id);
 
         // Add addresses without polling
         let addr1 = "8.8.8.8:5000"
@@ -2248,15 +2267,15 @@ mod tests {
             .expect("Failed to parse test address");
 
         manager
-            .accept_quic_discovered_address(peer_id, addr1)
+            .accept_quic_discovered_address(session_id, addr1)
             .expect("Failed to accept address in test");
         manager
-            .accept_quic_discovered_address(peer_id, addr2)
+            .accept_quic_discovered_address(session_id, addr2)
             .expect("Failed to accept address in test");
 
         // Events should be queued
         // Now poll for events
-        let events = manager.poll_discovery_progress(peer_id);
+        let events = manager.poll_discovery_progress(session_id);
 
         // Should get all queued events
         let server_reflexive_count = events
@@ -2270,7 +2289,7 @@ mod tests {
         );
 
         // Subsequent poll should return no new server reflexive events
-        let events2 = manager.poll_discovery_progress(peer_id);
+        let events2 = manager.poll_discovery_progress(session_id);
         let server_reflexive_count2 = events2
             .iter()
             .filter(|e| matches!(e, DiscoveryEvent::ServerReflexiveCandidateDiscovered { .. }))
