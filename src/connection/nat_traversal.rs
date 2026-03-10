@@ -17,17 +17,6 @@ use tracing::{debug, info, trace, warn};
 use super::{PortPredictor, PortPredictorConfig};
 use crate::{Instant, VarInt};
 
-fn allow_loopback_from_env() -> bool {
-    matches!(
-        std::env::var("SAORSA_TRANSPORT_ALLOW_LOOPBACK")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "1" | "true" | "yes"
-    )
-}
-
 /// NAT traversal state for a QUIC connection
 ///
 /// This manages address candidate discovery, validation, and coordination
@@ -391,6 +380,8 @@ pub(super) struct SecurityValidationState {
     address_validation_cache: HashMap<SocketAddr, AddressValidationResult>,
     /// Cache timeout for address validation
     validation_cache_timeout: Duration,
+    /// Allow loopback addresses as valid candidates
+    allow_loopback: bool,
 }
 /// Coordination request tracking for security analysis
 #[derive(Debug, Clone)]
@@ -474,7 +465,7 @@ struct TimeoutStatistics {
 #[allow(dead_code)]
 impl SecurityValidationState {
     /// Create new security validation state with default settings
-    fn new() -> Self {
+    fn new(allow_loopback: bool) -> Self {
         Self {
             candidate_rate_tracker: VecDeque::new(),
             max_candidates_per_window: 20, // Max 20 candidates per 60 seconds
@@ -483,6 +474,7 @@ impl SecurityValidationState {
             max_coordination_per_window: 5, // Max 5 coordination requests per 60 seconds
             address_validation_cache: HashMap::new(),
             validation_cache_timeout: Duration::from_secs(300), // 5 minute cache
+            allow_loopback,
         }
     }
     /// Create new security validation state with custom rate limits
@@ -490,6 +482,7 @@ impl SecurityValidationState {
         max_candidates_per_window: u32,
         max_coordination_per_window: u32,
         rate_window: Duration,
+        allow_loopback: bool,
     ) -> Self {
         Self {
             candidate_rate_tracker: VecDeque::new(),
@@ -499,6 +492,7 @@ impl SecurityValidationState {
             max_coordination_per_window,
             address_validation_cache: HashMap::new(),
             validation_cache_timeout: Duration::from_secs(300),
+            allow_loopback,
         }
     }
     /// Enhanced rate limiting with adaptive thresholds
@@ -672,13 +666,12 @@ impl SecurityValidationState {
 
     /// Check if address is in a suspicious range
     fn is_address_in_suspicious_range(&self, addr: SocketAddr) -> bool {
-        let allow_loopback = allow_loopback_from_env();
         match addr.ip() {
             IpAddr::V4(ipv4) => {
                 // Check for addresses commonly used in attacks
                 let octets = ipv4.octets();
                 // Reject certain reserved ranges that shouldn't be used for P2P
-                if octets[0] == 0 || (!allow_loopback && octets[0] == 127) {
+                if octets[0] == 0 || (!self.allow_loopback && octets[0] == 127) {
                     return true;
                 }
 
@@ -697,7 +690,7 @@ impl SecurityValidationState {
             }
             IpAddr::V6(ipv6) => {
                 // Check for suspicious IPv6 ranges
-                if ipv6.is_unspecified() || (!allow_loopback && ipv6.is_loopback()) {
+                if ipv6.is_unspecified() || (!self.allow_loopback && ipv6.is_loopback()) {
                     return true;
                 }
 
@@ -802,14 +795,13 @@ impl SecurityValidationState {
 
     /// Perform actual address validation
     fn perform_address_validation(&self, addr: SocketAddr) -> AddressValidationResult {
-        let allow_loopback = allow_loopback_from_env();
         match addr.ip() {
             IpAddr::V4(ipv4) => {
                 // Check for invalid IPv4 addresses
                 if ipv4.is_unspecified() || ipv4.is_broadcast() {
                     return AddressValidationResult::Invalid;
                 }
-                if ipv4.is_loopback() && !allow_loopback {
+                if ipv4.is_loopback() && !self.allow_loopback {
                     return AddressValidationResult::Invalid;
                 }
                 // Check for suspicious addresses
@@ -818,7 +810,7 @@ impl SecurityValidationState {
                 }
 
                 // Check for reserved ranges that shouldn't be used for P2P
-                if ipv4.octets()[0] == 0 || (!allow_loopback && ipv4.octets()[0] == 127) {
+                if ipv4.octets()[0] == 0 || (!self.allow_loopback && ipv4.octets()[0] == 127) {
                     return AddressValidationResult::Invalid;
                 }
 
@@ -832,7 +824,7 @@ impl SecurityValidationState {
                 if ipv6.is_unspecified() || ipv6.is_multicast() {
                     return AddressValidationResult::Invalid;
                 }
-                if ipv6.is_loopback() && !allow_loopback {
+                if ipv6.is_loopback() && !self.allow_loopback {
                     return AddressValidationResult::Invalid;
                 }
 
@@ -1813,9 +1805,16 @@ impl NatTraversalState {
     ///
     /// v0.13.0: Role parameter removed - all nodes are symmetric P2P nodes.
     /// Every node can initiate, accept, and coordinate NAT traversal.
-    pub(super) fn new(max_candidates: u32, coordination_timeout: Duration) -> Self {
+    pub(super) fn new(
+        max_candidates: u32,
+        coordination_timeout: Duration,
+        allow_loopback: bool,
+    ) -> Self {
         // v0.13.0: All nodes can coordinate - always create coordinator
-        let bootstrap_coordinator = Some(BootstrapCoordinator::new(BootstrapConfig::default()));
+        let bootstrap_coordinator = Some(BootstrapCoordinator::new(
+            BootstrapConfig::default(),
+            allow_loopback,
+        ));
 
         Self {
             // v0.13.0: role field removed - all nodes are symmetric
@@ -1829,7 +1828,7 @@ impl NatTraversalState {
             max_candidates,
             coordination_timeout,
             stats: NatTraversalStats::default(),
-            security_state: SecurityValidationState::new(),
+            security_state: SecurityValidationState::new(allow_loopback),
             network_monitor: NetworkConditionMonitor::new(),
             resource_manager: ResourceCleanupCoordinator::new(),
             bootstrap_coordinator,
@@ -3595,12 +3594,12 @@ pub(crate) struct BootstrapStats {
 // Removed session state machine enums and recovery actions
 impl BootstrapCoordinator {
     /// Create a new bootstrap coordinator
-    pub(crate) fn new(_config: BootstrapConfig) -> Self {
+    pub(crate) fn new(_config: BootstrapConfig, allow_loopback: bool) -> Self {
         Self {
             address_observations: HashMap::new(),
             peer_index: HashMap::new(),
             coordination_table: HashMap::new(),
-            security_validator: SecurityValidationState::new(),
+            security_validator: SecurityValidationState::new(allow_loopback),
             stats: BootstrapStats::default(),
         }
     }
@@ -3856,6 +3855,7 @@ mod tests {
         NatTraversalState::new(
             10,                      // max_candidates
             Duration::from_secs(30), // coordination_timeout
+            true,                    // allow_loopback for tests
         )
     }
 
@@ -4237,6 +4237,7 @@ mod tests {
         let mut state = NatTraversalState::new(
             100, // max_candidates (high enough to not limit)
             Duration::from_secs(30),
+            true, // allow_loopback for tests
         );
         let now = Instant::now();
 
@@ -4267,7 +4268,7 @@ mod tests {
     #[test]
     fn test_add_pairs_at_exact_limit() {
         // Test behavior when exactly at the limit
-        let mut state = NatTraversalState::new(100, Duration::from_secs(30));
+        let mut state = NatTraversalState::new(100, Duration::from_secs(30), true);
         let now = Instant::now();
 
         // Add candidates to get close to limit (14 × 14 = 196 pairs)
@@ -4347,7 +4348,7 @@ mod tests {
     #[test]
     fn test_incremental_add_with_zero_remaining_capacity() {
         // Test that incremental add gracefully handles zero capacity
-        let mut state = NatTraversalState::new(100, Duration::from_secs(30));
+        let mut state = NatTraversalState::new(100, Duration::from_secs(30), true);
         let now = Instant::now();
 
         // Fill up to the limit

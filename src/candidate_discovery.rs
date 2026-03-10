@@ -238,6 +238,8 @@ pub struct DiscoveryConfig {
     pub bound_address: Option<SocketAddr>,
     /// Minimum time to wait before completing discovery (allows time for OBSERVED_ADDRESS)
     pub min_discovery_time: Duration,
+    /// Allow loopback addresses (127.0.0.1, ::1) as valid candidates
+    pub allow_loopback: bool,
 }
 
 impl DiscoveryConfig {
@@ -267,6 +269,7 @@ impl DiscoveryConfig {
             bound_address: None,
             // For tests, allow immediate completion (no waiting for OBSERVED_ADDRESS)
             min_discovery_time: Duration::ZERO,
+            allow_loopback: true,
         }
     }
 }
@@ -648,6 +651,7 @@ impl Default for DiscoveryConfig {
             // before completing discovery. This ensures we don't complete before
             // connecting to peers who can tell us our external address.
             min_discovery_time: Duration::from_secs(10),
+            allow_loopback: false,
         }
     }
 }
@@ -1279,7 +1283,7 @@ impl CandidateDiscoveryManager {
     fn is_valid_local_address(&self, address: &SocketAddr) -> bool {
         // Use the enhanced validation from CandidateAddress
         use crate::nat_traversal_api::CandidateAddress;
-        let allow_loopback = Self::allow_loopback_from_env();
+        let allow_loopback = self.config.allow_loopback;
 
         if let Err(e) = CandidateAddress::validate_address(address) {
             debug!("Address {} failed validation: {}", address, e);
@@ -1288,28 +1292,17 @@ impl CandidateDiscoveryManager {
 
         match address.ip() {
             IpAddr::V4(ipv4) => {
-                // For testing, allow loopback addresses
-                #[cfg(test)]
-                if ipv4.is_loopback() {
-                    return true;
-                }
                 if ipv4.is_loopback() {
                     return allow_loopback;
                 }
                 // For local addresses, we want actual interface addresses
                 // Allow private addresses (RFC1918)
-                !ipv4.is_loopback()
-                    && !ipv4.is_unspecified()
+                !ipv4.is_unspecified()
                     && !ipv4.is_broadcast()
                     && !ipv4.is_multicast()
                     && !ipv4.is_documentation()
             }
             IpAddr::V6(ipv6) => {
-                // For testing, allow loopback addresses
-                #[cfg(test)]
-                if ipv6.is_loopback() {
-                    return true;
-                }
                 if ipv6.is_loopback() {
                     return allow_loopback;
                 }
@@ -1317,23 +1310,9 @@ impl CandidateDiscoveryManager {
                 let segments = ipv6.segments();
                 let is_documentation = segments[0] == 0x2001 && segments[1] == 0x0db8;
 
-                !ipv6.is_loopback()
-                    && !ipv6.is_unspecified()
-                    && !ipv6.is_multicast()
-                    && !is_documentation
+                !ipv6.is_unspecified() && !ipv6.is_multicast() && !is_documentation
             }
         }
-    }
-
-    fn allow_loopback_from_env() -> bool {
-        matches!(
-            std::env::var("SAORSA_TRANSPORT_ALLOW_LOOPBACK")
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase()
-                .as_str(),
-            "1" | "true" | "yes"
-        )
     }
 
     // Removed server reflexive address validation helper

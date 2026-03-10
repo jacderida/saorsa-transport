@@ -62,6 +62,9 @@ pub struct TransportConfig {
 
     /// Post-Quantum Cryptography algorithms configuration
     pub(crate) pqc_algorithms: Option<crate::transport_parameters::PqcAlgorithms>,
+
+    /// Allow loopback addresses as valid NAT traversal candidates
+    pub(crate) allow_loopback: bool,
 }
 
 impl TransportConfig {
@@ -455,6 +458,18 @@ impl TransportConfig {
     ) -> Option<&crate::transport_parameters::NatTraversalConfig> {
         self.nat_traversal_config.as_ref()
     }
+
+    /// Allow loopback addresses (127.0.0.1, ::1) as valid NAT traversal candidates.
+    ///
+    /// In production, loopback addresses are rejected because they are not routable
+    /// across the network. Enable this for local testing or when running multiple
+    /// nodes on the same machine.
+    ///
+    /// Default: `false`
+    pub fn allow_loopback(&mut self, allow: bool) -> &mut Self {
+        self.allow_loopback = allow;
+        self
+    }
 }
 
 impl Default for TransportConfig {
@@ -503,6 +518,7 @@ impl Default for TransportConfig {
                 ml_kem_768: true,
                 ml_dsa_65: false,
             }),
+            allow_loopback: false,
         }
     }
 }
@@ -538,6 +554,7 @@ impl fmt::Debug for TransportConfig {
             nat_traversal_config,
             address_discovery_config,
             pqc_algorithms,
+            allow_loopback,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -569,6 +586,7 @@ impl fmt::Debug for TransportConfig {
             .field("nat_traversal_config", nat_traversal_config)
             .field("address_discovery_config", address_discovery_config)
             .field("pqc_algorithms", pqc_algorithms)
+            .field("allow_loopback", allow_loopback)
             .finish_non_exhaustive()
     }
 }

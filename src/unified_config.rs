@@ -135,6 +135,15 @@ pub struct NatConfig {
 
     /// Prefer RFC-compliant NAT traversal frame format
     pub prefer_rfc_nat_traversal: bool,
+
+    /// Allow loopback addresses (127.0.0.1, ::1) as valid NAT traversal candidates.
+    ///
+    /// In production, loopback addresses are rejected because they are not routable
+    /// across the network. Enable this for local testing or when running multiple
+    /// nodes on the same machine.
+    ///
+    /// Default: `false`
+    pub allow_loopback: bool,
 }
 
 impl Default for NatConfig {
@@ -147,6 +156,7 @@ impl Default for NatConfig {
             relay_nodes: Vec::new(),
             max_concurrent_attempts: 3,
             prefer_rfc_nat_traversal: true,
+            allow_loopback: false,
         }
     }
 }
@@ -299,6 +309,7 @@ impl P2pConfig {
             allow_ipv4_mapped: true, // Required for dual-stack socket support
             transport_registry: Some(Arc::new(self.transport_registry.clone())),
             max_message_size: self.max_message_size,
+            allow_loopback: self.nat.allow_loopback,
         }
     }
 

@@ -54,6 +54,7 @@ mod nat_traversal_api_tests {
             allow_ipv4_mapped: true,
             transport_registry: None,
             max_message_size: saorsa_transport::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
+            allow_loopback: false,
         };
 
         assert_eq!(config.known_peers.len(), 1);
@@ -189,6 +190,7 @@ mod functional_tests {
             allow_ipv4_mapped: true,
             transport_registry: None,
             max_message_size: saorsa_transport::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
+            allow_loopback: false,
         };
 
         // May fail due to zero values or other validation
@@ -214,6 +216,7 @@ mod functional_tests {
             allow_ipv4_mapped: true,
             transport_registry: None,
             max_message_size: saorsa_transport::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
+            allow_loopback: false,
         };
 
         let result = NatTraversalEndpoint::new(valid_config, None, None).await;
@@ -405,6 +408,7 @@ mod performance_tests {
                 allow_ipv4_mapped: true,
                 transport_registry: None,
                 max_message_size: saorsa_transport::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
+                allow_loopback: false,
             };
 
             // Use the config to prevent optimization
@@ -474,6 +478,7 @@ mod relay_functionality_tests {
             allow_ipv4_mapped: true,
             transport_registry: None,
             max_message_size: saorsa_transport::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
+            allow_loopback: false,
         };
 
         // This might be accepted or rejected depending on implementation

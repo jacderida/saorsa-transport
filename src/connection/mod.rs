@@ -48,17 +48,6 @@ use crate::{
     transport_parameters::TransportParameters,
 };
 
-fn allow_loopback_from_env() -> bool {
-    matches!(
-        std::env::var("SAORSA_TRANSPORT_ALLOW_LOOPBACK")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "1" | "true" | "yes"
-    )
-}
-
 mod ack_frequency;
 use ack_frequency::AckFrequencyState;
 
@@ -4527,7 +4516,11 @@ impl Connection {
         let coordination_timeout = Duration::from_secs(10); // Default 10 second timeout
 
         // Initialize NAT traversal state (no role parameter - all nodes are symmetric)
-        self.nat_traversal = Some(NatTraversalState::new(max_candidates, coordination_timeout));
+        self.nat_traversal = Some(NatTraversalState::new(
+            max_candidates,
+            coordination_timeout,
+            self.config.allow_loopback,
+        ));
 
         trace!("NAT traversal initialized for symmetric P2P node");
 
@@ -4721,7 +4714,11 @@ impl Connection {
         });
 
         // v0.13.0: No role parameter - all nodes are symmetric
-        self.nat_traversal = Some(NatTraversalState::new(8, Duration::from_secs(10)));
+        self.nat_traversal = Some(NatTraversalState::new(
+            8,
+            Duration::from_secs(10),
+            self.config.allow_loopback,
+        ));
     }
 
     /// Queue an ADD_ADDRESS frame to be sent to the peer
@@ -5017,8 +5014,7 @@ impl Connection {
         let target = try_connect_to.target_address;
 
         // Don't allow requests to loopback addresses from remote peers
-        let allow_loopback = allow_loopback_from_env();
-        if target.ip().is_loopback() && !allow_loopback {
+        if target.ip().is_loopback() && !self.config.allow_loopback {
             warn!(
                 "Rejecting TryConnectTo request to loopback address: {}",
                 target

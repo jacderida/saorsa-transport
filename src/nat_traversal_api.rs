@@ -455,6 +455,16 @@ pub struct NatTraversalConfig {
     /// Default: [`P2pConfig::DEFAULT_MAX_MESSAGE_SIZE`] (1 MiB).
     #[serde(default = "default_max_message_size")]
     pub max_message_size: usize,
+
+    /// Allow loopback addresses (127.0.0.1, ::1) as valid NAT traversal candidates.
+    ///
+    /// In production, loopback addresses are rejected because they are not routable
+    /// across the network. Enable this for local testing or when running multiple
+    /// nodes on the same machine.
+    ///
+    /// Default: `false`
+    #[serde(default)]
+    pub allow_loopback: bool,
 }
 
 fn default_max_message_size() -> usize {
@@ -826,36 +836,24 @@ impl CandidateAddress {
     }
 
     /// Check if this candidate is suitable for NAT traversal
-    pub fn is_suitable_for_nat_traversal(&self) -> bool {
-        let allow_loopback = allow_loopback_from_env();
+    pub fn is_suitable_for_nat_traversal(&self, allow_loopback: bool) -> bool {
         match self.address.ip() {
             std::net::IpAddr::V4(ipv4) => {
                 // For NAT traversal, we want:
-                // - Not loopback (unless testing)
+                // - Not loopback (unless configured)
                 // - Not link-local (169.254.0.0/16)
                 // - Not multicast/broadcast
-                #[cfg(test)]
-                if ipv4.is_loopback() {
-                    return true;
-                }
                 if ipv4.is_loopback() {
                     return allow_loopback;
                 }
-                !ipv4.is_loopback()
-                    && !ipv4.is_link_local()
-                    && !ipv4.is_multicast()
-                    && !ipv4.is_broadcast()
+                !ipv4.is_link_local() && !ipv4.is_multicast() && !ipv4.is_broadcast()
             }
             std::net::IpAddr::V6(ipv6) => {
                 // For IPv6:
-                // - Not loopback (unless testing)
+                // - Not loopback (unless configured)
                 // - Not link-local (fe80::/10)
                 // - Not unique local (fc00::/7) for external traversal
                 // - Not multicast
-                #[cfg(test)]
-                if ipv6.is_loopback() {
-                    return true;
-                }
                 if ipv6.is_loopback() {
                     return allow_loopback;
                 }
@@ -863,7 +861,7 @@ impl CandidateAddress {
                 let is_link_local = (segments[0] & 0xffc0) == 0xfe80;
                 let is_unique_local = (segments[0] & 0xfe00) == 0xfc00;
 
-                !ipv6.is_loopback() && !is_link_local && !is_unique_local && !ipv6.is_multicast()
+                !is_link_local && !is_unique_local && !ipv6.is_multicast()
             }
         }
     }
@@ -878,17 +876,6 @@ impl CandidateAddress {
             CandidateState::Removed => 0,
         }
     }
-}
-
-fn allow_loopback_from_env() -> bool {
-    matches!(
-        std::env::var("SAORSA_TRANSPORT_ALLOW_LOOPBACK")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "1" | "true" | "yes"
-    )
 }
 
 /// Errors that can occur during candidate address validation
@@ -1080,6 +1067,7 @@ impl Default for NatTraversalConfig {
             allow_ipv4_mapped: true,  // Required for dual-stack socket support
             transport_registry: None, // Use direct UDP binding by default
             max_message_size: crate::unified_config::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
+            allow_loopback: false,
         }
     }
 }
@@ -1255,6 +1243,7 @@ impl NatTraversalEndpoint {
             max_candidates: config.max_candidates,
             enable_symmetric_prediction: true,
             bound_address: config.bind_addr, // Will be updated with actual address after binding
+            allow_loopback: config.allow_loopback,
             ..DiscoveryConfig::default()
         };
 
@@ -1652,6 +1641,7 @@ impl NatTraversalEndpoint {
             max_candidates: config.max_candidates,
             enable_symmetric_prediction: true,
             bound_address: config.bind_addr, // Will be updated with actual address after binding
+            allow_loopback: config.allow_loopback,
             ..DiscoveryConfig::default()
         };
 
@@ -2565,6 +2555,7 @@ impl NatTraversalEndpoint {
                 concurrency_limit: VarInt::from_u32(config.max_concurrent_attempts as u32),
             };
             transport_config.nat_traversal_config(Some(nat_config));
+            transport_config.allow_loopback(config.allow_loopback);
 
             server_config.transport_config(Arc::new(transport_config));
 
@@ -2635,6 +2626,7 @@ impl NatTraversalEndpoint {
                 concurrency_limit: VarInt::from_u32(config.max_concurrent_attempts as u32),
             };
             transport_config.nat_traversal_config(Some(nat_config));
+            transport_config.allow_loopback(config.allow_loopback);
 
             client_config.transport_config(Arc::new(transport_config));
 
@@ -6275,7 +6267,7 @@ mod tests {
             CandidateSource::Observed { by_node: None },
         )
         .unwrap();
-        assert!(public_v4.is_suitable_for_nat_traversal());
+        assert!(public_v4.is_suitable_for_nat_traversal(false));
 
         let private_v4 = CandidateAddress::new(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
@@ -6283,7 +6275,7 @@ mod tests {
             CandidateSource::Local,
         )
         .unwrap();
-        assert!(private_v4.is_suitable_for_nat_traversal());
+        assert!(private_v4.is_suitable_for_nat_traversal(false));
 
         // Link-local should not be suitable
         let link_local_v4 = CandidateAddress::new(
@@ -6292,7 +6284,7 @@ mod tests {
             CandidateSource::Local,
         )
         .unwrap();
-        assert!(!link_local_v4.is_suitable_for_nat_traversal());
+        assert!(!link_local_v4.is_suitable_for_nat_traversal(false));
 
         // Global unicast IPv6 should be suitable
         let global_v6 = CandidateAddress::new(
@@ -6304,7 +6296,7 @@ mod tests {
             CandidateSource::Observed { by_node: None },
         )
         .unwrap();
-        assert!(global_v6.is_suitable_for_nat_traversal());
+        assert!(global_v6.is_suitable_for_nat_traversal(false));
 
         // Link-local IPv6 should not be suitable
         let link_local_v6 = CandidateAddress::new(
@@ -6313,7 +6305,7 @@ mod tests {
             CandidateSource::Local,
         )
         .unwrap();
-        assert!(!link_local_v6.is_suitable_for_nat_traversal());
+        assert!(!link_local_v6.is_suitable_for_nat_traversal(false));
 
         // Unique local IPv6 should not be suitable for external traversal
         let unique_local_v6 = CandidateAddress::new(
@@ -6322,27 +6314,26 @@ mod tests {
             CandidateSource::Local,
         )
         .unwrap();
-        assert!(!unique_local_v6.is_suitable_for_nat_traversal());
+        assert!(!unique_local_v6.is_suitable_for_nat_traversal(false));
 
-        // Loopback should be suitable only in test mode
-        #[cfg(test)]
-        {
-            let loopback_v4 = CandidateAddress::new(
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
-                100,
-                CandidateSource::Local,
-            )
-            .unwrap();
-            assert!(loopback_v4.is_suitable_for_nat_traversal());
+        // Loopback should be suitable only when allow_loopback is true
+        let loopback_v4 = CandidateAddress::new(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
+            100,
+            CandidateSource::Local,
+        )
+        .unwrap();
+        assert!(!loopback_v4.is_suitable_for_nat_traversal(false));
+        assert!(loopback_v4.is_suitable_for_nat_traversal(true));
 
-            let loopback_v6 = CandidateAddress::new(
-                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8080),
-                100,
-                CandidateSource::Local,
-            )
-            .unwrap();
-            assert!(loopback_v6.is_suitable_for_nat_traversal());
-        }
+        let loopback_v6 = CandidateAddress::new(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8080),
+            100,
+            CandidateSource::Local,
+        )
+        .unwrap();
+        assert!(!loopback_v6.is_suitable_for_nat_traversal(false));
+        assert!(loopback_v6.is_suitable_for_nat_traversal(true));
     }
 
     #[test]
