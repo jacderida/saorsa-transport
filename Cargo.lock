@@ -2385,7 +2385,7 @@ dependencies = [
  "cfg_aliases",
  "pin-project-lite",
  "quinn-proto",
- "quinn-udp",
+ "quinn-udp 0.5.14",
  "rustc-hash",
  "rustls",
  "socket2 0.6.2",
@@ -2428,6 +2428,19 @@ dependencies = [
  "socket2 0.6.2",
  "tracing",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "quinn-udp"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53412bac6247548e2164c7d7f67854aa104ea7d5901efd99622fdf05205496f6"
+dependencies = [
+ "cfg_aliases",
+ "libc",
+ "socket2 0.6.2",
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2933,7 +2946,7 @@ dependencies = [
  "qlog",
  "quickcheck",
  "quickcheck_macros",
- "quinn-udp",
+ "quinn-udp 0.6.0",
  "rand 0.8.5",
  "rand_pcg",
  "rcgen",

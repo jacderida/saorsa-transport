@@ -15,6 +15,8 @@ use saorsa_transport::constrained::{
 };
 use saorsa_transport::transport::{TransportAddr, TransportCapabilities};
 
+const DEFAULT_BLE_L2CAP_PSM: u16 = 0x0080;
+
 /// Test that BLE addresses work with the constrained engine adapter
 #[test]
 fn test_ble_address_integration() {
@@ -22,7 +24,7 @@ fn test_ble_address_integration() {
 
     let ble_addr = TransportAddr::Ble {
         mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     // Connect should succeed
@@ -65,11 +67,11 @@ fn test_handshake_simulation() {
 
     let client_addr = TransportAddr::Ble {
         mac: [0x11, 0x11, 0x11, 0x11, 0x11, 0x11],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
     let server_addr = TransportAddr::Ble {
         mac: [0x22, 0x22, 0x22, 0x22, 0x22, 0x22],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     // Client sends SYN
@@ -118,7 +120,7 @@ fn test_transport_handle_sharing() {
 
     let addr = TransportAddr::Ble {
         mac: [0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     // Connect via handle1
@@ -131,7 +133,7 @@ fn test_transport_handle_sharing() {
     // Connect a second device via handle2
     let addr2 = TransportAddr::Ble {
         mac: [0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
     let _conn_id2 = handle2.connect(&addr2).unwrap();
 
@@ -201,11 +203,11 @@ fn test_data_transfer() {
 
     let client_addr = TransportAddr::Ble {
         mac: [0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
     let server_addr = TransportAddr::Ble {
         mac: [0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     // Complete handshake
@@ -244,7 +246,7 @@ fn test_connection_close() {
 
     let addr = TransportAddr::Ble {
         mac: [0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     let (conn_id, _) = adapter.connect(&addr).unwrap();
@@ -274,7 +276,7 @@ fn test_router_selects_constrained_for_ble() {
 
     let ble_addr = TransportAddr::Ble {
         mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     let engine = router.select_engine_for_addr(&ble_addr);
@@ -314,7 +316,7 @@ fn test_mixed_transport_selection() {
     let udp_addr = TransportAddr::Udp("192.168.1.100:8080".parse().unwrap());
     let ble_addr = TransportAddr::Ble {
         mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
     let lora_addr = TransportAddr::LoRa {
         dev_addr: [0xDE, 0xAD, 0xBE, 0xEF],
@@ -346,7 +348,7 @@ fn test_mixed_transport_selection() {
 fn test_ble_synthetic_socket_addr() {
     let ble_addr = TransportAddr::Ble {
         mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     let synthetic = ble_addr.to_synthetic_socket_addr();
@@ -370,11 +372,11 @@ fn test_ble_synthetic_socket_addr() {
 fn test_synthetic_addr_uniqueness() {
     let ble1 = TransportAddr::Ble {
         mac: [0x11, 0x11, 0x11, 0x11, 0x11, 0x11],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
     let ble2 = TransportAddr::Ble {
         mac: [0x22, 0x22, 0x22, 0x22, 0x22, 0x22],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
     let lora = TransportAddr::LoRa {
         dev_addr: [0x33, 0x44, 0x55, 0x66],
@@ -445,7 +447,7 @@ use saorsa_transport::nat_traversal_api::ConstrainedEventWithAddr;
 fn test_constrained_event_with_addr() {
     let ble_addr = TransportAddr::Ble {
         mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     let conn_id = saorsa_transport::constrained::ConnectionId::new(42);
@@ -487,7 +489,7 @@ async fn test_constrained_event_channel() {
 
     let ble_addr = TransportAddr::Ble {
         mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     let conn_id = saorsa_transport::constrained::ConnectionId::new(99);
@@ -582,7 +584,7 @@ fn test_p2p_event_constrained_data_received() {
 
     let ble_addr = TransportAddr::Ble {
         mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     let test_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
@@ -628,7 +630,7 @@ fn test_registry_provider_management() {
     // No provider for BLE (not registered)
     let ble_addr = TransportAddr::Ble {
         mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
     assert!(registry.provider_for_addr(&ble_addr).is_none());
 
@@ -651,7 +653,7 @@ fn test_constrained_connection_bidirectional_lookup() {
     let conn_id = ConnectionId::new(100);
     let addr = TransportAddr::Ble {
         mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     // Forward map: fingerprint → ConnectionId
@@ -766,7 +768,7 @@ fn test_peer_connection_transport_addr() {
     // Test with BLE address
     let ble_addr = TransportAddr::Ble {
         mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        psm: saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM,
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
     let peer_conn_ble = PeerConnection {
         public_key: None,

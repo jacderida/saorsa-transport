@@ -150,7 +150,7 @@ clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1.28.1", features = ["full"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time", "json"] }
-quinn-udp = { version = "0.5", features = ["log", "tracing"] }
+quinn-udp = { version = "0.6", features = ["tracing", "tracing-log"] }
 pin-project-lite = "0.2"
 
 # Compliance validator dependencies
