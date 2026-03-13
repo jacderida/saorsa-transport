@@ -17,10 +17,11 @@ use bytes::BytesMut;
 use saorsa_transport::coding::Codec;
 use saorsa_transport::nat_traversal::CapabilityFlags;
 use saorsa_transport::nat_traversal::frames::{AddAddress, PunchMeNow, RemoveAddress};
-use saorsa_transport::transport::{
-    LoRaParams, TransportAddr, TransportCapabilities, TransportType,
-};
+use saorsa_transport::transport::{TransportAddr, TransportCapabilities, TransportType};
 use std::net::SocketAddr;
+
+const DEFAULT_BLE_L2CAP_PSM: u16 = 0x0080;
+const DEFAULT_LORA_FREQ_HZ: u32 = 868_000_000;
 
 // ============ Wire Format Tests ============
 
@@ -46,13 +47,13 @@ fn test_add_address_udp_wire_format() {
 
 #[test]
 fn test_add_address_ble_wire_format() {
-    let device_id = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
+    let mac = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
     let frame = AddAddress::new(
         10,
         200,
         TransportAddr::Ble {
-            device_id,
-            service_uuid: None,
+            mac,
+            psm: DEFAULT_BLE_L2CAP_PSM,
         },
     );
 
@@ -67,12 +68,12 @@ fn test_add_address_ble_wire_format() {
     assert_eq!(decoded.socket_addr(), None); // BLE has no socket addr
 
     if let TransportAddr::Ble {
-        device_id: decoded_id,
-        service_uuid,
+        mac: decoded_mac,
+        psm,
     } = decoded.address
     {
-        assert_eq!(decoded_id, device_id);
-        assert!(service_uuid.is_none());
+        assert_eq!(decoded_mac, mac);
+        assert_eq!(psm, DEFAULT_BLE_L2CAP_PSM);
     } else {
         panic!("Expected BLE address");
     }
@@ -80,18 +81,13 @@ fn test_add_address_ble_wire_format() {
 
 #[test]
 fn test_add_address_lora_wire_format() {
-    let device_addr = [0xDE, 0xAD, 0xBE, 0xEF];
-    let params = LoRaParams {
-        spreading_factor: 12,
-        bandwidth_khz: 125,
-        coding_rate: 5,
-    };
+    let dev_addr = [0xDE, 0xAD, 0xBE, 0xEF];
     let frame = AddAddress::new(
         99,
         500,
         TransportAddr::LoRa {
-            device_addr,
-            params: params.clone(),
+            dev_addr,
+            freq_hz: DEFAULT_LORA_FREQ_HZ,
         },
     );
 
@@ -104,14 +100,12 @@ fn test_add_address_lora_wire_format() {
     assert_eq!(decoded.transport_type, TransportType::LoRa);
 
     if let TransportAddr::LoRa {
-        device_addr: decoded_addr,
-        params: decoded_params,
+        dev_addr: decoded_addr,
+        freq_hz,
     } = decoded.address
     {
-        assert_eq!(decoded_addr, device_addr);
-        assert_eq!(decoded_params.spreading_factor, 12);
-        assert_eq!(decoded_params.bandwidth_khz, 125);
-        assert_eq!(decoded_params.coding_rate, 5);
+        assert_eq!(decoded_addr, dev_addr);
+        assert_eq!(freq_hz, DEFAULT_LORA_FREQ_HZ);
     } else {
         panic!("Expected LoRa address");
     }
@@ -229,14 +223,14 @@ fn test_add_address_with_capabilities_roundtrip() {
 
 #[test]
 fn test_add_address_ble_with_capabilities_roundtrip() {
-    let device_id = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+    let mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
     let caps = CapabilityFlags::ble();
     let frame = AddAddress::with_capabilities(
         5,
         300,
         TransportAddr::Ble {
-            device_id,
-            service_uuid: None,
+            mac,
+            psm: DEFAULT_BLE_L2CAP_PSM,
         },
         caps,
     );
@@ -256,18 +250,13 @@ fn test_add_address_ble_with_capabilities_roundtrip() {
 #[test]
 fn test_add_address_from_transport_capabilities() {
     let caps = TransportCapabilities::lora_long_range();
-    let device_addr = [0xDE, 0xAD, 0xBE, 0xEF];
-    let params = LoRaParams {
-        spreading_factor: 12,
-        bandwidth_khz: 125,
-        coding_rate: 5,
-    };
+    let dev_addr = [0xDE, 0xAD, 0xBE, 0xEF];
     let frame = AddAddress::from_capabilities(
         10,
         200,
         TransportAddr::LoRa {
-            device_addr,
-            params,
+            dev_addr,
+            freq_hz: DEFAULT_LORA_FREQ_HZ,
         },
         &caps,
     );
@@ -320,20 +309,16 @@ fn test_multiple_transport_types_encoding() {
             2,
             200,
             TransportAddr::Ble {
-                device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-                service_uuid: None,
+                mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+                psm: DEFAULT_BLE_L2CAP_PSM,
             },
         ),
         AddAddress::new(
             3,
             150,
             TransportAddr::LoRa {
-                device_addr: [0xAB, 0xCD, 0xEF, 0x01],
-                params: LoRaParams {
-                    spreading_factor: 10,
-                    bandwidth_khz: 250,
-                    coding_rate: 6,
-                },
+                dev_addr: [0xAB, 0xCD, 0xEF, 0x01],
+                freq_hz: DEFAULT_LORA_FREQ_HZ,
             },
         ),
         AddAddress::new(

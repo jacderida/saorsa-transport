@@ -59,9 +59,9 @@
 //! };
 //! use std::net::SocketAddr;
 //!
-//! // Create a UDP address
-//! let addr = TransportAddr::Udp("192.168.1.1:9000".parse().unwrap());
-//! assert_eq!(addr.transport_type(), TransportType::Udp);
+//! // Create a QUIC address
+//! let addr = TransportAddr::Quic("192.168.1.1:9000".parse().unwrap());
+//! assert_eq!(addr.transport_type(), TransportType::Quic);
 //!
 //! // Check capabilities
 //! let caps = TransportCapabilities::broadband();
@@ -116,8 +116,8 @@ pub use udp::UdpTransport;
 pub use ble::{
     BleConfig, BleConnection, BleConnectionState, BleTransport, CCCD_DISABLE,
     CCCD_ENABLE_INDICATION, CCCD_ENABLE_NOTIFICATION, CCCD_UUID, CharacteristicHandle,
-    ConnectionPoolStats, DiscoveredDevice, RX_CHARACTERISTIC_UUID, ResumeToken,
-    SAORSA_TRANSPORT_SERVICE_UUID, ScanEvent, ScanState, TX_CHARACTERISTIC_UUID,
+    ConnectionPoolStats, DEFAULT_BLE_L2CAP_PSM, DiscoveredDevice, RX_CHARACTERISTIC_UUID,
+    ResumeToken, SAORSA_TRANSPORT_SERVICE_UUID, ScanEvent, ScanState, TX_CHARACTERISTIC_UUID,
 };
 
 /// Create a default transport registry with UDP support
@@ -158,17 +158,17 @@ mod tests {
 
     #[test]
     fn test_transport_addr_creation() {
-        // UDP address
-        let udp_addr: SocketAddr = "192.168.1.1:9000".parse().unwrap();
-        let addr = TransportAddr::Udp(udp_addr);
-        assert_eq!(addr.transport_type(), TransportType::Udp);
+        // QUIC address
+        let quic_addr: SocketAddr = "192.168.1.1:9000".parse().unwrap();
+        let addr = TransportAddr::Quic(quic_addr);
+        assert_eq!(addr.transport_type(), TransportType::Quic);
 
         // BLE address
-        let ble_addr = TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], None);
+        let ble_addr = TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], 128);
         assert_eq!(ble_addr.transport_type(), TransportType::Ble);
 
         // LoRa address
-        let lora_addr = TransportAddr::lora([0xDE, 0xAD, 0xBE, 0xEF]);
+        let lora_addr = TransportAddr::lora([0xDE, 0xAD, 0xBE, 0xEF], 868_000_000);
         assert_eq!(lora_addr.transport_type(), TransportType::LoRa);
     }
 

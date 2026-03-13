@@ -94,6 +94,12 @@ pub const SAORSA_TRANSPORT_SERVICE_UUID: [u8; 16] = [
     0xa0, 0x3d, 0x7e, 0x9f, 0x0b, 0xca, 0x12, 0xfe, 0xa6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ];
 
+/// Default L2CAP Protocol/Service Multiplexer for BLE connections.
+///
+/// PSM 0x80 (128) is the first value in the LE dynamic range (0x0080–0x00FF),
+/// used for LE Credit Based Connection-Oriented Channels.
+pub const DEFAULT_BLE_L2CAP_PSM: u16 = 0x0080;
+
 /// TX Characteristic UUID for saorsa-transport BLE transport
 ///
 /// This characteristic is used by the Central to send data to the Peripheral.
@@ -916,6 +922,9 @@ pub struct BleConfig {
     /// GATT service UUID for the saorsa-transport service
     pub service_uuid: [u8; 16],
 
+    /// L2CAP Protocol/Service Multiplexer for BLE connections.
+    pub psm: u16,
+
     /// Session cache duration for PQC mitigation
     pub session_cache_duration: Duration,
 
@@ -949,6 +958,7 @@ impl Default for BleConfig {
     fn default() -> Self {
         Self {
             service_uuid: SAORSA_TRANSPORT_SERVICE_UUID,
+            psm: DEFAULT_BLE_L2CAP_PSM,
             session_cache_duration: Duration::from_secs(24 * 60 * 60), // 24 hours
             max_connections: 5,
             scan_interval: Duration::from_secs(10),
@@ -2342,7 +2352,7 @@ impl BleTransport {
 
         // Spawn background task to handle incoming notifications
         let inbound_tx = self.inbound_tx.clone();
-        let config_service_uuid = self.config.service_uuid;
+        let config_psm = self.config.psm;
 
         tokio::spawn(async move {
             // Get the notification stream
@@ -2370,7 +2380,7 @@ impl BleTransport {
 
                     // Create inbound datagram
                     let datagram = InboundDatagram {
-                        source: TransportAddr::ble(device_id, Some(config_service_uuid)),
+                        source: TransportAddr::ble(device_id, config_psm),
                         data: notification.value,
                         received_at: Instant::now(),
                         link_quality: Some(LinkQuality {
@@ -2717,7 +2727,7 @@ impl BleTransport {
 
         // Create inbound datagram
         let datagram = InboundDatagram {
-            source: TransportAddr::ble(device_id, Some(self.config.service_uuid)),
+            source: TransportAddr::ble(device_id, self.config.psm),
             data: complete_data,
             received_at: Instant::now(),
             link_quality: Some(LinkQuality {
@@ -3132,10 +3142,7 @@ impl TransportProvider for BleTransport {
     }
 
     fn local_addr(&self) -> Option<TransportAddr> {
-        Some(TransportAddr::ble(
-            self.local_device_id,
-            Some(self.config.service_uuid),
-        ))
+        Some(TransportAddr::ble(self.local_device_id, self.config.psm))
     }
 
     async fn send(&self, data: &[u8], dest: &TransportAddr) -> Result<(), TransportError> {
@@ -3143,11 +3150,8 @@ impl TransportProvider for BleTransport {
             return Err(TransportError::Offline);
         }
 
-        let (device_id, _service_uuid) = match dest {
-            TransportAddr::Ble {
-                device_id,
-                service_uuid,
-            } => (*device_id, service_uuid.unwrap_or(self.config.service_uuid)),
+        let device_id = match dest {
+            TransportAddr::Ble { mac, .. } => *mac,
             _ => {
                 return Err(TransportError::AddressMismatch {
                     expected: TransportType::Ble,
@@ -3379,7 +3383,7 @@ impl TransportProvider for BleTransport {
 
     async fn link_quality(&self, peer: &TransportAddr) -> Option<LinkQuality> {
         let _device_id = match peer {
-            TransportAddr::Ble { device_id, .. } => device_id,
+            TransportAddr::Ble { mac, .. } => mac,
             _ => return None,
         };
 
@@ -3992,7 +3996,7 @@ mod tests {
     async fn test_ble_transport_send_requires_connection() {
         if let Ok(transport) = BleTransport::new().await {
             let device_id = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
-            let dest = TransportAddr::ble(device_id, None);
+            let dest = TransportAddr::ble(device_id, DEFAULT_BLE_L2CAP_PSM);
             let data = b"Hello BLE";
 
             // Send without connection should fail
@@ -4024,7 +4028,7 @@ mod tests {
     async fn test_ble_transport_send_size_check() {
         if let Ok(transport) = BleTransport::new().await {
             let device_id = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
-            let dest = TransportAddr::ble(device_id, None);
+            let dest = TransportAddr::ble(device_id, DEFAULT_BLE_L2CAP_PSM);
 
             // Add device and connect
             let device = DiscoveredDevice::new(device_id);
@@ -4080,7 +4084,7 @@ mod tests {
     async fn test_ble_transport_send_offline() {
         if let Ok(transport) = BleTransport::new().await {
             let device_id = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
-            let dest = TransportAddr::ble(device_id, None);
+            let dest = TransportAddr::ble(device_id, DEFAULT_BLE_L2CAP_PSM);
 
             // Shutdown transport
             transport.shutdown().await.unwrap();

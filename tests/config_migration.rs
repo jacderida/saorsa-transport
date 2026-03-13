@@ -19,6 +19,10 @@ use saorsa_transport::transport::{TransportAddr, TransportType};
 use saorsa_transport::{NodeConfig, P2pConfig};
 use std::net::SocketAddr;
 
+/// Default BLE L2CAP PSM value (matches `saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM`
+/// which is gated behind the `ble` feature).
+const DEFAULT_BLE_L2CAP_PSM: u16 = 0x0080;
+
 // ============================================================================
 // P2pConfig Migration Tests
 // ============================================================================
@@ -26,7 +30,7 @@ use std::net::SocketAddr;
 #[test]
 fn test_p2p_config_old_socket_addr_approach() {
     // Scenario 1: Old code using SocketAddr directly
-    // The Into trait should auto-convert to TransportAddr::Udp
+    // The Into trait should auto-convert to TransportAddr::Quic
 
     let bind_socket: SocketAddr = "127.0.0.1:9000".parse().expect("valid addr");
     let peer1: SocketAddr = "127.0.0.1:9001".parse().expect("valid addr");
@@ -44,19 +48,19 @@ fn test_p2p_config_old_socket_addr_approach() {
     assert_eq!(
         config.bind_addr.as_ref().unwrap().as_socket_addr(),
         Some(bind_socket),
-        "bind_addr should preserve SocketAddr via TransportAddr::Udp"
+        "bind_addr should preserve SocketAddr via TransportAddr::Quic"
     );
     assert_eq!(
         config.bind_addr.as_ref().unwrap().transport_type(),
-        TransportType::Udp
+        TransportType::Quic
     );
 
     // Verify known_peers were auto-converted
     assert_eq!(config.known_peers.len(), 2);
     assert_eq!(config.known_peers[0].as_socket_addr(), Some(peer1));
     assert_eq!(config.known_peers[1].as_socket_addr(), Some(peer2));
-    assert_eq!(config.known_peers[0].transport_type(), TransportType::Udp);
-    assert_eq!(config.known_peers[1].transport_type(), TransportType::Udp);
+    assert_eq!(config.known_peers[0].transport_type(), TransportType::Quic);
+    assert_eq!(config.known_peers[1].transport_type(), TransportType::Quic);
 }
 
 #[test]
@@ -64,9 +68,9 @@ fn test_p2p_config_new_transport_addr_approach() {
     // Scenario 2: New code using TransportAddr explicitly
     // This enables multi-transport functionality
 
-    let bind_addr = TransportAddr::Udp("0.0.0.0:9000".parse().expect("valid addr"));
-    let udp_peer = TransportAddr::Udp("192.168.1.1:9000".parse().expect("valid addr"));
-    let ble_peer = TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None);
+    let bind_addr = TransportAddr::Quic("0.0.0.0:9000".parse().expect("valid addr"));
+    let udp_peer = TransportAddr::Quic("192.168.1.1:9000".parse().expect("valid addr"));
+    let ble_peer = TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], DEFAULT_BLE_L2CAP_PSM);
 
     let config = P2pConfig::builder()
         .bind_addr(bind_addr.clone())
@@ -84,7 +88,7 @@ fn test_p2p_config_new_transport_addr_approach() {
     assert_eq!(config.known_peers[1], ble_peer);
 
     // Verify transport types
-    assert_eq!(config.known_peers[0].transport_type(), TransportType::Udp);
+    assert_eq!(config.known_peers[0].transport_type(), TransportType::Quic);
     assert_eq!(config.known_peers[1].transport_type(), TransportType::Ble);
 
     // Verify BLE peer has no socket addr
@@ -107,8 +111,8 @@ fn test_p2p_config_ipv6_addresses() {
 
     // New approach (explicit)
     let config_new = P2pConfig::builder()
-        .bind_addr(TransportAddr::Udp(ipv6_bind))
-        .known_peer(TransportAddr::Udp(ipv6_peer))
+        .bind_addr(TransportAddr::Quic(ipv6_bind))
+        .known_peer(TransportAddr::Quic(ipv6_peer))
         .build()
         .expect("Failed to build config");
 
@@ -148,7 +152,7 @@ fn test_p2p_config_known_peers_iterator() {
             "Peer {} should match",
             i
         );
-        assert_eq!(config.known_peers[i].transport_type(), TransportType::Udp);
+        assert_eq!(config.known_peers[i].transport_type(), TransportType::Quic);
     }
 }
 
@@ -185,9 +189,9 @@ fn test_node_config_old_socket_addr_approach() {
 fn test_node_config_new_transport_addr_approach() {
     // Verify NodeConfig supports explicit TransportAddr
 
-    let bind_addr = TransportAddr::Udp("0.0.0.0:0".parse().expect("valid addr"));
-    let udp_peer = TransportAddr::Udp("192.168.1.100:9000".parse().expect("valid addr"));
-    let ble_peer = TransportAddr::ble([0x11, 0x22, 0x33, 0x44, 0x55, 0x66], None);
+    let bind_addr = TransportAddr::Quic("0.0.0.0:0".parse().expect("valid addr"));
+    let udp_peer = TransportAddr::Quic("192.168.1.100:9000".parse().expect("valid addr"));
+    let ble_peer = TransportAddr::ble([0x11, 0x22, 0x33, 0x44, 0x55, 0x66], DEFAULT_BLE_L2CAP_PSM);
 
     let config = NodeConfig::builder()
         .bind_addr(bind_addr.clone())
@@ -202,7 +206,7 @@ fn test_node_config_new_transport_addr_approach() {
     assert_eq!(config.known_peers[1], ble_peer);
 
     // Verify transport types
-    assert_eq!(config.known_peers[0].transport_type(), TransportType::Udp);
+    assert_eq!(config.known_peers[0].transport_type(), TransportType::Quic);
     assert_eq!(config.known_peers[1].transport_type(), TransportType::Ble);
 }
 
@@ -211,9 +215,10 @@ fn test_node_config_mixed_transport_types() {
     // Scenario 3: NodeConfig with heterogeneous transport addresses
     // This validates the core multi-transport capability
 
-    let udp_ipv4 = TransportAddr::Udp("192.168.1.1:9000".parse().expect("valid addr"));
-    let udp_ipv6 = TransportAddr::Udp("[::1]:9001".parse().expect("valid addr"));
-    let ble_device = TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None);
+    let udp_ipv4 = TransportAddr::Quic("192.168.1.1:9000".parse().expect("valid addr"));
+    let udp_ipv6 = TransportAddr::Quic("[::1]:9001".parse().expect("valid addr"));
+    let ble_device =
+        TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], DEFAULT_BLE_L2CAP_PSM);
     let serial_port = TransportAddr::serial("/dev/ttyUSB0");
 
     let config = NodeConfig::builder()
@@ -231,8 +236,8 @@ fn test_node_config_mixed_transport_types() {
     assert_eq!(config.known_peers[3], serial_port);
 
     // Verify transport types
-    assert_eq!(config.known_peers[0].transport_type(), TransportType::Udp);
-    assert_eq!(config.known_peers[1].transport_type(), TransportType::Udp);
+    assert_eq!(config.known_peers[0].transport_type(), TransportType::Quic);
+    assert_eq!(config.known_peers[1].transport_type(), TransportType::Quic);
     assert_eq!(config.known_peers[2].transport_type(), TransportType::Ble);
     assert_eq!(
         config.known_peers[3].transport_type(),
@@ -293,7 +298,7 @@ fn test_to_nat_config_preserves_transport_addrs() {
 
     let nat_config = p2p_config.to_nat_config();
 
-    // NatTraversalConfig should extract SocketAddr from TransportAddr::Udp
+    // NatTraversalConfig should extract SocketAddr from TransportAddr::Quic
     assert_eq!(nat_config.bind_addr, Some(bind_addr));
     assert_eq!(nat_config.known_peers.len(), 2);
     assert!(nat_config.known_peers.contains(&peer1));
@@ -306,7 +311,7 @@ fn test_mixed_config_to_nat_config_filtering() {
     // since NatTraversalConfig only works with SocketAddr
 
     let udp_peer: SocketAddr = "192.168.1.1:9000".parse().expect("valid addr");
-    let ble_peer = TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None);
+    let ble_peer = TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], DEFAULT_BLE_L2CAP_PSM);
 
     let p2p_config = P2pConfig::builder()
         .known_peer(udp_peer)
@@ -355,7 +360,7 @@ fn test_ipv4_mapped_ipv6_address() {
         "IPv4-mapped IPv6 should be preserved"
     );
     assert_eq!(config.known_peers[0].as_socket_addr(), Some(ipv4_mapped));
-    assert_eq!(config.known_peers[0].transport_type(), TransportType::Udp);
+    assert_eq!(config.known_peers[0].transport_type(), TransportType::Quic);
 }
 
 #[test]
@@ -467,7 +472,7 @@ fn test_ipv6_with_scope_id() {
     assert_eq!(config.known_peers[0].as_socket_addr(), Some(ipv6_scoped));
 
     // Verify it's recognized as UDP transport
-    assert_eq!(config.known_peers[0].transport_type(), TransportType::Udp);
+    assert_eq!(config.known_peers[0].transport_type(), TransportType::Quic);
 }
 
 // ============================================================================
@@ -510,7 +515,7 @@ fn test_new_code_multi_transport() {
 
     // Pattern 1: Explicit TransportAddr for clarity
     let _config1 = P2pConfig::builder()
-        .bind_addr(TransportAddr::Udp(
+        .bind_addr(TransportAddr::Quic(
             "0.0.0.0:9000".parse::<SocketAddr>().unwrap(),
         ))
         .build()
@@ -518,18 +523,18 @@ fn test_new_code_multi_transport() {
 
     // Pattern 2: Mixed transport types in known_peers
     let _config2 = NodeConfig::builder()
-        .known_peer(TransportAddr::Udp(
+        .known_peer(TransportAddr::Quic(
             "192.168.1.1:9000".parse::<SocketAddr>().unwrap(),
         ))
         .known_peer(TransportAddr::ble(
             [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            None,
+            DEFAULT_BLE_L2CAP_PSM,
         ))
         .known_peer(TransportAddr::serial("/dev/ttyUSB0"))
         .build();
 
     // Pattern 3: LoRa and other constrained transports
     let _config3 = NodeConfig::builder()
-        .known_peer(TransportAddr::lora([0x01, 0x02, 0x03, 0x04]))
+        .known_peer(TransportAddr::lora([0x01, 0x02, 0x03, 0x04], 868_000_000))
         .build();
 }

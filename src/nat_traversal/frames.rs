@@ -388,7 +388,7 @@ pub struct AddAddress {
 }
 
 impl AddAddress {
-    /// Create a new ADD_ADDRESS frame for a UDP address
+    /// Create a new ADD_ADDRESS frame for a QUIC (UDP-based) address
     ///
     /// This is the most common case and maintains backward compatibility.
     /// No capability flags are included by default.
@@ -396,8 +396,8 @@ impl AddAddress {
         Self {
             sequence,
             priority,
-            transport_type: TransportType::Udp,
-            address: TransportAddr::Udp(socket_addr),
+            transport_type: TransportType::Quic,
+            address: TransportAddr::Quic(socket_addr),
             capabilities: None,
         }
     }
@@ -499,14 +499,21 @@ pub struct RemoveAddress {
     pub sequence: u64,
 }
 
-/// Wire format transport type values
-const TRANSPORT_TYPE_UDP: u64 = 0;
+/// Wire format transport type values.
+///
+/// Note: `QUIC` reuses the legacy value `0` (was `UDP` when QUIC-over-UDP was
+/// the only IP-based variant). New types start from `7` to avoid collision.
+const TRANSPORT_TYPE_QUIC: u64 = 0;
 const TRANSPORT_TYPE_BLE: u64 = 1;
 const TRANSPORT_TYPE_LORA: u64 = 2;
 const TRANSPORT_TYPE_SERIAL: u64 = 3;
 const TRANSPORT_TYPE_AX25: u64 = 4;
 const TRANSPORT_TYPE_I2P: u64 = 5;
 const TRANSPORT_TYPE_YGGDRASIL: u64 = 6;
+const TRANSPORT_TYPE_TCP: u64 = 7;
+const TRANSPORT_TYPE_BLUETOOTH: u64 = 8;
+const TRANSPORT_TYPE_LORAWAN: u64 = 9;
+const TRANSPORT_TYPE_RAW_UDP: u64 = 10;
 
 impl Codec for AddAddress {
     fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
@@ -525,24 +532,28 @@ impl Codec for AddAddress {
         let transport_type_raw = if buf.remaining() > 0 {
             VarInt::decode(buf)?.into_inner()
         } else {
-            TRANSPORT_TYPE_UDP
+            TRANSPORT_TYPE_QUIC
         };
 
         let transport_type = match transport_type_raw {
-            TRANSPORT_TYPE_UDP => TransportType::Udp,
+            TRANSPORT_TYPE_QUIC => TransportType::Quic,
             TRANSPORT_TYPE_BLE => TransportType::Ble,
             TRANSPORT_TYPE_LORA => TransportType::LoRa,
             TRANSPORT_TYPE_SERIAL => TransportType::Serial,
             TRANSPORT_TYPE_AX25 => TransportType::Ax25,
             TRANSPORT_TYPE_I2P => TransportType::I2p,
             TRANSPORT_TYPE_YGGDRASIL => TransportType::Yggdrasil,
-            _ => TransportType::Udp, // Unknown types fall back to UDP
+            TRANSPORT_TYPE_TCP => TransportType::Tcp,
+            TRANSPORT_TYPE_BLUETOOTH => TransportType::Bluetooth,
+            TRANSPORT_TYPE_LORAWAN => TransportType::LoRaWan,
+            TRANSPORT_TYPE_RAW_UDP => TransportType::Udp,
+            _ => TransportType::Quic, // Unknown types fall back to QUIC
         };
 
         // Decode transport-specific address
         let address = match transport_type {
-            TransportType::Udp => {
-                // UDP: address type (1 byte) + IP (4 or 16 bytes) + port (2 bytes)
+            TransportType::Quic | TransportType::Tcp | TransportType::Udp => {
+                // IP-based: address type (1 byte) + IP (4 or 16 bytes) + port (2 bytes)
                 if buf.remaining() < 1 {
                     return Err(coding::UnexpectedEnd);
                 }
@@ -571,53 +582,50 @@ impl Codec for AddAddress {
                     return Err(coding::UnexpectedEnd);
                 }
                 let port = buf.get_u16();
-                TransportAddr::Udp(SocketAddr::new(ip, port))
+                let sock = SocketAddr::new(ip, port);
+                match transport_type {
+                    TransportType::Quic => TransportAddr::Quic(sock),
+                    TransportType::Tcp => TransportAddr::Tcp(sock),
+                    _ => TransportAddr::Udp(sock),
+                }
             }
-            TransportType::Ble => {
-                // BLE: device ID (6 bytes) + optional service UUID flag (1 byte) + UUID (16 bytes if present)
-                if buf.remaining() < 6 {
+            TransportType::Bluetooth => {
+                // Bluetooth: MAC (6 bytes) + channel (1 byte)
+                if buf.remaining() < 7 {
                     return Err(coding::UnexpectedEnd);
                 }
-                let mut device_id = [0u8; 6];
-                buf.copy_to_slice(&mut device_id);
-
-                let service_uuid = if buf.remaining() > 0 {
-                    let has_uuid = buf.get_u8();
-                    if has_uuid == 1 && buf.remaining() >= 16 {
-                        let mut uuid = [0u8; 16];
-                        buf.copy_to_slice(&mut uuid);
-                        Some(uuid)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                TransportAddr::Ble {
-                    device_id,
-                    service_uuid,
-                }
+                let mut mac = [0u8; 6];
+                buf.copy_to_slice(&mut mac);
+                let channel = buf.get_u8();
+                TransportAddr::Bluetooth { mac, channel }
             }
-            TransportType::LoRa => {
-                // LoRa: device address (4 bytes) + SF (1 byte) + BW (2 bytes) + CR (1 byte)
+            TransportType::Ble => {
+                // BLE: MAC (6 bytes) + PSM (2 bytes)
                 if buf.remaining() < 8 {
                     return Err(coding::UnexpectedEnd);
                 }
-                let mut device_addr = [0u8; 4];
-                buf.copy_to_slice(&mut device_addr);
-                let spreading_factor = buf.get_u8();
-                let bandwidth_khz = buf.get_u16();
-                let coding_rate = buf.get_u8();
-
-                TransportAddr::LoRa {
-                    device_addr,
-                    params: crate::transport::LoRaParams {
-                        spreading_factor,
-                        bandwidth_khz,
-                        coding_rate,
-                    },
+                let mut mac = [0u8; 6];
+                buf.copy_to_slice(&mut mac);
+                let psm = buf.get_u16();
+                TransportAddr::Ble { mac, psm }
+            }
+            TransportType::LoRa => {
+                // LoRa: device address (4 bytes) + freq_hz (4 bytes)
+                if buf.remaining() < 8 {
+                    return Err(coding::UnexpectedEnd);
                 }
+                let mut dev_addr = [0u8; 4];
+                buf.copy_to_slice(&mut dev_addr);
+                let freq_hz = buf.get_u32();
+                TransportAddr::LoRa { dev_addr, freq_hz }
+            }
+            TransportType::LoRaWan => {
+                // LoRaWAN: dev_eui (8 bytes)
+                if buf.remaining() < 8 {
+                    return Err(coding::UnexpectedEnd);
+                }
+                let dev_eui = buf.get_u64();
+                TransportAddr::LoRaWan { dev_eui }
             }
             TransportType::Serial => {
                 // Serial: port name length (VarInt) + port name (UTF-8 string)
@@ -635,7 +643,7 @@ impl Codec for AddAddress {
                 // Other transports: fall back to raw bytes storage
                 // For now, skip remaining bytes and return a placeholder
                 // TODO: Implement proper decoding for these transport types
-                TransportAddr::Udp(SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0))
+                TransportAddr::Quic(SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0))
             }
         };
 
@@ -673,9 +681,13 @@ impl Codec for AddAddress {
 
         // Encode transport type (VarInt)
         let transport_type_raw = match self.transport_type {
-            TransportType::Udp => TRANSPORT_TYPE_UDP,
+            TransportType::Quic => TRANSPORT_TYPE_QUIC,
+            TransportType::Tcp => TRANSPORT_TYPE_TCP,
+            TransportType::Udp => TRANSPORT_TYPE_RAW_UDP,
+            TransportType::Bluetooth => TRANSPORT_TYPE_BLUETOOTH,
             TransportType::Ble => TRANSPORT_TYPE_BLE,
             TransportType::LoRa => TRANSPORT_TYPE_LORA,
+            TransportType::LoRaWan => TRANSPORT_TYPE_LORAWAN,
             TransportType::Serial => TRANSPORT_TYPE_SERIAL,
             TransportType::Ax25 => TRANSPORT_TYPE_AX25,
             TransportType::I2p => TRANSPORT_TYPE_I2P,
@@ -687,7 +699,9 @@ impl Codec for AddAddress {
 
         // Encode transport-specific address
         match &self.address {
-            TransportAddr::Udp(socket_addr) => {
+            TransportAddr::Quic(socket_addr)
+            | TransportAddr::Tcp(socket_addr)
+            | TransportAddr::Udp(socket_addr) => {
                 match socket_addr.ip() {
                     IpAddr::V4(ipv4) => {
                         buf.put_u8(4); // IPv4 type
@@ -700,29 +714,20 @@ impl Codec for AddAddress {
                 }
                 buf.put_u16(socket_addr.port());
             }
-            TransportAddr::Ble {
-                device_id,
-                service_uuid,
-            } => {
-                buf.put_slice(device_id);
-                match service_uuid {
-                    Some(uuid) => {
-                        buf.put_u8(1); // Has UUID
-                        buf.put_slice(uuid);
-                    }
-                    None => {
-                        buf.put_u8(0); // No UUID
-                    }
-                }
+            TransportAddr::Bluetooth { mac, channel } => {
+                buf.put_slice(mac);
+                buf.put_u8(*channel);
             }
-            TransportAddr::LoRa {
-                device_addr,
-                params,
-            } => {
-                buf.put_slice(device_addr);
-                buf.put_u8(params.spreading_factor);
-                buf.put_u16(params.bandwidth_khz);
-                buf.put_u8(params.coding_rate);
+            TransportAddr::Ble { mac, psm } => {
+                buf.put_slice(mac);
+                buf.put_u16(*psm);
+            }
+            TransportAddr::LoRa { dev_addr, freq_hz } => {
+                buf.put_slice(dev_addr);
+                buf.put_u32(*freq_hz);
+            }
+            TransportAddr::LoRaWan { dev_eui } => {
+                buf.put_u64(*dev_eui);
             }
             TransportAddr::Serial { port } => {
                 let name_bytes = port.as_bytes();
@@ -948,7 +953,7 @@ mod tests {
 
         assert_eq!(decoded.sequence, 42);
         assert_eq!(decoded.priority, 100);
-        assert_eq!(decoded.transport_type, TransportType::Udp);
+        assert_eq!(decoded.transport_type, TransportType::Quic);
         assert_eq!(decoded.socket_addr(), Some(test_socket_addr_v4()));
     }
 
@@ -962,21 +967,14 @@ mod tests {
         let decoded = AddAddress::decode(&mut buf.freeze()).expect("decode failed");
 
         assert_eq!(decoded.sequence, 1);
-        assert_eq!(decoded.transport_type, TransportType::Udp);
+        assert_eq!(decoded.transport_type, TransportType::Quic);
         assert_eq!(decoded.socket_addr(), Some(test_socket_addr_v6()));
     }
 
     #[test]
     fn test_add_address_ble_roundtrip() {
-        let device_id = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
-        let original = AddAddress::new(
-            10,
-            200,
-            TransportAddr::Ble {
-                device_id,
-                service_uuid: None,
-            },
-        );
+        let mac = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
+        let original = AddAddress::new(10, 200, TransportAddr::Ble { mac, psm: 128 });
 
         let mut buf = BytesMut::new();
         Codec::encode(&original, &mut buf);
@@ -988,45 +986,12 @@ mod tests {
         assert_eq!(decoded.transport_type, TransportType::Ble);
 
         if let TransportAddr::Ble {
-            device_id: decoded_id,
-            service_uuid,
+            mac: decoded_mac,
+            psm,
         } = decoded.address
         {
-            assert_eq!(decoded_id, device_id);
-            assert!(service_uuid.is_none());
-        } else {
-            panic!("Expected BLE address");
-        }
-    }
-
-    #[test]
-    fn test_add_address_ble_with_uuid_roundtrip() {
-        let device_id = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
-        let service_uuid = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
-            0x0F, 0x10,
-        ];
-        let original = AddAddress::new(
-            5,
-            300,
-            TransportAddr::Ble {
-                device_id,
-                service_uuid: Some(service_uuid),
-            },
-        );
-
-        let mut buf = BytesMut::new();
-        Codec::encode(&original, &mut buf);
-
-        let decoded = AddAddress::decode(&mut buf.freeze()).expect("decode failed");
-
-        if let TransportAddr::Ble {
-            device_id: decoded_id,
-            service_uuid: decoded_uuid,
-        } = decoded.address
-        {
-            assert_eq!(decoded_id, device_id);
-            assert_eq!(decoded_uuid, Some(service_uuid));
+            assert_eq!(decoded_mac, mac);
+            assert_eq!(psm, 128);
         } else {
             panic!("Expected BLE address");
         }
@@ -1034,18 +999,13 @@ mod tests {
 
     #[test]
     fn test_add_address_lora_roundtrip() {
-        let device_addr = [0xDE, 0xAD, 0xBE, 0xEF];
-        let params = crate::transport::LoRaParams {
-            spreading_factor: 10,
-            bandwidth_khz: 250,
-            coding_rate: 6,
-        };
+        let dev_addr = [0xDE, 0xAD, 0xBE, 0xEF];
         let original = AddAddress::new(
             99,
             500,
             TransportAddr::LoRa {
-                device_addr,
-                params: params.clone(),
+                dev_addr,
+                freq_hz: 868_000_000,
             },
         );
 
@@ -1058,14 +1018,12 @@ mod tests {
         assert_eq!(decoded.transport_type, TransportType::LoRa);
 
         if let TransportAddr::LoRa {
-            device_addr: decoded_addr,
-            params: decoded_params,
+            dev_addr: decoded_addr,
+            freq_hz,
         } = decoded.address
         {
-            assert_eq!(decoded_addr, device_addr);
-            assert_eq!(decoded_params.spreading_factor, 10);
-            assert_eq!(decoded_params.bandwidth_khz, 250);
-            assert_eq!(decoded_params.coding_rate, 6);
+            assert_eq!(decoded_addr, dev_addr);
+            assert_eq!(freq_hz, 868_000_000);
         } else {
             panic!("Expected LoRa address");
         }
@@ -1107,8 +1065,8 @@ mod tests {
             2,
             100,
             TransportAddr::Ble {
-                device_id: [0; 6],
-                service_uuid: None,
+                mac: [0; 6],
+                psm: 128,
             },
         );
         assert_eq!(ble_frame.socket_addr(), None);
@@ -1168,10 +1126,14 @@ mod tests {
     #[test]
     fn test_transport_type_wire_values() {
         // Verify our wire format constants
-        assert_eq!(TRANSPORT_TYPE_UDP, 0);
+        assert_eq!(TRANSPORT_TYPE_QUIC, 0);
         assert_eq!(TRANSPORT_TYPE_BLE, 1);
         assert_eq!(TRANSPORT_TYPE_LORA, 2);
         assert_eq!(TRANSPORT_TYPE_SERIAL, 3);
+        assert_eq!(TRANSPORT_TYPE_TCP, 7);
+        assert_eq!(TRANSPORT_TYPE_BLUETOOTH, 8);
+        assert_eq!(TRANSPORT_TYPE_LORAWAN, 9);
+        assert_eq!(TRANSPORT_TYPE_RAW_UDP, 10);
     }
 
     #[test]
@@ -1366,8 +1328,12 @@ mod tests {
     #[test]
     fn test_add_address_with_capabilities_roundtrip() {
         let caps = CapabilityFlags::broadband();
-        let original =
-            AddAddress::with_capabilities(42, 100, TransportAddr::Udp(test_socket_addr_v4()), caps);
+        let original = AddAddress::with_capabilities(
+            42,
+            100,
+            TransportAddr::Quic(test_socket_addr_v4()),
+            caps,
+        );
 
         assert!(original.has_capabilities());
         assert_eq!(original.capability_flags(), Some(caps));
@@ -1411,8 +1377,8 @@ mod tests {
             10,
             200,
             TransportAddr::Ble {
-                device_id: [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC],
-                service_uuid: None,
+                mac: [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC],
+                psm: 128,
             },
             &caps,
         );
@@ -1437,16 +1403,9 @@ mod tests {
     #[test]
     fn test_add_address_ble_with_capabilities_roundtrip() {
         let caps = CapabilityFlags::ble();
-        let device_id = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
-        let original = AddAddress::with_capabilities(
-            5,
-            300,
-            TransportAddr::Ble {
-                device_id,
-                service_uuid: None,
-            },
-            caps,
-        );
+        let mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        let original =
+            AddAddress::with_capabilities(5, 300, TransportAddr::Ble { mac, psm: 128 }, caps);
 
         let mut buf = BytesMut::new();
         Codec::encode(&original, &mut buf);
@@ -1463,18 +1422,13 @@ mod tests {
     #[test]
     fn test_add_address_lora_with_capabilities_roundtrip() {
         let caps = CapabilityFlags::lora_long_range();
-        let device_addr = [0xDE, 0xAD, 0xBE, 0xEF];
-        let params = crate::transport::LoRaParams {
-            spreading_factor: 12,
-            bandwidth_khz: 125,
-            coding_rate: 5,
-        };
+        let dev_addr = [0xDE, 0xAD, 0xBE, 0xEF];
         let original = AddAddress::with_capabilities(
             99,
             500,
             TransportAddr::LoRa {
-                device_addr,
-                params,
+                dev_addr,
+                freq_hz: 868_000_000,
             },
             caps,
         );

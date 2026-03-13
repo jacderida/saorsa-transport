@@ -8,6 +8,10 @@
 
 use saorsa_transport::transport::TransportAddr;
 use saorsa_transport::{P2pConfig, P2pEndpoint, P2pEvent};
+
+/// Default BLE L2CAP PSM (Protocol/Service Multiplexer) value.
+/// Defined locally because the canonical constant is behind the `ble` feature gate.
+const DEFAULT_BLE_L2CAP_PSM: u16 = 0x0080;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
@@ -167,8 +171,8 @@ fn test_multi_transport_events() {
     // BLE event
     let ble_event = P2pEvent::PeerConnected {
         addr: TransportAddr::Ble {
-            device_id: ble_device,
-            service_uuid: None,
+            mac: ble_device,
+            psm: DEFAULT_BLE_L2CAP_PSM,
         },
         public_key: Some(vec![0x02; 32]),
         side: saorsa_transport::Side::Server,
@@ -201,8 +205,8 @@ fn test_transport_aware_event_handling() {
         },
         P2pEvent::PeerConnected {
             addr: TransportAddr::Ble {
-                device_id: [0xaa; 6],
-                service_uuid: None,
+                mac: [0xaa; 6],
+                psm: DEFAULT_BLE_L2CAP_PSM,
             },
             public_key: Some(vec![0x02; 32]),
             side: saorsa_transport::Side::Server,

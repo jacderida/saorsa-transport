@@ -319,8 +319,8 @@ mod tests {
         let handle = transport.handle();
 
         let addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
 
         let result = handle.connect(&addr);
@@ -364,8 +364,8 @@ mod tests {
 
         // Both handles should see the same state
         let addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
 
         let _ = handle1.connect(&addr);

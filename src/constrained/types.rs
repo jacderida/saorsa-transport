@@ -310,7 +310,7 @@ impl From<ConstrainedAddr> for TransportAddr {
 
 impl From<SocketAddr> for ConstrainedAddr {
     fn from(addr: SocketAddr) -> Self {
-        Self(TransportAddr::Udp(addr))
+        Self(TransportAddr::Quic(addr))
     }
 }
 
@@ -403,8 +403,8 @@ mod tests {
     #[test]
     fn test_constrained_addr_from_transport() {
         let ble_addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
         let constrained = ConstrainedAddr::from(ble_addr.clone());
         assert!(constrained.is_constrained_transport());
@@ -418,15 +418,15 @@ mod tests {
         assert!(!constrained.is_constrained_transport());
         assert_eq!(
             *constrained.transport_addr(),
-            TransportAddr::Udp("127.0.0.1:8080".parse().unwrap())
+            TransportAddr::Quic("127.0.0.1:8080".parse().unwrap())
         );
     }
 
     #[test]
     fn test_constrained_addr_into_transport() {
         let ble_addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
         let constrained = ConstrainedAddr::new(ble_addr.clone());
         let back: TransportAddr = constrained.into();
@@ -437,21 +437,21 @@ mod tests {
     fn test_constrained_addr_transport_detection() {
         // BLE is constrained
         let ble = ConstrainedAddr::new(TransportAddr::Ble {
-            device_id: [0; 6],
-            service_uuid: None,
+            mac: [0; 6],
+            psm: 128,
         });
         assert!(ble.is_constrained_transport());
 
         // LoRa is constrained
         let lora = ConstrainedAddr::new(TransportAddr::LoRa {
-            device_addr: [0; 4],
-            params: crate::transport::LoRaParams::default(),
+            dev_addr: [0; 4],
+            freq_hz: 868_000_000,
         });
         assert!(lora.is_constrained_transport());
 
-        // UDP is not constrained (uses QUIC)
-        let udp = ConstrainedAddr::new(TransportAddr::Udp("0.0.0.0:0".parse().unwrap()));
-        assert!(!udp.is_constrained_transport());
+        // QUIC is not constrained
+        let quic = ConstrainedAddr::new(TransportAddr::Quic("0.0.0.0:0".parse().unwrap()));
+        assert!(!quic.is_constrained_transport());
     }
 
     #[test]

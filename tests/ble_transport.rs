@@ -26,9 +26,9 @@
 use saorsa_transport::transport::{
     BleConfig, BleConnection, BleConnectionState, BleTransport, CCCD_DISABLE,
     CCCD_ENABLE_INDICATION, CCCD_ENABLE_NOTIFICATION, CCCD_UUID, CharacteristicHandle,
-    ConnectionPoolStats, DiscoveredDevice, RX_CHARACTERISTIC_UUID, ResumeToken,
-    SAORSA_TRANSPORT_SERVICE_UUID, ScanState, TX_CHARACTERISTIC_UUID, TransportCapabilities,
-    TransportProvider, TransportType,
+    ConnectionPoolStats, DEFAULT_BLE_L2CAP_PSM, DiscoveredDevice, RX_CHARACTERISTIC_UUID,
+    ResumeToken, SAORSA_TRANSPORT_SERVICE_UUID, ScanState, TX_CHARACTERISTIC_UUID,
+    TransportCapabilities, TransportProvider, TransportType,
 };
 use std::time::Duration;
 
@@ -622,19 +622,16 @@ fn test_ble_uses_constrained_engine() {
 fn test_ble_address_format() {
     use saorsa_transport::transport::TransportAddr;
 
-    // Create a BLE address
-    let device_id = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
-    let addr = TransportAddr::ble(device_id, None);
+    // Create a BLE address with default PSM
+    let mac = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
+    let addr = TransportAddr::ble(mac, DEFAULT_BLE_L2CAP_PSM);
 
     assert_eq!(addr.transport_type(), TransportType::Ble);
 
-    // With service UUID
-    let service_uuid = [
-        0xa0, 0x3d, 0x7e, 0x9f, 0x0b, 0xca, 0x12, 0xfe, 0xa6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x01,
-    ];
-    let addr_with_service = TransportAddr::ble(device_id, Some(service_uuid));
-    assert_eq!(addr_with_service.transport_type(), TransportType::Ble);
+    // With a custom PSM value
+    let custom_psm: u16 = 0x00A0;
+    let addr_custom_psm = TransportAddr::ble(mac, custom_psm);
+    assert_eq!(addr_custom_psm.transport_type(), TransportType::Ble);
 }
 
 // ============================================================================

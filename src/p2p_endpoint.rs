@@ -327,11 +327,11 @@ impl Default for EndpointStats {
 ///         P2pEvent::PeerConnected { peer_id, addr, side } => {
 ///             // Handle different transport types
 ///             match addr {
-///                 TransportAddr::Udp(socket_addr) => {
+///                 TransportAddr::Quic(socket_addr) => {
 ///                     println!("UDP connection from {socket_addr}");
 ///                 },
-///                 TransportAddr::Ble { device_id, .. } => {
-///                     println!("BLE connection from {:?}", device_id);
+///                 TransportAddr::Ble { mac, .. } => {
+///                     println!("BLE connection from {:?}", mac);
 ///                 },
 ///                 _ => println!("Other transport: {addr}"),
 ///             }
@@ -402,7 +402,7 @@ pub enum P2pEvent {
     /// visible address. For UDP connections, use `addr.as_socket_addr()` to get
     /// the [`SocketAddr`].
     ExternalAddressDiscovered {
-        /// Discovered external transport address (typically TransportAddr::Udp for NAT traversal)
+        /// Discovered external transport address (typically TransportAddr::Quic for NAT traversal)
         addr: TransportAddr,
     },
 
@@ -606,7 +606,7 @@ impl P2pEndpoint {
 
                         // Broadcast event with connection direction
                         let _ = event_tx.send(P2pEvent::PeerConnected {
-                            addr: TransportAddr::Udp(*remote_address),
+                            addr: TransportAddr::Quic(*remote_address),
                             public_key: public_key.clone(),
                             side: *side,
                         });
@@ -631,7 +631,7 @@ impl P2pEndpoint {
                     NatTraversalEvent::ExternalAddressDiscovered { address, .. } => {
                         info!("External address discovered: {}", address);
                         let _ = event_tx.send(P2pEvent::ExternalAddressDiscovered {
-                            addr: TransportAddr::Udp(*address),
+                            addr: TransportAddr::Quic(*address),
                         });
                     }
                     _ => {}
@@ -895,7 +895,7 @@ impl P2pEndpoint {
         // v0.2: Peer is authenticated via TLS (ML-DSA-65) during handshake
         let peer_conn = PeerConnection {
             public_key: remote_public_key.clone(),
-            remote_addr: TransportAddr::Udp(addr),
+            remote_addr: TransportAddr::Quic(addr),
             authenticated: true, // TLS handles authentication
             connected_at: Instant::now(),
             last_activity: Instant::now(),
@@ -926,7 +926,7 @@ impl P2pEndpoint {
 
         // Broadcast event (we initiated the connection = Client side)
         let _ = self.event_tx.send(P2pEvent::PeerConnected {
-            addr: TransportAddr::Udp(addr),
+            addr: TransportAddr::Quic(addr),
             public_key: remote_public_key,
             side: Side::Client,
         });
@@ -945,13 +945,13 @@ impl P2pEndpoint {
     /// use saorsa_transport::transport::TransportAddr;
     ///
     /// // Connect via UDP (uses QUIC)
-    /// let udp_addr = TransportAddr::Udp("192.168.1.100:9000".parse()?);
+    /// let udp_addr = TransportAddr::Quic("192.168.1.100:9000".parse()?);
     /// let conn = endpoint.connect_transport(&udp_addr, None).await?;
     ///
     /// // Connect via BLE (uses Constrained engine)
     /// let ble_addr = TransportAddr::Ble {
-    ///     device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-    ///     service_uuid: None,
+    ///     mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+    ///     psm: 128,
     /// };
     /// let conn = endpoint.connect_transport(&ble_addr, None).await?;
     /// ```
@@ -1626,7 +1626,7 @@ impl P2pEndpoint {
 
         let peer_conn = PeerConnection {
             public_key: remote_public_key.clone(),
-            remote_addr: TransportAddr::Udp(addr),
+            remote_addr: TransportAddr::Quic(addr),
             authenticated: true,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
@@ -1652,7 +1652,7 @@ impl P2pEndpoint {
         }
 
         let _ = self.event_tx.send(P2pEvent::PeerConnected {
-            addr: TransportAddr::Udp(addr),
+            addr: TransportAddr::Quic(addr),
             public_key: remote_public_key,
             side: Side::Client,
         });
@@ -1700,7 +1700,7 @@ impl P2pEndpoint {
                     } if remote_address == target => {
                         let peer_conn = PeerConnection {
                             public_key: public_key.clone(),
-                            remote_addr: TransportAddr::Udp(remote_address),
+                            remote_addr: TransportAddr::Quic(remote_address),
                             authenticated: true,
                             connected_at: Instant::now(),
                             last_activity: Instant::now(),
@@ -1777,7 +1777,7 @@ impl P2pEndpoint {
 
     /// Check if we're connected to a specific address
     async fn is_connected_to_addr(&self, addr: SocketAddr) -> bool {
-        let transport_addr = TransportAddr::Udp(addr);
+        let transport_addr = TransportAddr::Quic(addr);
         let peers = self.connected_peers.read().await;
         peers.values().any(|p| p.remote_addr == transport_addr)
     }
@@ -1814,7 +1814,7 @@ impl P2pEndpoint {
                 // v0.2: Peer is authenticated via TLS (ML-DSA-65) during handshake
                 let peer_conn = PeerConnection {
                     public_key: remote_public_key.clone(),
-                    remote_addr: TransportAddr::Udp(remote_addr),
+                    remote_addr: TransportAddr::Quic(remote_addr),
                     authenticated: true, // TLS handles authentication
                     connected_at: Instant::now(),
                     last_activity: Instant::now(),
@@ -1841,7 +1841,7 @@ impl P2pEndpoint {
 
                 // They initiated the connection to us = Server side
                 let _ = self.event_tx.send(P2pEvent::PeerConnected {
-                    addr: TransportAddr::Udp(remote_addr),
+                    addr: TransportAddr::Quic(remote_addr),
                     public_key: remote_public_key,
                     side: Side::Server,
                 });
@@ -2675,7 +2675,7 @@ mod tests {
         let socket_addr: SocketAddr = "127.0.0.1:8080".parse().expect("valid addr");
         let conn = PeerConnection {
             public_key: None,
-            remote_addr: TransportAddr::Udp(socket_addr),
+            remote_addr: TransportAddr::Quic(socket_addr),
             authenticated: false,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
@@ -2748,7 +2748,7 @@ mod tests {
                 "Registry should have at least 1 provider"
             );
 
-            let udp_providers = registry.providers_by_type(TransportType::Udp);
+            let udp_providers = registry.providers_by_type(TransportType::Quic);
             assert_eq!(udp_providers.len(), 1, "Should have 1 UDP provider");
         }
         // Note: endpoint creation may fail in test environment without network
@@ -2786,7 +2786,7 @@ mod tests {
     fn test_peer_connected_event_with_udp() {
         let socket_addr: SocketAddr = "192.168.1.100:8080".parse().expect("valid addr");
         let event = P2pEvent::PeerConnected {
-            addr: TransportAddr::Udp(socket_addr),
+            addr: TransportAddr::Quic(socket_addr),
             public_key: None,
             side: Side::Client,
         };
@@ -2799,7 +2799,7 @@ mod tests {
         } = event
         {
             assert!(public_key.is_none());
-            assert_eq!(addr, TransportAddr::Udp(socket_addr));
+            assert_eq!(addr, TransportAddr::Quic(socket_addr));
             assert!(side.is_client());
 
             // Verify as_socket_addr() works
@@ -2813,11 +2813,11 @@ mod tests {
     #[test]
     fn test_peer_connected_event_with_ble() {
         // BLE MAC address (6 bytes)
-        let device_id = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc];
+        let mac_addr = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc];
         let event = P2pEvent::PeerConnected {
             addr: TransportAddr::Ble {
-                device_id,
-                service_uuid: None,
+                mac: mac_addr,
+                psm: 128,
             },
             public_key: None,
             side: Side::Server,
@@ -2837,13 +2837,9 @@ mod tests {
             assert!(addr.as_socket_addr().is_none());
 
             // Verify we can match on BLE variant
-            if let TransportAddr::Ble {
-                device_id: mac,
-                service_uuid,
-            } = addr
-            {
-                assert_eq!(mac, device_id);
-                assert!(service_uuid.is_none());
+            if let TransportAddr::Ble { mac, psm } = addr {
+                assert_eq!(mac, mac_addr);
+                assert_eq!(psm, 128);
             } else {
                 panic!("Expected BLE address");
             }
@@ -2854,11 +2850,11 @@ mod tests {
     fn test_external_address_discovered_udp() {
         let socket_addr: SocketAddr = "203.0.113.1:12345".parse().expect("valid addr");
         let event = P2pEvent::ExternalAddressDiscovered {
-            addr: TransportAddr::Udp(socket_addr),
+            addr: TransportAddr::Quic(socket_addr),
         };
 
         if let P2pEvent::ExternalAddressDiscovered { addr } = event {
-            assert_eq!(addr, TransportAddr::Udp(socket_addr));
+            assert_eq!(addr, TransportAddr::Quic(socket_addr));
             assert_eq!(addr.as_socket_addr(), Some(socket_addr));
         } else {
             panic!("Expected ExternalAddressDiscovered event");
@@ -2869,7 +2865,7 @@ mod tests {
     fn test_event_clone() {
         let socket_addr: SocketAddr = "10.0.0.1:9000".parse().expect("valid addr");
         let event = P2pEvent::PeerConnected {
-            addr: TransportAddr::Udp(socket_addr),
+            addr: TransportAddr::Quic(socket_addr),
             public_key: Some(vec![0x11; 32]),
             side: Side::Client,
         };
@@ -2900,7 +2896,7 @@ mod tests {
         let udp_addr: SocketAddr = "127.0.0.1:8080".parse().expect("valid addr");
         let udp_conn = PeerConnection {
             public_key: None,
-            remote_addr: TransportAddr::Udp(udp_addr),
+            remote_addr: TransportAddr::Quic(udp_addr),
             authenticated: true,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
@@ -2914,12 +2910,12 @@ mod tests {
         );
 
         // Test with BLE
-        let device_id = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let mac_addr = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
         let ble_conn = PeerConnection {
             public_key: None,
             remote_addr: TransportAddr::Ble {
-                device_id,
-                service_uuid: None,
+                mac: mac_addr,
+                psm: 128,
             },
             authenticated: true,
             connected_at: Instant::now(),
@@ -2937,7 +2933,7 @@ mod tests {
     fn test_transport_addr_display_in_events() {
         let socket_addr: SocketAddr = "192.168.1.1:9001".parse().expect("valid addr");
         let event = P2pEvent::PeerConnected {
-            addr: TransportAddr::Udp(socket_addr),
+            addr: TransportAddr::Quic(socket_addr),
             public_key: None,
             side: Side::Client,
         };
@@ -2968,7 +2964,7 @@ mod tests {
         let socket_addr: SocketAddr = "10.0.0.1:8080".parse().expect("valid addr");
         let conn = PeerConnection {
             public_key: None,
-            remote_addr: TransportAddr::Udp(socket_addr),
+            remote_addr: TransportAddr::Quic(socket_addr),
             authenticated: true,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
@@ -2981,7 +2977,7 @@ mod tests {
         // Verify connection is tracked
         assert!(connections.contains_key(&socket_addr));
         let retrieved = connections.get(&socket_addr).expect("connection exists");
-        assert_eq!(retrieved.remote_addr, TransportAddr::Udp(socket_addr));
+        assert_eq!(retrieved.remote_addr, TransportAddr::Quic(socket_addr));
         assert!(retrieved.authenticated);
     }
 
@@ -3000,7 +2996,7 @@ mod tests {
             udp_addr,
             PeerConnection {
                 public_key: None,
-                remote_addr: TransportAddr::Udp(udp_addr),
+                remote_addr: TransportAddr::Quic(udp_addr),
                 authenticated: true,
                 connected_at: Instant::now(),
                 last_activity: Instant::now(),
@@ -3012,8 +3008,8 @@ mod tests {
         // BLE connection (different peer) - use synthetic SocketAddr as key
         let ble_device = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
         let ble_addr = TransportAddr::Ble {
-            device_id: ble_device,
-            service_uuid: None,
+            mac: ble_device,
+            psm: 128,
         };
         let ble_socket_key = ble_addr.to_synthetic_socket_addr();
         connections.insert(
@@ -3064,7 +3060,7 @@ mod tests {
                 socket_addr,
                 PeerConnection {
                     public_key: None,
-                    remote_addr: TransportAddr::Udp(socket_addr),
+                    remote_addr: TransportAddr::Quic(socket_addr),
                     authenticated: true,
                     connected_at: Instant::now(),
                     last_activity: Instant::now(),
@@ -3081,7 +3077,7 @@ mod tests {
         assert!(found.is_some());
         assert_eq!(
             found.expect("connection exists").remote_addr,
-            TransportAddr::Udp(target)
+            TransportAddr::Quic(target)
         );
     }
 
@@ -3092,9 +3088,9 @@ mod tests {
         let addr2: SocketAddr = "192.168.1.1:8080".parse().expect("valid addr");
         let addr3: SocketAddr = "192.168.1.1:8081".parse().expect("valid addr");
 
-        let t1 = TransportAddr::Udp(addr1);
-        let t2 = TransportAddr::Udp(addr2);
-        let t3 = TransportAddr::Udp(addr3);
+        let t1 = TransportAddr::Quic(addr1);
+        let t2 = TransportAddr::Quic(addr2);
+        let t3 = TransportAddr::Quic(addr3);
 
         // Same address should be equal
         assert_eq!(t1, t2);
@@ -3104,8 +3100,8 @@ mod tests {
 
         // Different transport type should not be equal
         let ble = TransportAddr::Ble {
-            device_id: [0; 6],
-            service_uuid: None,
+            mac: [0; 6],
+            psm: 128,
         };
         assert_ne!(t1, ble);
     }
@@ -3115,7 +3111,7 @@ mod tests {
         let socket_addr: SocketAddr = "172.16.0.1:5000".parse().expect("valid addr");
         let mut conn = PeerConnection {
             public_key: None,
-            remote_addr: TransportAddr::Udp(socket_addr),
+            remote_addr: TransportAddr::Quic(socket_addr),
             authenticated: false,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
@@ -3128,7 +3124,7 @@ mod tests {
         conn.last_activity = Instant::now();
 
         // Verify transport address is preserved
-        assert_eq!(conn.remote_addr, TransportAddr::Udp(socket_addr));
+        assert_eq!(conn.remote_addr, TransportAddr::Quic(socket_addr));
         assert!(conn.authenticated);
     }
 }

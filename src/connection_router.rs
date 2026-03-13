@@ -50,8 +50,8 @@
 //!
 //! // Connect to a peer - engine selected automatically
 //! let ble_addr = TransportAddr::Ble {
-//!     device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-//!     service_uuid: None,
+//!     mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+//!     psm: 128,
 //! };
 //!
 //! // This will use the Constrained engine
@@ -1066,9 +1066,13 @@ impl ConnectionRouter {
     /// Get transport capabilities for an address type
     pub fn capabilities_for_addr(addr: &TransportAddr) -> TransportCapabilities {
         match addr {
-            TransportAddr::Udp(_) => TransportCapabilities::broadband(),
+            TransportAddr::Quic(_) | TransportAddr::Tcp(_) | TransportAddr::Udp(_) => {
+                TransportCapabilities::broadband()
+            }
+            TransportAddr::Bluetooth { .. } => TransportCapabilities::broadband(),
             TransportAddr::Ble { .. } => TransportCapabilities::ble(),
             TransportAddr::LoRa { .. } => TransportCapabilities::lora_long_range(),
+            TransportAddr::LoRaWan { .. } => TransportCapabilities::lora_long_range(),
             TransportAddr::Serial { .. } => TransportCapabilities::serial_115200(),
             TransportAddr::Ax25 { .. } => TransportCapabilities::packet_radio_1200(),
             // Overlay networks use broadband-equivalent capabilities
@@ -1411,9 +1415,9 @@ mod tests {
     }
 
     #[test]
-    fn test_engine_selection_for_udp() {
+    fn test_engine_selection_for_quic() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
-        let addr = TransportAddr::Udp("127.0.0.1:9000".parse().unwrap());
+        let addr = TransportAddr::Quic("127.0.0.1:9000".parse().unwrap());
 
         let engine = router.select_engine_for_addr(&addr);
         assert_eq!(engine, ProtocolEngine::Quic);
@@ -1424,8 +1428,8 @@ mod tests {
     fn test_engine_selection_for_ble() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
 
         let engine = router.select_engine_for_addr(&addr);
@@ -1437,8 +1441,8 @@ mod tests {
     fn test_engine_selection_for_lora() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::LoRa {
-            device_addr: [0x12, 0x34, 0x56, 0x78],
-            params: crate::transport::LoRaParams::default(),
+            dev_addr: [0x12, 0x34, 0x56, 0x78],
+            freq_hz: 868_000_000,
         };
 
         let engine = router.select_engine_for_addr(&addr);
@@ -1449,12 +1453,12 @@ mod tests {
     fn test_supports_quic() {
         let router = ConnectionRouter::new(RouterConfig::default());
 
-        let udp_addr = TransportAddr::Udp("127.0.0.1:9000".parse().unwrap());
-        assert!(router.supports_quic(&udp_addr));
+        let quic_addr = TransportAddr::Quic("127.0.0.1:9000".parse().unwrap());
+        assert!(router.supports_quic(&quic_addr));
 
         let ble_addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
         assert!(!router.supports_quic(&ble_addr));
     }
@@ -1463,8 +1467,8 @@ mod tests {
     fn test_connect_constrained() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
 
         let conn = router.connect(&addr);
@@ -1482,7 +1486,7 @@ mod tests {
         // QUIC connections require async - the sync connect() method
         // should return an error for QUIC addresses
         let mut router = ConnectionRouter::new(RouterConfig::default());
-        let addr = TransportAddr::Udp("127.0.0.1:9000".parse().unwrap());
+        let addr = TransportAddr::Quic("127.0.0.1:9000".parse().unwrap());
 
         let result = router.connect(&addr);
         assert!(result.is_err());
@@ -1516,8 +1520,8 @@ mod tests {
     fn test_routed_connection_send_constrained() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
 
         let conn = router.connect(&addr).unwrap();
@@ -1534,8 +1538,8 @@ mod tests {
     fn test_routed_connection_close() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
 
         let conn = router.connect(&addr).unwrap();
@@ -1548,14 +1552,14 @@ mod tests {
         let mut router = ConnectionRouter::new(RouterConfig::default());
 
         // Make some selections
-        let udp_addr = TransportAddr::Udp("127.0.0.1:9000".parse().unwrap());
+        let quic_addr = TransportAddr::Quic("127.0.0.1:9000".parse().unwrap());
         let ble_addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
 
-        let _ = router.select_engine_for_addr(&udp_addr);
-        let _ = router.select_engine_for_addr(&udp_addr);
+        let _ = router.select_engine_for_addr(&quic_addr);
+        let _ = router.select_engine_for_addr(&quic_addr);
         let _ = router.select_engine_for_addr(&ble_addr);
 
         let stats = router.stats();
@@ -1572,8 +1576,8 @@ mod tests {
 
         // After connecting constrained, handle is available
         let addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
         let _ = router.connect(&addr);
 
@@ -1583,7 +1587,7 @@ mod tests {
     #[test]
     fn test_router_error_display() {
         let err = RouterError::NoTransportAvailable {
-            addr: TransportAddr::Udp("127.0.0.1:9000".parse().unwrap()),
+            addr: TransportAddr::Quic("127.0.0.1:9000".parse().unwrap()),
         };
         assert!(format!("{err}").contains("no transport available"));
 
@@ -1697,18 +1701,18 @@ mod tests {
     #[test]
     fn test_capabilities_for_addr_coverage() {
         // Test all address types return valid capabilities
-        let udp = TransportAddr::Udp("127.0.0.1:9000".parse().unwrap());
-        assert!(ConnectionRouter::capabilities_for_addr(&udp).supports_full_quic());
+        let quic = TransportAddr::Quic("127.0.0.1:9000".parse().unwrap());
+        assert!(ConnectionRouter::capabilities_for_addr(&quic).supports_full_quic());
 
         let ble = TransportAddr::Ble {
-            device_id: [0; 6],
-            service_uuid: None,
+            mac: [0; 6],
+            psm: 128,
         };
         assert!(!ConnectionRouter::capabilities_for_addr(&ble).supports_full_quic());
 
         let lora = TransportAddr::LoRa {
-            device_addr: [0; 4],
-            params: crate::transport::LoRaParams::default(),
+            dev_addr: [0; 4],
+            freq_hz: 868_000_000,
         };
         assert!(!ConnectionRouter::capabilities_for_addr(&lora).supports_full_quic());
 
@@ -1752,8 +1756,8 @@ mod tests {
 
         // Initialize by connecting to BLE
         let addr = TransportAddr::Ble {
-            device_id: [0; 6],
-            service_uuid: None,
+            mac: [0; 6],
+            psm: 128,
         };
         let _ = router.connect(&addr);
 
@@ -1800,8 +1804,8 @@ mod tests {
     fn test_routed_connection_accessors_constrained() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
 
         let conn = router.connect(&addr).unwrap();
@@ -1841,8 +1845,8 @@ mod tests {
     fn test_routed_connection_debug_constrained() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
 
         let conn = router.connect(&addr).unwrap();
@@ -1854,7 +1858,7 @@ mod tests {
     fn test_router_event_engine_accessor() {
         let event = RouterEvent::Connected {
             connection_id: 1,
-            remote: TransportAddr::Udp("127.0.0.1:9000".parse().unwrap()),
+            remote: TransportAddr::Quic("127.0.0.1:9000".parse().unwrap()),
             engine: ProtocolEngine::Quic,
         };
         assert_eq!(event.engine(), ProtocolEngine::Quic);
@@ -1871,7 +1875,7 @@ mod tests {
     fn test_router_event_connection_id() {
         let event = RouterEvent::Connected {
             connection_id: 42,
-            remote: TransportAddr::Udp("127.0.0.1:9000".parse().unwrap()),
+            remote: TransportAddr::Quic("127.0.0.1:9000".parse().unwrap()),
             engine: ProtocolEngine::Quic,
         };
         assert_eq!(event.connection_id(), Some(42));
@@ -1910,8 +1914,8 @@ mod tests {
     fn test_poll_events_after_constrained_connect() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
 
         // Connect to initialize constrained transport
@@ -1931,8 +1935,8 @@ mod tests {
     fn test_connection_mtu() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
 
         let conn = router.connect(&addr).unwrap();
@@ -1946,8 +1950,8 @@ mod tests {
     fn test_connection_stats_constrained() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
 
         let conn = router.connect(&addr).unwrap();
@@ -1974,8 +1978,8 @@ mod tests {
     fn test_close_with_reason_constrained() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
 
         let conn = router.connect(&addr).unwrap();
@@ -1987,8 +1991,8 @@ mod tests {
     fn test_is_open_after_close() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
 
         let conn = router.connect(&addr).unwrap();
@@ -2004,8 +2008,8 @@ mod tests {
     async fn test_send_async_constrained() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
 
         let conn = router.connect(&addr).unwrap();
@@ -2021,8 +2025,8 @@ mod tests {
     async fn test_recv_async_constrained_no_data() {
         let mut router = ConnectionRouter::new(RouterConfig::default());
         let addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
 
         let conn = router.connect(&addr).unwrap();

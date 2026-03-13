@@ -375,7 +375,7 @@ impl P2pConfigBuilder {
     /// Set the local address to bind to
     ///
     /// Accepts any type implementing `Into<TransportAddr>`, including:
-    /// - `SocketAddr` - Automatically converted to `TransportAddr::Udp`
+    /// - `SocketAddr` - Automatically converted to `TransportAddr::Quic`
     /// - `TransportAddr` - Used directly for multi-transport support
     ///
     /// If not set, the endpoint binds to `0.0.0.0:0` (random ephemeral port).
@@ -394,7 +394,7 @@ impl P2pConfigBuilder {
     /// // Multi-transport: Explicit TransportAddr
     /// use saorsa_transport::transport::TransportAddr;
     /// let config = P2pConfig::builder()
-    ///     .bind_addr(TransportAddr::Udp("0.0.0.0:9000".parse().unwrap()))
+    ///     .bind_addr(TransportAddr::Quic("0.0.0.0:9000".parse().unwrap()))
     ///     .build()?;
     /// ```
     pub fn bind_addr(mut self, addr: impl Into<TransportAddr>) -> Self {
@@ -408,7 +408,7 @@ impl P2pConfigBuilder {
     /// network connectivity. The node will discover additional peers through gossip.
     ///
     /// Accepts any type implementing `Into<TransportAddr>`:
-    /// - `SocketAddr` - Auto-converts to `TransportAddr::Udp`
+    /// - `SocketAddr` - Auto-converts to `TransportAddr::Quic`
     /// - `TransportAddr` - Enables multi-transport (BLE, LoRa, etc.)
     ///
     /// # Examples
@@ -426,8 +426,8 @@ impl P2pConfigBuilder {
     /// // Multi-transport: Mix UDP and BLE
     /// use saorsa_transport::transport::TransportAddr;
     /// let config = P2pConfig::builder()
-    ///     .known_peer(TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()))
-    ///     .known_peer(TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None))
+    ///     .known_peer(TransportAddr::Quic("192.168.1.1:9000".parse().unwrap()))
+    ///     .known_peer(TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], 128))
     ///     .build()?;
     /// ```
     pub fn known_peer(mut self, addr: impl Into<TransportAddr>) -> Self {
@@ -459,8 +459,8 @@ impl P2pConfigBuilder {
     /// // Multi-transport: Mixed types
     /// use saorsa_transport::transport::TransportAddr;
     /// let mixed_peers = vec![
-    ///     TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()),
-    ///     TransportAddr::ble([0x11, 0x22, 0x33, 0x44, 0x55, 0x66], None),
+    ///     TransportAddr::Quic("192.168.1.1:9000".parse().unwrap()),
+    ///     TransportAddr::ble([0x11, 0x22, 0x33, 0x44, 0x55, 0x66], 128),
     /// ];
     /// let config = P2pConfig::builder()
     ///     .known_peers(mixed_peers)
@@ -1105,11 +1105,11 @@ mod tests {
         assert_eq!(config.transport_registry.len(), 1);
         assert!(!config.transport_registry.is_empty());
 
-        // Verify it's a UDP provider
-        let udp_providers = config
+        // Verify it's a QUIC provider
+        let quic_providers = config
             .transport_registry
-            .providers_by_type(TransportType::Udp);
-        assert_eq!(udp_providers.len(), 1);
+            .providers_by_type(TransportType::Quic);
+        assert_eq!(quic_providers.len(), 1);
     }
 
     #[tokio::test]
@@ -1143,7 +1143,7 @@ mod tests {
         assert_eq!(
             config
                 .transport_registry
-                .providers_by_type(TransportType::Udp)
+                .providers_by_type(TransportType::Quic)
                 .len(),
             2
         );
@@ -1181,7 +1181,7 @@ mod tests {
         assert_eq!(
             config
                 .transport_registry
-                .providers_by_type(TransportType::Udp)
+                .providers_by_type(TransportType::Quic)
                 .len(),
             2
         );
@@ -1211,15 +1211,15 @@ mod tests {
     fn test_p2p_config_with_transport_addr() {
         use crate::transport::TransportAddr;
 
-        // Create config with TransportAddr::Udp bind address
+        // Create config with TransportAddr::Quic bind address
         let bind_addr: std::net::SocketAddr = "0.0.0.0:9000".parse().expect("valid addr");
         let peer1: std::net::SocketAddr = "192.168.1.100:9000".parse().expect("valid addr");
         let peer2: std::net::SocketAddr = "192.168.1.101:9000".parse().expect("valid addr");
 
         let config = P2pConfig::builder()
-            .bind_addr(TransportAddr::Udp(bind_addr))
-            .known_peer(TransportAddr::Udp(peer1))
-            .known_peer(TransportAddr::Udp(peer2))
+            .bind_addr(TransportAddr::Quic(bind_addr))
+            .known_peer(TransportAddr::Quic(peer1))
+            .known_peer(TransportAddr::Quic(peer2))
             .build()
             .expect("Failed to build config");
 
@@ -1262,21 +1262,21 @@ mod tests {
     fn test_p2p_config_mixed_transport_types() {
         use crate::transport::TransportAddr;
 
-        // Add both UDP and BLE addresses to known_peers
-        let udp_peer: std::net::SocketAddr = "192.168.1.1:9000".parse().expect("valid addr");
-        let ble_device_id = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        // Add both QUIC and BLE addresses to known_peers
+        let quic_peer: std::net::SocketAddr = "192.168.1.1:9000".parse().expect("valid addr");
+        let ble_mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
 
         let config = P2pConfig::builder()
-            .known_peer(TransportAddr::Udp(udp_peer))
-            .known_peer(TransportAddr::ble(ble_device_id, None))
+            .known_peer(TransportAddr::Quic(quic_peer))
+            .known_peer(TransportAddr::ble(ble_mac, 128))
             .build()
             .expect("Failed to build config");
 
         // Verify heterogeneous transport list works
         assert_eq!(config.known_peers.len(), 2);
 
-        // First peer is UDP
-        assert_eq!(config.known_peers[0].as_socket_addr(), Some(udp_peer));
+        // First peer is QUIC
+        assert_eq!(config.known_peers[0].as_socket_addr(), Some(quic_peer));
 
         // Second peer is BLE (no socket addr)
         assert!(config.known_peers[1].as_socket_addr().is_none());
@@ -1327,8 +1327,8 @@ mod tests {
         let peer_addr: std::net::SocketAddr = "[::1]:9000".parse().expect("valid addr");
 
         let config = P2pConfig::builder()
-            .bind_addr(TransportAddr::Udp(bind_addr))
-            .known_peer(TransportAddr::Udp(peer_addr))
+            .bind_addr(TransportAddr::Quic(bind_addr))
+            .known_peer(TransportAddr::Quic(peer_addr))
             .build()
             .expect("Failed to build config");
 

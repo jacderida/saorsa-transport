@@ -8,35 +8,57 @@
 //! Transport-specific addressing for multi-transport P2P networking
 //!
 //! This module defines [`TransportAddr`], a unified addressing type that supports
-//! multiple physical transports including UDP/IP, Bluetooth Low Energy, LoRa radio,
+//! multiple physical transports including QUIC, TCP, Bluetooth, BLE, LoRa radio,
 //! serial connections, and overlay networks.
 //!
-//! # Design
+//! ## Canonical string format (multiaddr)
 //!
-//! Each transport has its own addressing scheme:
-//! - **UDP**: Standard IP socket addresses (IPv4/IPv6)
-//! - **BLE**: Bluetooth device address + GATT service UUID
-//! - **LoRa**: Device address + radio parameters (SF, bandwidth)
-//! - **Serial**: Port name (e.g., `/dev/ttyUSB0`, `COM3`)
-//! - **Overlay**: I2P destinations, Yggdrasil addresses
-//!
-//! The [`TransportType`] enum identifies transport categories for routing decisions.
+//! ```text
+//! /ip4/<ipv4>/udp/<port>/quic
+//! /ip6/<ipv6>/udp/<port>/quic
+//! /ip4/<ipv4>/tcp/<port>
+//! /ip6/<ipv6>/tcp/<port>
+//! /ip4/<ipv4>/udp/<port>
+//! /ip6/<ipv6>/udp/<port>
+//! /bt/<AA:BB:CC:DD:EE:FF>/rfcomm/<channel>
+//! /ble/<AA:BB:CC:DD:EE:FF>/l2cap/<psm>
+//! /lora/<hex-dev-addr>/<freq-hz>
+//! /lorawan/<hex-dev-eui>
+//! /serial/<port-name>
+//! /ax25/<callsign>/<ssid>
+//! /i2p/<hex-destination>
+//! /yggdrasil/<hex-address>
+//! /broadcast/<transport-type>
+//! ```
 
+use std::collections::hash_map::DefaultHasher;
 use std::fmt;
-use std::net::SocketAddr;
+use std::hash::{Hash, Hasher};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::str::FromStr;
 
-/// Transport type identifier for routing and capability matching
+use anyhow::{Result, anyhow};
+
+/// Transport type identifier for routing and capability matching.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransportType {
-    /// UDP/IP transport - standard Internet connectivity
+    /// QUIC over UDP — primary Saorsa transport
+    Quic,
+    /// Plain TCP
+    Tcp,
+    /// Raw UDP (no QUIC)
     Udp,
-    /// Bluetooth Low Energy - short-range, low-power wireless
+    /// Classic Bluetooth RFCOMM
+    Bluetooth,
+    /// Bluetooth Low Energy — short-range, low-power wireless
     Ble,
-    /// LoRa radio - long-range, low-bandwidth wireless
+    /// LoRa radio — long-range, low-bandwidth wireless
     LoRa,
-    /// Serial port - direct wired connection
+    /// LoRaWAN (network-managed)
+    LoRaWan,
+    /// Serial port — direct wired connection
     Serial,
-    /// AX.25 packet radio - amateur radio networks
+    /// AX.25 packet radio — amateur radio networks
     Ax25,
     /// I2P anonymous overlay network
     I2p,
@@ -47,9 +69,13 @@ pub enum TransportType {
 impl fmt::Display for TransportType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Quic => write!(f, "QUIC"),
+            Self::Tcp => write!(f, "TCP"),
             Self::Udp => write!(f, "UDP"),
+            Self::Bluetooth => write!(f, "Bluetooth"),
             Self::Ble => write!(f, "BLE"),
             Self::LoRa => write!(f, "LoRa"),
+            Self::LoRaWan => write!(f, "LoRaWAN"),
             Self::Serial => write!(f, "Serial"),
             Self::Ax25 => write!(f, "AX.25"),
             Self::I2p => write!(f, "I2P"),
@@ -58,7 +84,10 @@ impl fmt::Display for TransportType {
     }
 }
 
-/// LoRa radio configuration parameters
+/// LoRa radio configuration parameters.
+///
+/// These are connection-time parameters, not part of the address. Use with
+/// transport capability configuration when establishing LoRa links.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LoRaParams {
     /// Spreading factor (7-12)
@@ -79,10 +108,10 @@ impl Default for LoRaParams {
     }
 }
 
-/// Transport-specific addressing
+/// Transport-specific addressing.
 ///
-/// A unified address type that can represent destinations on any supported transport.
-/// This enables transport-agnostic routing at higher layers.
+/// A unified address type that can represent destinations on any supported
+/// transport. Uses a canonical slash-delimited multiaddr string format.
 ///
 /// # Example
 ///
@@ -90,76 +119,101 @@ impl Default for LoRaParams {
 /// use saorsa_transport::transport::{TransportAddr, TransportType};
 /// use std::net::SocketAddr;
 ///
-/// // UDP address
-/// let udp_addr = TransportAddr::Udp("192.168.1.1:9000".parse().unwrap());
-/// assert_eq!(udp_addr.transport_type(), TransportType::Udp);
+/// // QUIC address (primary)
+/// let quic_addr = TransportAddr::Quic("192.168.1.1:9000".parse().unwrap());
+/// assert_eq!(quic_addr.transport_type(), TransportType::Quic);
+/// assert_eq!(quic_addr.to_string(), "/ip4/192.168.1.1/udp/9000/quic");
 ///
-/// // BLE address
-/// let ble_addr = TransportAddr::ble([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], None);
-/// assert_eq!(ble_addr.transport_type(), TransportType::Ble);
+/// // Parse from multiaddr string
+/// let parsed: TransportAddr = "/ip4/10.0.0.1/tcp/8080".parse().unwrap();
+/// assert_eq!(parsed.transport_type(), TransportType::Tcp);
 /// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TransportAddr {
-    /// UDP/IP socket address (IPv4 or IPv6)
+    /// QUIC over UDP (primary Saorsa transport).
+    Quic(SocketAddr),
+
+    /// Plain TCP.
+    Tcp(SocketAddr),
+
+    /// Raw UDP (no QUIC negotiation).
     Udp(SocketAddr),
 
-    /// Bluetooth Low Energy device
+    /// Classic Bluetooth RFCOMM.
+    Bluetooth {
+        /// 6-byte MAC address.
+        mac: [u8; 6],
+        /// RFCOMM channel number.
+        channel: u8,
+    },
+
+    /// Bluetooth Low Energy L2CAP.
     Ble {
-        /// 48-bit Bluetooth device address (MAC address)
-        device_id: [u8; 6],
-        /// Optional GATT service UUID for connection
-        /// If None, uses the default saorsa-transport service UUID
-        service_uuid: Option<[u8; 16]>,
+        /// 6-byte MAC address.
+        mac: [u8; 6],
+        /// Protocol/Service Multiplexer.
+        psm: u16,
     },
 
-    /// LoRa radio device
+    /// LoRa point-to-point.
     LoRa {
-        /// 32-bit device address
-        device_addr: [u8; 4],
-        /// Radio parameters (spreading factor, bandwidth, coding rate)
-        params: LoRaParams,
+        /// 4-byte device address.
+        dev_addr: [u8; 4],
+        /// Frequency in Hz.
+        freq_hz: u32,
     },
 
-    /// Serial port connection
+    /// LoRaWAN (network-managed).
+    LoRaWan {
+        /// 8-byte Device EUI.
+        dev_eui: u64,
+    },
+
+    /// Serial port connection.
     Serial {
-        /// Port name (e.g., "/dev/ttyUSB0", "COM3")
+        /// Port name (e.g., "/dev/ttyUSB0", "COM3").
         port: String,
     },
 
-    /// AX.25 packet radio (amateur radio)
+    /// AX.25 packet radio (amateur radio).
     Ax25 {
-        /// Amateur radio callsign
+        /// Amateur radio callsign.
         callsign: String,
-        /// Secondary Station Identifier (0-15)
+        /// Secondary Station Identifier (0-15).
         ssid: u8,
     },
 
-    /// I2P anonymous overlay network
+    /// I2P anonymous overlay network.
     I2p {
-        /// I2P destination (387 bytes base64-decoded)
+        /// I2P destination (387 bytes base64-decoded).
         destination: Box<[u8; 387]>,
     },
 
-    /// Yggdrasil mesh network
+    /// Yggdrasil mesh network.
     Yggdrasil {
-        /// 128-bit Yggdrasil address
+        /// 128-bit Yggdrasil address.
         address: [u8; 16],
     },
 
-    /// Broadcast on a specific transport
+    /// Broadcast on a specific transport.
     Broadcast {
-        /// Transport type to broadcast on
+        /// Transport type to broadcast on.
         transport_type: TransportType,
     },
 }
 
 impl TransportAddr {
-    /// Get the transport type for this address
+    /// Get the transport type for this address.
     pub fn transport_type(&self) -> TransportType {
         match self {
+            Self::Quic(_) => TransportType::Quic,
+            Self::Tcp(_) => TransportType::Tcp,
             Self::Udp(_) => TransportType::Udp,
+            Self::Bluetooth { .. } => TransportType::Bluetooth,
             Self::Ble { .. } => TransportType::Ble,
             Self::LoRa { .. } => TransportType::LoRa,
+            Self::LoRaWan { .. } => TransportType::LoRaWan,
             Self::Serial { .. } => TransportType::Serial,
             Self::Ax25 { .. } => TransportType::Ax25,
             Self::I2p { .. } => TransportType::I2p,
@@ -168,36 +222,22 @@ impl TransportAddr {
         }
     }
 
-    /// Create a BLE address with optional service UUID
-    pub fn ble(device_id: [u8; 6], service_uuid: Option<[u8; 16]>) -> Self {
-        Self::Ble {
-            device_id,
-            service_uuid,
-        }
+    /// Create a BLE address.
+    pub fn ble(mac: [u8; 6], psm: u16) -> Self {
+        Self::Ble { mac, psm }
     }
 
-    /// Create a LoRa address with default parameters
-    pub fn lora(device_addr: [u8; 4]) -> Self {
-        Self::LoRa {
-            device_addr,
-            params: LoRaParams::default(),
-        }
+    /// Create a LoRa address.
+    pub fn lora(dev_addr: [u8; 4], freq_hz: u32) -> Self {
+        Self::LoRa { dev_addr, freq_hz }
     }
 
-    /// Create a LoRa address with custom parameters
-    pub fn lora_with_params(device_addr: [u8; 4], params: LoRaParams) -> Self {
-        Self::LoRa {
-            device_addr,
-            params,
-        }
-    }
-
-    /// Create a serial port address
+    /// Create a serial port address.
     pub fn serial(port: impl Into<String>) -> Self {
         Self::Serial { port: port.into() }
     }
 
-    /// Create an AX.25 address
+    /// Create an AX.25 address.
     pub fn ax25(callsign: impl Into<String>, ssid: u8) -> Self {
         Self::Ax25 {
             callsign: callsign.into(),
@@ -205,108 +245,112 @@ impl TransportAddr {
         }
     }
 
-    /// Create a Yggdrasil address
+    /// Create a Yggdrasil address.
     pub fn yggdrasil(address: [u8; 16]) -> Self {
         Self::Yggdrasil { address }
     }
 
-    /// Create a broadcast address for a specific transport
+    /// Create a broadcast address for a specific transport.
     pub fn broadcast(transport_type: TransportType) -> Self {
         Self::Broadcast { transport_type }
     }
 
-    /// Check if this is a broadcast address
+    /// Check if this is a broadcast address.
     pub fn is_broadcast(&self) -> bool {
         matches!(self, Self::Broadcast { .. })
     }
 
-    /// Get the UDP socket address if this is a UDP address
-    ///
-    /// # Returns
-    ///
-    /// - `Some(SocketAddr)` if this is a `TransportAddr::Udp`
-    /// - `None` for all other transport types
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use saorsa_transport::transport::TransportAddr;
-    /// use std::net::SocketAddr;
-    ///
-    /// let socket_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
-    /// let transport_addr = TransportAddr::from(socket_addr);
-    ///
-    /// assert_eq!(transport_addr.as_socket_addr(), Some(socket_addr));
-    ///
-    /// let ble_addr = TransportAddr::ble([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], None);
-    /// assert_eq!(ble_addr.as_socket_addr(), None);
-    /// ```
+    /// Returns the socket address for IP-based transports (`Quic`, `Tcp`, `Udp`),
+    /// `None` for non-IP transports.
     pub fn as_socket_addr(&self) -> Option<SocketAddr> {
         match self {
-            Self::Udp(addr) => Some(*addr),
+            Self::Quic(a) | Self::Tcp(a) | Self::Udp(a) => Some(*a),
             _ => None,
         }
     }
 
-    /// Convert this transport address to a synthetic SocketAddr for internal tracking
-    ///
-    /// For UDP addresses, returns the actual socket address.
-    /// For non-UDP addresses (BLE, LoRa, Serial, etc.), creates a synthetic IPv6 address
-    /// in the documentation range (2001:db8::/32) that uniquely identifies the transport
-    /// endpoint for use with the constrained protocol engine.
-    ///
-    /// The synthetic address encodes:
-    /// - Transport type in the first octet
-    /// - Transport-specific identifier in the remaining bytes
-    /// - Port 0 (since non-UDP transports don't use ports)
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use saorsa_transport::transport::TransportAddr;
-    ///
-    /// let ble_addr = TransportAddr::ble([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], None);
-    /// let synthetic = ble_addr.to_synthetic_socket_addr();
-    /// // Returns a unique IPv6 address encoding the BLE device ID
-    /// ```
-    pub fn to_synthetic_socket_addr(&self) -> SocketAddr {
-        use std::net::{IpAddr, Ipv6Addr};
-
+    /// Human-readable transport kind for logging / metrics.
+    pub fn kind(&self) -> &'static str {
         match self {
-            Self::Udp(addr) => *addr,
-            Self::Ble { device_id, .. } => {
-                // Create synthetic IPv6 in documentation range: 2001:db8:ble:XXXX:XXXX:XXXX::
-                // Encodes 6-byte MAC address in last 6 bytes of IPv6
+            Self::Quic(_) => "quic",
+            Self::Tcp(_) => "tcp",
+            Self::Udp(_) => "udp",
+            Self::Bluetooth { .. } => "bluetooth",
+            Self::Ble { .. } => "ble",
+            Self::LoRa { .. } => "lora",
+            Self::LoRaWan { .. } => "lorawan",
+            Self::Serial { .. } => "serial",
+            Self::Ax25 { .. } => "ax25",
+            Self::I2p { .. } => "i2p",
+            Self::Yggdrasil { .. } => "yggdrasil",
+            Self::Broadcast { .. } => "broadcast",
+        }
+    }
+
+    /// Convert this transport address to a synthetic `SocketAddr` for internal
+    /// tracking.
+    ///
+    /// For IP-based addresses (`Quic`, `Tcp`, `Udp`), returns the actual socket
+    /// address. For non-IP addresses, creates a synthetic IPv6 address in the
+    /// documentation range (`2001:db8::/32`) that uniquely identifies the
+    /// transport endpoint.
+    pub fn to_synthetic_socket_addr(&self) -> SocketAddr {
+        match self {
+            Self::Quic(addr) | Self::Tcp(addr) | Self::Udp(addr) => *addr,
+            Self::Bluetooth { mac, channel } => {
+                let addr = Ipv6Addr::new(
+                    0x2001,
+                    0x0db8,
+                    0x0007, // Transport type 7 = Bluetooth
+                    ((mac[0] as u16) << 8) | (mac[1] as u16),
+                    ((mac[2] as u16) << 8) | (mac[3] as u16),
+                    ((mac[4] as u16) << 8) | (mac[5] as u16),
+                    *channel as u16,
+                    0,
+                );
+                SocketAddr::new(IpAddr::V6(addr), 0)
+            }
+            Self::Ble { mac, psm } => {
                 let addr = Ipv6Addr::new(
                     0x2001,
                     0x0db8,
                     0x0001, // Transport type 1 = BLE
-                    ((device_id[0] as u16) << 8) | (device_id[1] as u16),
-                    ((device_id[2] as u16) << 8) | (device_id[3] as u16),
-                    ((device_id[4] as u16) << 8) | (device_id[5] as u16),
+                    ((mac[0] as u16) << 8) | (mac[1] as u16),
+                    ((mac[2] as u16) << 8) | (mac[3] as u16),
+                    ((mac[4] as u16) << 8) | (mac[5] as u16),
+                    *psm,
+                    0,
+                );
+                SocketAddr::new(IpAddr::V6(addr), 0)
+            }
+            Self::LoRa { dev_addr, .. } => {
+                let addr = Ipv6Addr::new(
+                    0x2001,
+                    0x0db8,
+                    0x0002, // Transport type 2 = LoRa
+                    ((dev_addr[0] as u16) << 8) | (dev_addr[1] as u16),
+                    ((dev_addr[2] as u16) << 8) | (dev_addr[3] as u16),
+                    0,
                     0,
                     0,
                 );
                 SocketAddr::new(IpAddr::V6(addr), 0)
             }
-            Self::LoRa { device_addr, .. } => {
-                // Create synthetic IPv6: 2001:db8:lora:XXXX::
+            Self::LoRaWan { dev_eui } => {
                 let addr = Ipv6Addr::new(
                     0x2001,
                     0x0db8,
-                    0x0002, // Transport type 2 = LoRa
-                    ((device_addr[0] as u16) << 8) | (device_addr[1] as u16),
-                    ((device_addr[2] as u16) << 8) | (device_addr[3] as u16),
-                    0,
-                    0,
+                    0x0008, // Transport type 8 = LoRaWAN
+                    (*dev_eui >> 48) as u16,
+                    (*dev_eui >> 32) as u16,
+                    (*dev_eui >> 16) as u16,
+                    *dev_eui as u16,
                     0,
                 );
                 SocketAddr::new(IpAddr::V6(addr), 0)
             }
             Self::Serial { port } => {
-                // Hash the port name to create a unique address
-                use std::hash::{Hash, Hasher};
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                let mut hasher = DefaultHasher::new();
                 port.hash(&mut hasher);
                 let hash = hasher.finish();
                 let addr = Ipv6Addr::new(
@@ -322,9 +366,7 @@ impl TransportAddr {
                 SocketAddr::new(IpAddr::V6(addr), 0)
             }
             Self::Ax25 { callsign, ssid } => {
-                // Hash callsign+ssid
-                use std::hash::{Hash, Hasher};
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                let mut hasher = DefaultHasher::new();
                 callsign.hash(&mut hasher);
                 ssid.hash(&mut hasher);
                 let hash = hasher.finish();
@@ -341,7 +383,6 @@ impl TransportAddr {
                 SocketAddr::new(IpAddr::V6(addr), 0)
             }
             Self::I2p { destination } => {
-                // Use first 8 bytes of destination as identifier
                 let addr = Ipv6Addr::new(
                     0x2001,
                     0x0db8,
@@ -355,7 +396,6 @@ impl TransportAddr {
                 SocketAddr::new(IpAddr::V6(addr), 0)
             }
             Self::Yggdrasil { address } => {
-                // Yggdrasil already has 128-bit address, use directly with marker
                 let addr = Ipv6Addr::new(
                     0x2001,
                     0x0db8,
@@ -369,15 +409,18 @@ impl TransportAddr {
                 SocketAddr::new(IpAddr::V6(addr), 0)
             }
             Self::Broadcast { transport_type } => {
-                // Use all-ones for broadcast
                 let type_code = match transport_type {
-                    TransportType::Udp => 0,
-                    TransportType::Ble => 1,
-                    TransportType::LoRa => 2,
-                    TransportType::Serial => 3,
-                    TransportType::Ax25 => 4,
-                    TransportType::I2p => 5,
-                    TransportType::Yggdrasil => 6,
+                    TransportType::Quic => 0x0000,
+                    TransportType::Tcp => 0x0009,
+                    TransportType::Udp => 0x000A,
+                    TransportType::Bluetooth => 0x0007,
+                    TransportType::Ble => 0x0001,
+                    TransportType::LoRa => 0x0002,
+                    TransportType::LoRaWan => 0x0008,
+                    TransportType::Serial => 0x0003,
+                    TransportType::Ax25 => 0x0004,
+                    TransportType::I2p => 0x0005,
+                    TransportType::Yggdrasil => 0x0006,
                 };
                 let addr = Ipv6Addr::new(
                     0x2001, 0x0db8, type_code, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
@@ -388,44 +431,117 @@ impl TransportAddr {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Display — canonical multiaddr format
+// ---------------------------------------------------------------------------
+
+impl fmt::Display for TransportAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Quic(addr) => match addr.ip() {
+                IpAddr::V4(ip) => write!(f, "/ip4/{}/udp/{}/quic", ip, addr.port()),
+                IpAddr::V6(ip) => write!(f, "/ip6/{}/udp/{}/quic", ip, addr.port()),
+            },
+            Self::Tcp(addr) => match addr.ip() {
+                IpAddr::V4(ip) => write!(f, "/ip4/{}/tcp/{}", ip, addr.port()),
+                IpAddr::V6(ip) => write!(f, "/ip6/{}/tcp/{}", ip, addr.port()),
+            },
+            Self::Udp(addr) => match addr.ip() {
+                IpAddr::V4(ip) => write!(f, "/ip4/{}/udp/{}", ip, addr.port()),
+                IpAddr::V6(ip) => write!(f, "/ip6/{}/udp/{}", ip, addr.port()),
+            },
+            Self::Bluetooth { mac, channel } => {
+                write!(
+                    f,
+                    "/bt/{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}/rfcomm/{}",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], channel
+                )
+            }
+            Self::Ble { mac, psm } => {
+                write!(
+                    f,
+                    "/ble/{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}/l2cap/{}",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], psm
+                )
+            }
+            Self::LoRa { dev_addr, freq_hz } => {
+                write!(
+                    f,
+                    "/lora/{:02x}{:02x}{:02x}{:02x}/{}",
+                    dev_addr[0], dev_addr[1], dev_addr[2], dev_addr[3], freq_hz
+                )
+            }
+            Self::LoRaWan { dev_eui } => {
+                write!(f, "/lorawan/{:016x}", dev_eui)
+            }
+            Self::Serial { port } => {
+                // Percent-encode forward slashes in port names.
+                let encoded = port.replace('/', "%2F");
+                write!(f, "/serial/{}", encoded)
+            }
+            Self::Ax25 { callsign, ssid } => {
+                write!(f, "/ax25/{}/{}", callsign, ssid)
+            }
+            Self::I2p { destination } => {
+                let hex: String = destination.iter().map(|b| format!("{:02x}", b)).collect();
+                write!(f, "/i2p/{}", hex)
+            }
+            Self::Yggdrasil { address } => {
+                let hex: String = address.iter().map(|b| format!("{:02x}", b)).collect();
+                write!(f, "/yggdrasil/{}", hex)
+            }
+            Self::Broadcast { transport_type } => {
+                let kind = match transport_type {
+                    TransportType::Quic => "quic",
+                    TransportType::Tcp => "tcp",
+                    TransportType::Udp => "udp",
+                    TransportType::Bluetooth => "bluetooth",
+                    TransportType::Ble => "ble",
+                    TransportType::LoRa => "lora",
+                    TransportType::LoRaWan => "lorawan",
+                    TransportType::Serial => "serial",
+                    TransportType::Ax25 => "ax25",
+                    TransportType::I2p => "i2p",
+                    TransportType::Yggdrasil => "yggdrasil",
+                };
+                write!(f, "/broadcast/{}", kind)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Debug — human-friendly format
+// ---------------------------------------------------------------------------
+
 impl fmt::Debug for TransportAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Quic(addr) => write!(f, "Quic({addr})"),
+            Self::Tcp(addr) => write!(f, "Tcp({addr})"),
             Self::Udp(addr) => write!(f, "Udp({addr})"),
-            Self::Ble {
-                device_id,
-                service_uuid,
-            } => {
+            Self::Bluetooth { mac, channel } => {
                 write!(
                     f,
-                    "Ble({:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                    device_id[0],
-                    device_id[1],
-                    device_id[2],
-                    device_id[3],
-                    device_id[4],
-                    device_id[5]
-                )?;
-                if service_uuid.is_some() {
-                    write!(f, ", custom_service")?;
-                }
-                write!(f, ")")
-            }
-            Self::LoRa {
-                device_addr,
-                params,
-            } => {
-                write!(
-                    f,
-                    "LoRa(0x{:02X}{:02X}{:02X}{:02X}, SF{}, {}kHz)",
-                    device_addr[0],
-                    device_addr[1],
-                    device_addr[2],
-                    device_addr[3],
-                    params.spreading_factor,
-                    params.bandwidth_khz
+                    "Bluetooth({:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}, ch{})",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], channel
                 )
             }
+            Self::Ble { mac, psm } => {
+                write!(
+                    f,
+                    "Ble({:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}, psm{})",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], psm
+                )
+            }
+            Self::LoRa { dev_addr, freq_hz } => {
+                write!(
+                    f,
+                    "LoRa(0x{:02X}{:02X}{:02X}{:02X}, {}Hz)",
+                    dev_addr[0], dev_addr[1], dev_addr[2], dev_addr[3], freq_hz
+                )
+            }
+            Self::LoRaWan { dev_eui } => write!(f, "LoRaWan(0x{:016X})", dev_eui),
             Self::Serial { port } => write!(f, "Serial({port})"),
             Self::Ax25 { callsign, ssid } => write!(f, "Ax25({callsign}-{ssid})"),
             Self::I2p { .. } => write!(f, "I2p([destination])"),
@@ -437,139 +553,348 @@ impl fmt::Debug for TransportAddr {
     }
 }
 
-impl fmt::Display for TransportAddr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Udp(addr) => write!(f, "udp://{addr}"),
-            Self::Ble { device_id, .. } => {
-                write!(
-                    f,
-                    "ble://{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                    device_id[0],
-                    device_id[1],
-                    device_id[2],
-                    device_id[3],
-                    device_id[4],
-                    device_id[5]
-                )
-            }
-            Self::LoRa { device_addr, .. } => {
-                write!(
-                    f,
-                    "lora://0x{:02X}{:02X}{:02X}{:02X}",
-                    device_addr[0], device_addr[1], device_addr[2], device_addr[3]
-                )
-            }
-            Self::Serial { port } => write!(f, "serial://{port}"),
-            Self::Ax25 { callsign, ssid } => write!(f, "ax25://{callsign}-{ssid}"),
-            Self::I2p { .. } => write!(f, "i2p://[destination]"),
-            Self::Yggdrasil { address } => {
-                // Display as IPv6-style address
-                write!(
-                    f,
-                    "yggdrasil://{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}",
-                    address[0],
-                    address[1],
-                    address[2],
-                    address[3],
-                    address[4],
-                    address[5],
-                    address[6],
-                    address[7],
-                    address[8],
-                    address[9],
-                    address[10],
-                    address[11],
-                    address[12],
-                    address[13],
-                    address[14],
-                    address[15]
-                )
-            }
-            Self::Broadcast { transport_type } => write!(f, "broadcast://{transport_type}"),
+// ---------------------------------------------------------------------------
+// FromStr — canonical multiaddr format
+// ---------------------------------------------------------------------------
+
+impl FromStr for TransportAddr {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
+        if parts.is_empty() {
+            return Err(anyhow!("Invalid address format: {}", s));
+        }
+
+        match parts[0] {
+            "ip4" | "ip6" => parse_ip_addr(&parts, s),
+            "bt" => parse_bluetooth(&parts, s),
+            "ble" => parse_ble(&parts, s),
+            "lora" => parse_lora(&parts, s),
+            "lorawan" => parse_lorawan(&parts, s),
+            "serial" => parse_serial(&parts, s),
+            "ax25" => parse_ax25(&parts, s),
+            "i2p" => parse_i2p(&parts, s),
+            "yggdrasil" => parse_yggdrasil(&parts, s),
+            "broadcast" => parse_broadcast(&parts, s),
+            _ => Err(anyhow!("Unknown address scheme '{}' in: {}", parts[0], s)),
         }
     }
 }
 
-/// Convert a `SocketAddr` into a `TransportAddr::Udp`
-///
-/// This enables seamless migration from `SocketAddr` to `TransportAddr` in existing code.
-///
-/// # Example
-///
-/// ```rust
-/// use saorsa_transport::transport::TransportAddr;
-/// use std::net::SocketAddr;
-///
-/// // Direct conversion
-/// let socket_addr: SocketAddr = "192.168.1.1:9000".parse().unwrap();
-/// let transport_addr = TransportAddr::from(socket_addr);
-/// assert_eq!(transport_addr.as_socket_addr(), Some(socket_addr));
-///
-/// // Using Into trait
-/// let transport_addr: TransportAddr = "127.0.0.1:8080".parse::<SocketAddr>().unwrap().into();
-/// assert!(transport_addr.as_socket_addr().is_some());
-/// ```
+/// Parse `/ip4/...` or `/ip6/...` addresses.
+fn parse_ip_addr(parts: &[&str], original: &str) -> Result<TransportAddr> {
+    if parts.len() < 4 {
+        return Err(anyhow!("Invalid IP address format: {}", original));
+    }
+
+    let ip: IpAddr = parts[1]
+        .parse()
+        .map_err(|_| anyhow!("Invalid IP address: {}", parts[1]))?;
+
+    // Validate ip4/ip6 matches actual address type.
+    match (parts[0], &ip) {
+        ("ip4", IpAddr::V4(_)) | ("ip6", IpAddr::V6(_)) => {}
+        _ => return Err(anyhow!("IP version mismatch in: {}", original)),
+    }
+
+    let proto = parts[2];
+    let port: u16 = parts[3]
+        .parse()
+        .map_err(|_| anyhow!("Invalid port: {}", parts[3]))?;
+    let addr = SocketAddr::new(ip, port);
+
+    match proto {
+        "tcp" => {
+            if parts.len() > 4 {
+                return Err(anyhow!(
+                    "Unexpected trailing components after TCP address: {}",
+                    original
+                ));
+            }
+            Ok(TransportAddr::Tcp(addr))
+        }
+        "udp" => {
+            if parts.len() >= 5 && parts[4] == "quic" {
+                if parts.len() > 5 {
+                    return Err(anyhow!(
+                        "Unexpected trailing components after QUIC address: {}",
+                        original
+                    ));
+                }
+                Ok(TransportAddr::Quic(addr))
+            } else if parts.len() == 4 {
+                Ok(TransportAddr::Udp(addr))
+            } else {
+                Err(anyhow!("Invalid UDP address suffix in: {}", original))
+            }
+        }
+        _ => Err(anyhow!(
+            "Unsupported IP protocol '{}' in: {}",
+            proto,
+            original
+        )),
+    }
+}
+
+/// Parse `/bt/<MAC>/rfcomm/<channel>`.
+fn parse_bluetooth(parts: &[&str], original: &str) -> Result<TransportAddr> {
+    if parts.len() < 4 || parts[2] != "rfcomm" {
+        return Err(anyhow!("Invalid Bluetooth address: {}", original));
+    }
+    let mac = parse_mac(parts[1])?;
+    let channel: u8 = parts[3]
+        .parse()
+        .map_err(|_| anyhow!("Invalid RFCOMM channel: {}", parts[3]))?;
+    Ok(TransportAddr::Bluetooth { mac, channel })
+}
+
+/// Parse `/ble/<MAC>/l2cap/<psm>`.
+fn parse_ble(parts: &[&str], original: &str) -> Result<TransportAddr> {
+    if parts.len() < 4 || parts[2] != "l2cap" {
+        return Err(anyhow!("Invalid BLE address: {}", original));
+    }
+    let mac = parse_mac(parts[1])?;
+    let psm: u16 = parts[3]
+        .parse()
+        .map_err(|_| anyhow!("Invalid L2CAP PSM: {}", parts[3]))?;
+    Ok(TransportAddr::Ble { mac, psm })
+}
+
+/// Parse `/lora/<hex-dev-addr>/<freq-hz>`.
+fn parse_lora(parts: &[&str], original: &str) -> Result<TransportAddr> {
+    if parts.len() < 3 {
+        return Err(anyhow!("Invalid LoRa address: {}", original));
+    }
+    let hex = parts[1];
+    if hex.len() != 8 {
+        return Err(anyhow!(
+            "Invalid LoRa dev_addr (expected 8 hex chars): {}",
+            hex
+        ));
+    }
+    let val =
+        u32::from_str_radix(hex, 16).map_err(|_| anyhow!("Invalid LoRa dev_addr hex: {}", hex))?;
+    let dev_addr = val.to_be_bytes();
+    let freq_hz: u32 = parts[2]
+        .parse()
+        .map_err(|_| anyhow!("Invalid LoRa freq_hz: {}", parts[2]))?;
+    Ok(TransportAddr::LoRa { dev_addr, freq_hz })
+}
+
+/// Parse `/lorawan/<hex-dev-eui>`.
+fn parse_lorawan(parts: &[&str], original: &str) -> Result<TransportAddr> {
+    if parts.len() < 2 {
+        return Err(anyhow!("Invalid LoRaWAN address: {}", original));
+    }
+    let dev_eui = u64::from_str_radix(parts[1], 16)
+        .map_err(|_| anyhow!("Invalid LoRaWAN dev_eui hex: {}", parts[1]))?;
+    Ok(TransportAddr::LoRaWan { dev_eui })
+}
+
+/// Parse `/serial/<port-name>` (percent-encoded slashes).
+fn parse_serial(parts: &[&str], original: &str) -> Result<TransportAddr> {
+    if parts.len() < 2 {
+        return Err(anyhow!("Invalid serial address: {}", original));
+    }
+    // Rejoin remaining parts (they were split on '/') and decode percent-encoding.
+    let raw = parts[1..].join("/");
+    let port = raw.replace("%2F", "/").replace("%2f", "/");
+    Ok(TransportAddr::Serial { port })
+}
+
+/// Parse `/ax25/<callsign>/<ssid>`.
+fn parse_ax25(parts: &[&str], original: &str) -> Result<TransportAddr> {
+    if parts.len() < 3 {
+        return Err(anyhow!("Invalid AX.25 address: {}", original));
+    }
+    let callsign = parts[1].to_string();
+    let ssid: u8 = parts[2]
+        .parse()
+        .map_err(|_| anyhow!("Invalid AX.25 SSID: {}", parts[2]))?;
+    Ok(TransportAddr::Ax25 {
+        callsign,
+        ssid: ssid.min(15),
+    })
+}
+
+/// Parse `/i2p/<hex-destination>`.
+fn parse_i2p(parts: &[&str], original: &str) -> Result<TransportAddr> {
+    if parts.len() < 2 {
+        return Err(anyhow!("Invalid I2P address: {}", original));
+    }
+    let hex = parts[1];
+    let expected_hex_len = 387 * 2; // 774 hex chars
+    if hex.len() != expected_hex_len {
+        return Err(anyhow!(
+            "Invalid I2P destination length: expected {} hex chars, got {}",
+            expected_hex_len,
+            hex.len()
+        ));
+    }
+    let mut dest = [0u8; 387];
+    for i in 0..387 {
+        dest[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+            .map_err(|_| anyhow!("Invalid I2P hex at position {}: {}", i * 2, hex))?;
+    }
+    Ok(TransportAddr::I2p {
+        destination: Box::new(dest),
+    })
+}
+
+/// Parse `/yggdrasil/<hex-address>`.
+fn parse_yggdrasil(parts: &[&str], original: &str) -> Result<TransportAddr> {
+    if parts.len() < 2 {
+        return Err(anyhow!("Invalid Yggdrasil address: {}", original));
+    }
+    let hex = parts[1];
+    if hex.len() != 32 {
+        return Err(anyhow!(
+            "Invalid Yggdrasil address (expected 32 hex chars): {}",
+            hex
+        ));
+    }
+    let mut address = [0u8; 16];
+    for i in 0..16 {
+        address[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+            .map_err(|_| anyhow!("Invalid Yggdrasil hex at position {}: {}", i * 2, hex))?;
+    }
+    Ok(TransportAddr::Yggdrasil { address })
+}
+
+/// Parse `/broadcast/<transport-type>`.
+fn parse_broadcast(parts: &[&str], original: &str) -> Result<TransportAddr> {
+    if parts.len() < 2 {
+        return Err(anyhow!("Invalid broadcast address: {}", original));
+    }
+    let transport_type = match parts[1] {
+        "quic" => TransportType::Quic,
+        "tcp" => TransportType::Tcp,
+        "udp" => TransportType::Udp,
+        "bluetooth" => TransportType::Bluetooth,
+        "ble" => TransportType::Ble,
+        "lora" => TransportType::LoRa,
+        "lorawan" => TransportType::LoRaWan,
+        "serial" => TransportType::Serial,
+        "ax25" => TransportType::Ax25,
+        "i2p" => TransportType::I2p,
+        "yggdrasil" => TransportType::Yggdrasil,
+        _ => {
+            return Err(anyhow!(
+                "Unknown broadcast transport '{}' in: {}",
+                parts[1],
+                original
+            ));
+        }
+    };
+    Ok(TransportAddr::Broadcast { transport_type })
+}
+
+/// Parse a colon-separated MAC address string into 6 bytes.
+fn parse_mac(s: &str) -> Result<[u8; 6]> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 6 {
+        return Err(anyhow!("Invalid MAC address (expected 6 octets): {}", s));
+    }
+    let mut mac = [0u8; 6];
+    for (i, part) in parts.iter().enumerate() {
+        mac[i] = u8::from_str_radix(part, 16)
+            .map_err(|_| anyhow!("Invalid MAC octet '{}' in: {}", part, s))?;
+    }
+    Ok(mac)
+}
+
+// ---------------------------------------------------------------------------
+// Conversions
+// ---------------------------------------------------------------------------
+
+/// Convert a `SocketAddr` into a `TransportAddr::Quic` (the primary transport).
 impl From<SocketAddr> for TransportAddr {
     fn from(addr: SocketAddr) -> Self {
-        Self::Udp(addr)
+        Self::Quic(addr)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv4Addr;
 
     #[test]
-    fn test_udp_addr() {
+    fn test_quic_addr() {
         let addr: SocketAddr = "192.168.1.1:9000".parse().unwrap();
-        let transport_addr = TransportAddr::Udp(addr);
+        let transport_addr = TransportAddr::Quic(addr);
 
-        assert_eq!(transport_addr.transport_type(), TransportType::Udp);
+        assert_eq!(transport_addr.transport_type(), TransportType::Quic);
         assert_eq!(transport_addr.as_socket_addr(), Some(addr));
         assert!(!transport_addr.is_broadcast());
     }
 
     #[test]
+    fn test_tcp_addr() {
+        let addr: SocketAddr = "10.0.0.1:8080".parse().unwrap();
+        let transport_addr = TransportAddr::Tcp(addr);
+
+        assert_eq!(transport_addr.transport_type(), TransportType::Tcp);
+        assert_eq!(transport_addr.as_socket_addr(), Some(addr));
+    }
+
+    #[test]
+    fn test_udp_addr() {
+        let addr: SocketAddr = "10.0.0.1:5000".parse().unwrap();
+        let transport_addr = TransportAddr::Udp(addr);
+
+        assert_eq!(transport_addr.transport_type(), TransportType::Udp);
+        assert_eq!(transport_addr.as_socket_addr(), Some(addr));
+    }
+
+    #[test]
+    fn test_bluetooth_addr() {
+        let mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        let addr = TransportAddr::Bluetooth { mac, channel: 5 };
+
+        assert_eq!(addr.transport_type(), TransportType::Bluetooth);
+        assert!(addr.as_socket_addr().is_none());
+    }
+
+    #[test]
     fn test_ble_addr() {
-        let device_id = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
-        let addr = TransportAddr::ble(device_id, None);
+        let mac = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
+        let addr = TransportAddr::ble(mac, 128);
 
         assert_eq!(addr.transport_type(), TransportType::Ble);
         assert!(addr.as_socket_addr().is_none());
 
         let debug_str = format!("{addr:?}");
         assert!(debug_str.contains("12:34:56:78:9A:BC"));
+        assert!(debug_str.contains("psm128"));
     }
 
     #[test]
     fn test_lora_addr() {
-        let device_addr = [0xDE, 0xAD, 0xBE, 0xEF];
-        let addr = TransportAddr::lora(device_addr);
+        let dev_addr = [0xDE, 0xAD, 0xBE, 0xEF];
+        let addr = TransportAddr::lora(dev_addr, 868_000_000);
 
         assert_eq!(addr.transport_type(), TransportType::LoRa);
 
-        if let TransportAddr::LoRa { params, .. } = &addr {
-            assert_eq!(params.spreading_factor, 12);
-            assert_eq!(params.bandwidth_khz, 125);
+        if let TransportAddr::LoRa {
+            dev_addr: da,
+            freq_hz,
+        } = &addr
+        {
+            assert_eq!(da, &[0xDE, 0xAD, 0xBE, 0xEF]);
+            assert_eq!(*freq_hz, 868_000_000);
+        } else {
+            panic!("Expected LoRa variant");
         }
     }
 
     #[test]
-    fn test_lora_custom_params() {
-        let device_addr = [0xDE, 0xAD, 0xBE, 0xEF];
-        let params = LoRaParams {
-            spreading_factor: 7,
-            bandwidth_khz: 500,
-            coding_rate: 8,
+    fn test_lorawan_addr() {
+        let addr = TransportAddr::LoRaWan {
+            dev_eui: 0x0011_2233_4455_6677,
         };
-        let addr = TransportAddr::lora_with_params(device_addr, params.clone());
-
-        if let TransportAddr::LoRa { params: p, .. } = &addr {
-            assert_eq!(p.spreading_factor, 7);
-            assert_eq!(p.bandwidth_khz, 500);
-            assert_eq!(p.coding_rate, 8);
-        }
+        assert_eq!(addr.transport_type(), TransportType::LoRaWan);
     }
 
     #[test]
@@ -578,7 +903,7 @@ mod tests {
         assert_eq!(addr.transport_type(), TransportType::Serial);
 
         let display = format!("{addr}");
-        assert_eq!(display, "serial:///dev/ttyUSB0");
+        assert_eq!(display, "/serial/%2Fdev%2FttyUSB0");
     }
 
     #[test]
@@ -594,10 +919,10 @@ mod tests {
 
     #[test]
     fn test_ax25_ssid_clamp() {
-        let addr = TransportAddr::ax25("N0CALL", 20); // SSID > 15
+        let addr = TransportAddr::ax25("N0CALL", 20);
 
         if let TransportAddr::Ax25 { ssid, .. } = &addr {
-            assert_eq!(*ssid, 15); // Should be clamped
+            assert_eq!(*ssid, 15);
         }
     }
 
@@ -614,72 +939,187 @@ mod tests {
         let socket_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
         let transport_addr: TransportAddr = socket_addr.into();
 
-        assert_eq!(transport_addr, TransportAddr::Udp(socket_addr));
+        assert_eq!(transport_addr, TransportAddr::Quic(socket_addr));
     }
 
     #[test]
     fn test_from_socket_addr_ipv6() {
-        // Test IPv6 socket address conversion
         let socket_addr: SocketAddr = "[::1]:9000".parse().unwrap();
         let transport_addr = TransportAddr::from(socket_addr);
 
-        // Verify it's a UDP variant
-        assert_eq!(transport_addr.transport_type(), TransportType::Udp);
-
-        // Verify roundtrip conversion preserves IPv6 address
+        assert_eq!(transport_addr.transport_type(), TransportType::Quic);
         assert_eq!(transport_addr.as_socket_addr(), Some(socket_addr));
+    }
 
-        // Verify it's actually an IPv6 address
-        match transport_addr.as_socket_addr().unwrap() {
-            SocketAddr::V6(_) => {} // Expected
-            SocketAddr::V4(_) => panic!("Expected IPv6 address, got IPv4"),
-        }
+    // -----------------------------------------------------------------------
+    // Display roundtrip tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_display_roundtrip_quic() {
+        let addr = TransportAddr::Quic("192.168.1.1:9000".parse().unwrap());
+        let s = addr.to_string();
+        assert_eq!(s, "/ip4/192.168.1.1/udp/9000/quic");
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
     }
 
     #[test]
-    fn test_socket_addr_conversion_pattern() {
-        // Test the conversion pattern for seamless migration
-        let socket_addr: SocketAddr = "192.168.1.100:5000".parse().unwrap();
-
-        // From conversion
-        let transport_addr = TransportAddr::from(socket_addr);
-        assert_eq!(transport_addr.transport_type(), TransportType::Udp);
-
-        // Round-trip conversion
-        assert_eq!(transport_addr.as_socket_addr(), Some(socket_addr));
-
-        // Into conversion
-        let transport_addr2: TransportAddr = socket_addr.into();
-        assert_eq!(transport_addr, transport_addr2);
-
-        // Non-UDP addresses return None
-        let ble = TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None);
-        assert_eq!(ble.as_socket_addr(), None);
-
-        let serial = TransportAddr::serial("/dev/ttyUSB0");
-        assert_eq!(serial.as_socket_addr(), None);
+    fn test_display_roundtrip_tcp() {
+        let addr = TransportAddr::Tcp("10.0.0.1:8080".parse().unwrap());
+        let s = addr.to_string();
+        assert_eq!(s, "/ip4/10.0.0.1/tcp/8080");
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
     }
 
     #[test]
-    fn test_display_formats() {
-        let udp_addr = TransportAddr::Udp("192.168.1.1:9000".parse().unwrap());
-        assert_eq!(format!("{udp_addr}"), "udp://192.168.1.1:9000");
+    fn test_display_roundtrip_udp() {
+        let addr = TransportAddr::Udp("10.0.0.1:5000".parse().unwrap());
+        let s = addr.to_string();
+        assert_eq!(s, "/ip4/10.0.0.1/udp/5000");
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
 
-        let ble_addr = TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None);
-        assert_eq!(format!("{ble_addr}"), "ble://AA:BB:CC:DD:EE:FF");
+    #[test]
+    fn test_display_roundtrip_ipv6_quic() {
+        let addr = TransportAddr::Quic("[::1]:9000".parse().unwrap());
+        let s = addr.to_string();
+        assert_eq!(s, "/ip6/::1/udp/9000/quic");
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
 
-        let serial_addr = TransportAddr::serial("COM3");
-        assert_eq!(format!("{serial_addr}"), "serial://COM3");
+    #[test]
+    fn test_display_roundtrip_bluetooth() {
+        let addr = TransportAddr::Bluetooth {
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            channel: 5,
+        };
+        let s = addr.to_string();
+        assert_eq!(s, "/bt/AA:BB:CC:DD:EE:FF/rfcomm/5");
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
+
+    #[test]
+    fn test_display_roundtrip_ble() {
+        let addr = TransportAddr::ble([0x01, 0x02, 0x03, 0x04, 0x05, 0x06], 128);
+        let s = addr.to_string();
+        assert_eq!(s, "/ble/01:02:03:04:05:06/l2cap/128");
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
+
+    #[test]
+    fn test_display_roundtrip_lora() {
+        let addr = TransportAddr::lora([0xDE, 0xAD, 0xBE, 0xEF], 868_000_000);
+        let s = addr.to_string();
+        assert_eq!(s, "/lora/deadbeef/868000000");
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
+
+    #[test]
+    fn test_display_roundtrip_lorawan() {
+        let addr = TransportAddr::LoRaWan {
+            dev_eui: 0x0011_2233_4455_6677,
+        };
+        let s = addr.to_string();
+        assert_eq!(s, "/lorawan/0011223344556677");
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
+
+    #[test]
+    fn test_display_roundtrip_serial() {
+        let addr = TransportAddr::serial("/dev/ttyUSB0");
+        let s = addr.to_string();
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
+
+    #[test]
+    fn test_display_roundtrip_ax25() {
+        let addr = TransportAddr::ax25("N0CALL", 5);
+        let s = addr.to_string();
+        assert_eq!(s, "/ax25/N0CALL/5");
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
+
+    #[test]
+    fn test_display_roundtrip_yggdrasil() {
+        let addr = TransportAddr::yggdrasil([
+            0x02, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+            0x07, 0x08,
+        ]);
+        let s = addr.to_string();
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
+
+    #[test]
+    fn test_display_roundtrip_broadcast() {
+        let addr = TransportAddr::broadcast(TransportType::Ble);
+        let s = addr.to_string();
+        assert_eq!(s, "/broadcast/ble");
+        let parsed: TransportAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
     }
 
     #[test]
     fn test_transport_type_display() {
+        assert_eq!(format!("{}", TransportType::Quic), "QUIC");
+        assert_eq!(format!("{}", TransportType::Tcp), "TCP");
         assert_eq!(format!("{}", TransportType::Udp), "UDP");
+        assert_eq!(format!("{}", TransportType::Bluetooth), "Bluetooth");
         assert_eq!(format!("{}", TransportType::Ble), "BLE");
         assert_eq!(format!("{}", TransportType::LoRa), "LoRa");
+        assert_eq!(format!("{}", TransportType::LoRaWan), "LoRaWAN");
         assert_eq!(format!("{}", TransportType::Serial), "Serial");
         assert_eq!(format!("{}", TransportType::Ax25), "AX.25");
         assert_eq!(format!("{}", TransportType::I2p), "I2P");
         assert_eq!(format!("{}", TransportType::Yggdrasil), "Yggdrasil");
+    }
+
+    #[test]
+    fn test_invalid_format_rejected() {
+        assert!("garbage".parse::<TransportAddr>().is_err());
+        assert!("/ip4/127.0.0.1/udp".parse::<TransportAddr>().is_err());
+        assert!("/ip4/not-an-ip/tcp/80".parse::<TransportAddr>().is_err());
+        assert!("/ip4/127.0.0.1/sctp/80".parse::<TransportAddr>().is_err());
+        assert!("".parse::<TransportAddr>().is_err());
+    }
+
+    #[test]
+    fn test_kind() {
+        assert_eq!(
+            TransportAddr::Quic(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).kind(),
+            "quic"
+        );
+        assert_eq!(
+            TransportAddr::Tcp(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).kind(),
+            "tcp"
+        );
+        assert_eq!(
+            TransportAddr::Bluetooth {
+                mac: [0; 6],
+                channel: 0
+            }
+            .kind(),
+            "bluetooth"
+        );
+    }
+
+    #[test]
+    fn test_non_ip_transport_accessors() {
+        let addr = TransportAddr::Bluetooth {
+            mac: [0; 6],
+            channel: 1,
+        };
+        assert_eq!(addr.as_socket_addr(), None);
+        assert!(!addr.is_broadcast());
     }
 }

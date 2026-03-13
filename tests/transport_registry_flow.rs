@@ -24,6 +24,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+/// Default BLE L2CAP PSM value (matches `DEFAULT_BLE_L2CAP_PSM` from the `ble` feature).
+const DEFAULT_BLE_L2CAP_PSM: u16 = 0x0080;
+
 /// Test that transport providers flow from NodeConfig to P2pEndpoint
 ///
 /// This is the main acceptance criteria for Phase 1.1:
@@ -261,7 +264,10 @@ async fn test_multi_transport_concurrent_io() {
                 name: "MockBLE".to_string(),
                 capabilities: saorsa_transport::transport::TransportCapabilities::ble(),
                 online: AtomicBool::new(true),
-                local_addr: TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], None),
+                local_addr: TransportAddr::ble(
+                    [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
+                    DEFAULT_BLE_L2CAP_PSM,
+                ),
                 bytes_sent: AtomicU64::new(0),
                 bytes_received: AtomicU64::new(0),
                 inbound_tx: tokio::sync::Mutex::new(Some(tx)),

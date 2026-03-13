@@ -464,7 +464,7 @@ impl TransportRegistry {
     /// Returns `None` if no UDP transport with a socket is available.
     pub fn get_udp_socket(&self) -> Option<Arc<tokio::net::UdpSocket>> {
         for provider in &self.providers {
-            if provider.transport_type() == TransportType::Udp && provider.is_online() {
+            if provider.transport_type() == TransportType::Quic && provider.is_online() {
                 if let Some(socket) = provider.socket() {
                     return Some(socket.clone());
                 }
@@ -473,16 +473,16 @@ impl TransportRegistry {
         None
     }
 
-    /// Get the local address of the first UDP transport
+    /// Get the local address of the first QUIC (UDP-based) transport
     ///
     /// This is used to coordinate addresses between the transport layer
     /// and NAT traversal endpoints.
     ///
-    /// Returns `None` if no UDP transport is available.
+    /// Returns `None` if no QUIC transport is available.
     pub fn get_udp_local_addr(&self) -> Option<std::net::SocketAddr> {
         for provider in &self.providers {
-            if provider.transport_type() == TransportType::Udp && provider.is_online() {
-                if let Some(TransportAddr::Udp(addr)) = provider.local_addr() {
+            if provider.transport_type() == TransportType::Quic && provider.is_online() {
+                if let Some(TransportAddr::Quic(addr)) = provider.local_addr() {
                     return Some(addr);
                 }
             }
@@ -507,7 +507,7 @@ impl TransportRegistry {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let ble_addr = TransportAddr::ble([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], None);
+    /// let ble_addr = TransportAddr::ble([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], 128);
     /// registry.send(b"hello", &ble_addr).await?;
     /// ```
     pub async fn send(&self, data: &[u8], dest: &TransportAddr) -> Result<(), TransportError> {
@@ -552,10 +552,10 @@ mod tests {
             let (_, rx) = mpsc::channel(16);
             Self {
                 name: "MockUDP".to_string(),
-                transport_type: TransportType::Udp,
+                transport_type: TransportType::Quic,
                 capabilities: TransportCapabilities::broadband(),
                 online: AtomicBool::new(true),
-                local_addr: Some(TransportAddr::Udp("127.0.0.1:9000".parse().unwrap())),
+                local_addr: Some(TransportAddr::Quic("127.0.0.1:9000".parse().unwrap())),
                 inbound_rx: tokio::sync::Mutex::new(Some(rx)),
             }
         }
@@ -569,7 +569,7 @@ mod tests {
                 online: AtomicBool::new(true),
                 local_addr: Some(TransportAddr::ble(
                     [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
-                    None,
+                    128,
                 )),
                 inbound_rx: tokio::sync::Mutex::new(Some(rx)),
             }
@@ -658,7 +658,7 @@ mod tests {
         let transport = MockTransport::new_udp();
 
         let dest: SocketAddr = "192.168.1.1:9000".parse().unwrap();
-        let result = transport.send(b"hello", &TransportAddr::Udp(dest)).await;
+        let result = transport.send(b"hello", &TransportAddr::Quic(dest)).await;
         assert!(result.is_ok());
     }
 
@@ -666,12 +666,12 @@ mod tests {
     async fn test_transport_address_mismatch() {
         let transport = MockTransport::new_udp();
 
-        let dest = TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], None);
+        let dest = TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], 128);
         let result = transport.send(b"hello", &dest).await;
 
         match result {
             Err(TransportError::AddressMismatch { expected, actual }) => {
-                assert_eq!(expected, TransportType::Udp);
+                assert_eq!(expected, TransportType::Quic);
                 assert_eq!(actual, TransportType::Ble);
             }
             _ => panic!("expected AddressMismatch error"),
@@ -683,7 +683,7 @@ mod tests {
         let transport = MockTransport::new_ble();
         let large_data = vec![0u8; 500]; // Larger than BLE MTU of 244
 
-        let dest = TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], None);
+        let dest = TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], 128);
         let result = transport.send(&large_data, &dest).await;
 
         match result {
@@ -701,7 +701,7 @@ mod tests {
         transport.shutdown().await.unwrap();
 
         let dest: SocketAddr = "192.168.1.1:9000".parse().unwrap();
-        let result = transport.send(b"hello", &TransportAddr::Udp(dest)).await;
+        let result = transport.send(b"hello", &TransportAddr::Quic(dest)).await;
 
         assert!(matches!(result, Err(TransportError::Offline)));
         assert!(!transport.is_online());
@@ -719,7 +719,7 @@ mod tests {
         assert!(!registry.is_empty());
 
         // Get by type
-        let udp_providers = registry.providers_by_type(TransportType::Udp);
+        let udp_providers = registry.providers_by_type(TransportType::Quic);
         assert_eq!(udp_providers.len(), 1);
 
         let ble_providers = registry.providers_by_type(TransportType::Ble);
@@ -736,20 +736,20 @@ mod tests {
         registry.register(Arc::new(MockTransport::new_udp()));
         registry.register(Arc::new(MockTransport::new_ble()));
 
-        // Can find UDP provider
-        let udp_addr: SocketAddr = "192.168.1.1:9000".parse().unwrap();
-        let provider = registry.provider_for_addr(&TransportAddr::Udp(udp_addr));
+        // Can find QUIC provider
+        let quic_addr: SocketAddr = "192.168.1.1:9000".parse().unwrap();
+        let provider = registry.provider_for_addr(&TransportAddr::Quic(quic_addr));
         assert!(provider.is_some());
-        assert_eq!(provider.unwrap().transport_type(), TransportType::Udp);
+        assert_eq!(provider.unwrap().transport_type(), TransportType::Quic);
 
         // Can find BLE provider
-        let ble_addr = TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], None);
+        let ble_addr = TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], 128);
         let provider = registry.provider_for_addr(&ble_addr);
         assert!(provider.is_some());
         assert_eq!(provider.unwrap().transport_type(), TransportType::Ble);
 
         // No LoRa provider
-        let lora_addr = TransportAddr::lora([0xDE, 0xAD, 0xBE, 0xEF]);
+        let lora_addr = TransportAddr::lora([0xDE, 0xAD, 0xBE, 0xEF], 868_000_000);
         let provider = registry.provider_for_addr(&lora_addr);
         assert!(provider.is_none());
     }
@@ -773,7 +773,7 @@ mod tests {
         let diag = TransportDiagnostics::from_provider(&transport);
 
         assert_eq!(diag.name, "MockUDP");
-        assert_eq!(diag.transport_type, TransportType::Udp);
+        assert_eq!(diag.transport_type, TransportType::Quic);
         assert_eq!(diag.protocol_engine, ProtocolEngine::Quic);
         assert!(diag.is_online);
         assert!(diag.local_addr.is_some());
@@ -782,10 +782,10 @@ mod tests {
     #[test]
     fn test_transport_error_display() {
         let err = TransportError::AddressMismatch {
-            expected: TransportType::Udp,
+            expected: TransportType::Quic,
             actual: TransportType::Ble,
         };
-        assert!(format!("{err}").contains("UDP"));
+        assert!(format!("{err}").contains("QUIC"));
         assert!(format!("{err}").contains("BLE"));
 
         let err = TransportError::MessageTooLarge {
@@ -831,7 +831,7 @@ mod tests {
 
         // Verify they're the right ones
         let online_types: Vec<_> = online.iter().map(|p| p.transport_type()).collect();
-        assert!(online_types.contains(&TransportType::Udp));
+        assert!(online_types.contains(&TransportType::Quic));
         assert!(online_types.contains(&TransportType::Ble));
     }
 
@@ -863,11 +863,11 @@ mod tests {
         registry.register(Arc::new(MockTransport::new_udp()));
         registry.register(Arc::new(MockTransport::new_ble()));
 
-        // Get UDP providers
-        let udp_providers = registry.providers_by_type(TransportType::Udp);
-        assert_eq!(udp_providers.len(), 1);
-        assert_eq!(udp_providers[0].transport_type(), TransportType::Udp);
-        assert_eq!(udp_providers[0].name(), "MockUDP");
+        // Get QUIC providers
+        let quic_providers = registry.providers_by_type(TransportType::Quic);
+        assert_eq!(quic_providers.len(), 1);
+        assert_eq!(quic_providers[0].transport_type(), TransportType::Quic);
+        assert_eq!(quic_providers[0].name(), "MockUDP");
 
         // Get BLE providers
         let ble_providers = registry.providers_by_type(TransportType::Ble);
@@ -881,23 +881,23 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_default_includes_udp() {
-        // This test verifies that we can create a registry with UDP
+    fn test_registry_default_includes_quic() {
+        // This test verifies that we can create a registry with QUIC
         let mut registry = TransportRegistry::new();
 
-        // Register a UDP provider
+        // Register a QUIC provider
         registry.register(Arc::new(MockTransport::new_udp()));
 
-        // Verify UDP provider is present
+        // Verify QUIC provider is present
         assert_eq!(registry.len(), 1);
 
-        let udp_providers = registry.providers_by_type(TransportType::Udp);
-        assert_eq!(udp_providers.len(), 1);
+        let quic_providers = registry.providers_by_type(TransportType::Quic);
+        assert_eq!(quic_providers.len(), 1);
 
         // Verify it's online and has capabilities
-        let provider = &udp_providers[0];
+        let provider = &quic_providers[0];
         assert!(provider.is_online());
-        assert_eq!(provider.transport_type(), TransportType::Udp);
+        assert_eq!(provider.transport_type(), TransportType::Quic);
         assert!(provider.capabilities().supports_full_quic());
     }
 }

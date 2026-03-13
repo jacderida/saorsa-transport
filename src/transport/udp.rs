@@ -207,7 +207,7 @@ impl UdpTransport {
                             Ok((len, source)) => {
                                 let datagram = InboundDatagram {
                                     data: buf[..len].to_vec(),
-                                    source: TransportAddr::Udp(source),
+                                    source: TransportAddr::Quic(source),
                                     received_at: Instant::now(),
                                     link_quality: None,
                                 };
@@ -247,7 +247,7 @@ impl TransportProvider for UdpTransport {
     }
 
     fn transport_type(&self) -> TransportType {
-        TransportType::Udp
+        TransportType::Quic
     }
 
     fn capabilities(&self) -> &TransportCapabilities {
@@ -255,7 +255,7 @@ impl TransportProvider for UdpTransport {
     }
 
     fn local_addr(&self) -> Option<TransportAddr> {
-        Some(TransportAddr::Udp(self.local_addr))
+        Some(TransportAddr::Quic(self.local_addr))
     }
 
     async fn send(&self, data: &[u8], dest: &TransportAddr) -> Result<(), TransportError> {
@@ -264,10 +264,10 @@ impl TransportProvider for UdpTransport {
         }
 
         let socket_addr = match dest {
-            TransportAddr::Udp(addr) => *addr,
+            TransportAddr::Quic(addr) => *addr,
             _ => {
                 return Err(TransportError::AddressMismatch {
-                    expected: TransportType::Udp,
+                    expected: TransportType::Quic,
                     actual: dest.transport_type(),
                 });
             }
@@ -327,7 +327,7 @@ impl TransportProvider for UdpTransport {
             self.local_addr.port(),
         );
 
-        self.send(data, &TransportAddr::Udp(broadcast_addr)).await
+        self.send(data, &TransportAddr::Quic(broadcast_addr)).await
     }
 
     async fn link_quality(&self, _peer: &TransportAddr) -> Option<LinkQuality> {
@@ -363,12 +363,12 @@ mod tests {
             .unwrap();
 
         assert!(transport.is_online());
-        assert_eq!(transport.transport_type(), TransportType::Udp);
+        assert_eq!(transport.transport_type(), TransportType::Quic);
         assert!(transport.capabilities().supports_full_quic());
 
         let local_addr = transport.local_addr();
         assert!(local_addr.is_some());
-        if let Some(TransportAddr::Udp(addr)) = local_addr {
+        if let Some(TransportAddr::Quic(addr)) = local_addr {
             assert_eq!(
                 addr.ip(),
                 std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
@@ -401,12 +401,12 @@ mod tests {
             .await
             .unwrap();
 
-        let ble_addr = TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], None);
+        let ble_addr = TransportAddr::ble([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], 128);
         let result = transport.send(b"hello", &ble_addr).await;
 
         match result {
             Err(TransportError::AddressMismatch { expected, actual }) => {
-                assert_eq!(expected, TransportType::Udp);
+                assert_eq!(expected, TransportType::Quic);
                 assert_eq!(actual, TransportType::Ble);
             }
             _ => panic!("expected AddressMismatch error"),
@@ -424,7 +424,7 @@ mod tests {
         assert!(!transport.is_online());
 
         // Sending after shutdown should fail
-        let dest = TransportAddr::Udp("127.0.0.1:9000".parse().unwrap());
+        let dest = TransportAddr::Quic("127.0.0.1:9000".parse().unwrap());
         let result = transport.send(b"hello", &dest).await;
         assert!(matches!(result, Err(TransportError::Offline)));
     }

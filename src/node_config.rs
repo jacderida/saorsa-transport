@@ -199,7 +199,7 @@ impl NodeConfigBuilder {
     /// use saorsa_transport::transport::TransportAddr;
     /// let config = NodeConfig::builder()
     ///     .known_peer(TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()))
-    ///     .known_peer(TransportAddr::ble([0x11, 0x22, 0x33, 0x44, 0x55, 0x66], None))
+    ///     .known_peer(TransportAddr::ble([0x11, 0x22, 0x33, 0x44, 0x55, 0x66], 0x0080))
     ///     .build();
     /// ```
     pub fn known_peer(mut self, addr: impl Into<TransportAddr>) -> Self {
@@ -232,7 +232,7 @@ impl NodeConfigBuilder {
     /// use saorsa_transport::transport::TransportAddr;
     /// let mixed = vec![
     ///     TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()),
-    ///     TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], None),
+    ///     TransportAddr::ble([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], 0x0080),
     ///     TransportAddr::serial("/dev/ttyUSB0"),
     /// ];
     /// let config = NodeConfig::builder()
@@ -532,8 +532,8 @@ mod tests {
         assert_eq!(config.known_peers.len(), 2);
 
         // Check that TransportAddr types are maintained
-        assert!(matches!(config.known_peers[0], TransportAddr::Udp(_)));
-        assert!(matches!(config.known_peers[1], TransportAddr::Udp(_)));
+        assert!(matches!(config.known_peers[0], TransportAddr::Quic(_)));
+        assert!(matches!(config.known_peers[1], TransportAddr::Quic(_)));
 
         // Verify actual addresses match
         assert_eq!(config.known_peers[0], udp_peer);

@@ -105,8 +105,8 @@
 //!
 //! // Connect to a BLE device
 //! let ble_addr = TransportAddr::Ble {
-//!     device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-//!     service_uuid: None,
+//!     mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+//!     psm: 0x0080,
 //! };
 //! let conn_id = handle.connect(&ble_addr)?;
 //!

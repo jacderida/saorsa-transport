@@ -75,7 +75,7 @@ impl ConstrainedEngineAdapter {
     /// For non-UDP transports (BLE, LoRa, etc.), we create a synthetic
     /// SocketAddr that maps to the real transport address.
     fn get_or_create_socket_addr(&mut self, addr: &TransportAddr) -> SocketAddr {
-        if let TransportAddr::Udp(socket_addr) = addr {
+        if let TransportAddr::Quic(socket_addr) = addr {
             // UDP addresses can be used directly
             return *socket_addr;
         }
@@ -109,7 +109,7 @@ impl ConstrainedEngineAdapter {
         self.reverse_map
             .get(socket_addr)
             .cloned()
-            .unwrap_or(TransportAddr::Udp(*socket_addr))
+            .unwrap_or(TransportAddr::Quic(*socket_addr))
     }
 
     /// Initiate a connection to a remote address
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn test_adapter_connect_udp() {
         let mut adapter = ConstrainedEngineAdapter::for_ble();
-        let addr = TransportAddr::Udp("192.168.1.100:8080".parse().unwrap());
+        let addr = TransportAddr::Quic("192.168.1.100:8080".parse().unwrap());
 
         let result = adapter.connect(&addr);
         assert!(result.is_ok());
@@ -336,8 +336,8 @@ mod tests {
     fn test_adapter_connect_ble() {
         let mut adapter = ConstrainedEngineAdapter::for_ble();
         let addr = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
 
         let result = adapter.connect(&addr);
@@ -354,8 +354,8 @@ mod tests {
     fn test_adapter_synthetic_address_reuse() {
         let mut adapter = ConstrainedEngineAdapter::for_ble();
         let addr = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
 
         // Get synthetic address twice - should be the same
@@ -369,12 +369,12 @@ mod tests {
         let mut adapter = ConstrainedEngineAdapter::for_ble();
 
         let addr1 = TransportAddr::Ble {
-            device_id: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            service_uuid: None,
+            mac: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            psm: 128,
         };
         let addr2 = TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: 128,
         };
 
         let socket1 = adapter.get_or_create_socket_addr(&addr1);

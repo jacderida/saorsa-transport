@@ -14,6 +14,12 @@ use saorsa_transport::{
     transport::{TransportAddr, TransportCapabilities, TransportRegistry},
 };
 
+/// Default BLE L2CAP PSM value (matches `saorsa_transport::transport::DEFAULT_BLE_L2CAP_PSM`)
+const DEFAULT_BLE_L2CAP_PSM: u16 = 0x0080;
+
+/// Default LoRa frequency in Hz (EU868 band)
+const DEFAULT_LORA_FREQ_HZ: u32 = 868_000_000;
+
 /// Benchmark engine selection for different transport types
 fn bench_engine_selection(c: &mut Criterion) {
     let mut group = c.benchmark_group("engine_selection");
@@ -22,12 +28,12 @@ fn bench_engine_selection(c: &mut Criterion) {
     let udp_addr: std::net::SocketAddr = "192.168.1.100:9000".parse().unwrap();
     let udp_transport = TransportAddr::Udp(udp_addr);
     let ble_transport = TransportAddr::Ble {
-        device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        service_uuid: None,
+        mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
     let lora_transport = TransportAddr::LoRa {
-        device_addr: [0x12, 0x34, 0x56, 0x78],
-        params: saorsa_transport::transport::LoRaParams::default(),
+        dev_addr: [0x12, 0x34, 0x56, 0x78],
+        freq_hz: DEFAULT_LORA_FREQ_HZ,
     };
 
     // Benchmark UDP address selection
@@ -141,12 +147,12 @@ fn bench_capabilities_lookup(c: &mut Criterion) {
     let addresses = vec![
         TransportAddr::Udp("192.168.1.1:9000".parse().unwrap()),
         TransportAddr::Ble {
-            device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            service_uuid: None,
+            mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            psm: DEFAULT_BLE_L2CAP_PSM,
         },
         TransportAddr::LoRa {
-            device_addr: [0x12, 0x34, 0x56, 0x78],
-            params: saorsa_transport::transport::LoRaParams::default(),
+            dev_addr: [0x12, 0x34, 0x56, 0x78],
+            freq_hz: DEFAULT_LORA_FREQ_HZ,
         },
         TransportAddr::serial("/dev/ttyUSB0"),
         TransportAddr::I2p {
@@ -172,8 +178,8 @@ fn bench_constrained_connect(c: &mut Criterion) {
     let mut group = c.benchmark_group("constrained_connect");
 
     let ble_addr = TransportAddr::Ble {
-        device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        service_uuid: None,
+        mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     // Benchmark constrained connection creation
@@ -194,8 +200,8 @@ fn bench_stats_tracking(c: &mut Criterion) {
 
     let udp_addr = TransportAddr::Udp("192.168.1.100:9000".parse().unwrap());
     let ble_addr = TransportAddr::Ble {
-        device_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        service_uuid: None,
+        mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        psm: DEFAULT_BLE_L2CAP_PSM,
     };
 
     // Benchmark stats access

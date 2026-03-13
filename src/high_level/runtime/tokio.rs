@@ -109,13 +109,13 @@ impl AsyncUdpSocket for UdpSocket {
         };
 
         let len = buf.filled().len();
-        meta[0] = quinn_udp::RecvMeta {
-            len,
-            stride: len,
-            addr,
-            ecn: None,
-            dst_ip: None,
-        };
+        let mut recv_meta = quinn_udp::RecvMeta::default();
+        recv_meta.len = len;
+        recv_meta.stride = len;
+        recv_meta.addr = addr;
+        recv_meta.ecn = None;
+        recv_meta.dst_ip = None;
+        meta[0] = recv_meta;
 
         Poll::Ready(Ok(1))
     }

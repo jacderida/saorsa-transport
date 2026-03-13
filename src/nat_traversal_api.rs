@@ -3691,8 +3691,8 @@ impl NatTraversalEndpoint {
     /// // Advertise a BLE address
     /// endpoint.advertise_transport_address(
     ///     TransportAddr::Ble {
-    ///         device_id: [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC],
-    ///         service_uuid: None,
+    ///         mac: [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC],
+    ///         psm: 0x0080,
     ///     },
     ///     50,
     ///     Some(CapabilityFlags::ble()),
@@ -3878,12 +3878,16 @@ impl NatTraversalEndpoint {
 
         // Transport type bonus (0-10000)
         let transport_bonus = match candidate.transport_type() {
-            TransportType::Udp => 10000,
-            TransportType::Yggdrasil => 9000,
-            TransportType::I2p => 8000,
-            TransportType::Ble => 7000,
+            TransportType::Quic => 10000,
+            TransportType::Tcp => 9500,
+            TransportType::Udp => 9000,
+            TransportType::Yggdrasil => 8000,
+            TransportType::I2p => 7000,
+            TransportType::Bluetooth => 6500,
+            TransportType::Ble => 6000,
             TransportType::Serial => 5000,
             TransportType::LoRa => 3000,
+            TransportType::LoRaWan => 2500,
             TransportType::Ax25 => 2000,
         };
         score += transport_bonus;
