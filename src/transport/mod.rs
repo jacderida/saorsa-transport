@@ -116,8 +116,8 @@ pub use udp::UdpTransport;
 pub use ble::{
     BleConfig, BleConnection, BleConnectionState, BleTransport, CCCD_DISABLE,
     CCCD_ENABLE_INDICATION, CCCD_ENABLE_NOTIFICATION, CCCD_UUID, CharacteristicHandle,
-    ConnectionPoolStats, DiscoveredDevice, RX_CHARACTERISTIC_UUID, ResumeToken,
-    SAORSA_TRANSPORT_SERVICE_UUID, ScanEvent, ScanState, TX_CHARACTERISTIC_UUID,
+    ConnectionPoolStats, DEFAULT_BLE_L2CAP_PSM, DiscoveredDevice, RX_CHARACTERISTIC_UUID,
+    ResumeToken, SAORSA_TRANSPORT_SERVICE_UUID, ScanEvent, ScanState, TX_CHARACTERISTIC_UUID,
 };
 
 /// Create a default transport registry with UDP support

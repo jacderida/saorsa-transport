@@ -64,8 +64,8 @@ fn main() {
 
 #[cfg(feature = "ble")]
 use saorsa_transport::transport::{
-    BleConfig, BleTransport, DiscoveredDevice, SAORSA_TRANSPORT_SERVICE_UUID, TransportAddr,
-    TransportProvider,
+    BleConfig, BleTransport, DEFAULT_BLE_L2CAP_PSM, DiscoveredDevice,
+    SAORSA_TRANSPORT_SERVICE_UUID, TransportAddr, TransportProvider,
 };
 #[cfg(feature = "ble")]
 use std::io::{self, BufRead, Write};
@@ -300,7 +300,7 @@ async fn run_chat_session(
     println!("Type messages and press Enter to send.");
     println!("Type 'quit' or 'q' to disconnect.\n");
 
-    let dest = TransportAddr::ble(device_id, None);
+    let dest = TransportAddr::ble(device_id, DEFAULT_BLE_L2CAP_PSM);
 
     loop {
         print!("You: ");
