@@ -24,6 +24,7 @@
 //! The ciphertext contains the JSON-serialized CacheData.
 
 use super::entry::CachedPeer;
+use crate::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -31,7 +32,6 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use tracing::{debug, info, warn};
 use zeroize::Zeroize;
 
 /// Serializable cache data structure

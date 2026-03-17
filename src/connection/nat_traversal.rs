@@ -12,7 +12,7 @@ use std::{
 };
 
 use crate::shared::ConnectionId;
-use tracing::{debug, info, trace, warn};
+use crate::{debug, info, trace, warn};
 
 use super::{PortPredictor, PortPredictorConfig};
 use crate::{Instant, VarInt};
@@ -1490,10 +1490,10 @@ impl ResourceCleanupCoordinator {
             let is_failed = coord.state == CoordinationPhase::Failed;
 
             if is_expired || is_failed {
-                let round = coord.round;
+                let _round = coord.round;
                 *coordination = None;
                 cleaned += 1;
-                trace!("Cleaned up old coordination state for round {}", round);
+                trace!("Cleaned up old coordination state for round {}", _round);
             }
         }
 
@@ -3341,12 +3341,12 @@ impl NatTraversalState {
     /// This confirms that the source address can reach us.
     pub(super) fn record_successful_callback_probe(
         &mut self,
-        request_id: VarInt,
-        source_address: SocketAddr,
+        _request_id: VarInt,
+        _source_address: SocketAddr,
     ) {
         debug!(
             "Recording successful callback probe: request_id={}, source={}",
-            request_id, source_address
+            _request_id, _source_address
         );
         // Update statistics
         self.stats.callback_probes_received += 1;
@@ -3361,12 +3361,12 @@ impl NatTraversalState {
     /// Called when we receive a TryConnectToResponse indicating failure.
     pub(super) fn record_failed_callback_probe(
         &mut self,
-        request_id: VarInt,
-        error_code: Option<crate::frame::TryConnectError>,
+        _request_id: VarInt,
+        _error_code: Option<crate::frame::TryConnectError>,
     ) {
         debug!(
             "Recording failed callback probe: request_id={}, error={:?}",
-            request_id, error_code
+            _request_id, _error_code
         );
         // Update statistics
         self.stats.callback_probes_received += 1;
@@ -3717,24 +3717,24 @@ impl BootstrapCoordinator {
         // Enhanced address validation with amplification protection
         self.security_validator
             .enhanced_address_validation(frame.address, source_addr, now)
-            .inspect_err(|&e| {
+            .inspect_err(|&_e| {
                 self.stats.security_rejections += 1;
                 debug!(
                     "PUNCH_ME_NOW frame address validation failed from peer {:?}: {:?}",
                     hex::encode(&from_peer[..8]),
-                    e
+                    _e
                 );
             })?;
 
         // Comprehensive security validation
         self.security_validator
             .validate_punch_me_now_frame(frame, source_addr, from_peer, now)
-            .inspect_err(|&e| {
+            .inspect_err(|&_e| {
                 self.stats.security_rejections += 1;
                 debug!(
                     "PUNCH_ME_NOW frame validation failed from peer {:?}: {:?}",
                     hex::encode(&from_peer[..8]),
-                    e
+                    _e
                 );
             })?;
 

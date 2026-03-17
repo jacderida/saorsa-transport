@@ -54,10 +54,10 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::{debug, error, info, warn};
 use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
 
 use crate::Side;
 use crate::bootstrap_cache::{BootstrapCache, BootstrapTokenStore};
@@ -1188,11 +1188,11 @@ impl P2pEndpoint {
 
         // Handle all possible outcomes
         match (ipv4_result, ipv6_result) {
-            (Some(v4_conn), Some(v6_conn)) => {
+            (Some(_v4_conn), Some(v6_conn)) => {
                 // 🎉 BEST CASE: Both IPv4 AND IPv6 work - keep both!
                 info!(
                     "✓✓ Dual-stack success! IPv4: {}, IPv6: {} (maintaining both connections)",
-                    v4_conn.remote_addr, v6_conn.remote_addr
+                    _v4_conn.remote_addr, v6_conn.remote_addr
                 );
 
                 // Both connections already stored by try_connect_family
@@ -1233,41 +1233,41 @@ impl P2pEndpoint {
     async fn try_connect_family(
         &self,
         addresses: &[SocketAddr],
-        family_name: &str,
+        _family_name: &str,
     ) -> Option<PeerConnection> {
         if addresses.is_empty() {
-            debug!("{}: No addresses to try", family_name);
+            debug!("{}: No addresses to try", _family_name);
             return None;
         }
 
-        debug!("Trying {} {} addresses", addresses.len(), family_name);
+        debug!("Trying {} {} addresses", addresses.len(), _family_name);
 
-        for (idx, addr) in addresses.iter().enumerate() {
+        for (_idx, addr) in addresses.iter().enumerate() {
             debug!(
                 "  {} attempt {}/{}: {}",
-                family_name,
-                idx + 1,
+                _family_name,
+                _idx + 1,
                 addresses.len(),
                 addr
             );
 
             match timeout(Duration::from_secs(5), self.connect(*addr)).await {
                 Ok(Ok(peer_conn)) => {
-                    info!("✓ {} connection successful to {}", family_name, addr);
+                    info!("✓ {} connection successful to {}", _family_name, addr);
                     return Some(peer_conn);
                 }
-                Ok(Err(e)) => {
-                    debug!("  {} to {} failed: {}", family_name, addr, e);
+                Ok(Err(_e)) => {
+                    debug!("  {} to {} failed: {}", _family_name, addr, _e);
                     // Try next address
                 }
                 Err(_) => {
-                    debug!("  {} to {} timed out (5s)", family_name, addr);
+                    debug!("  {} to {} timed out (5s)", _family_name, addr);
                     // Try next address
                 }
             }
         }
 
-        debug!("{}: All {} addresses failed", family_name, addresses.len());
+        debug!("{}: All {} addresses failed", _family_name, addresses.len());
         None
     }
 
@@ -1754,7 +1754,7 @@ impl P2pEndpoint {
             target, relay_addr
         );
 
-        let public_addr = self
+        let _public_addr = self
             .inner
             .establish_relay_session(relay_addr)
             .await
@@ -1762,14 +1762,14 @@ impl P2pEndpoint {
 
         info!(
             "MASQUE relay session established via {} (public addr: {:?})",
-            relay_addr, public_addr
+            relay_addr, _public_addr
         );
 
         let conn = self.connect(target).await?;
 
         info!(
             "MASQUE relay connection succeeded to {} via {} (our relay addr: {:?})",
-            target, relay_addr, public_addr
+            target, relay_addr, _public_addr
         );
 
         Ok(conn)
@@ -1803,11 +1803,11 @@ impl P2pEndpoint {
                 let remote_public_key = extract_public_key_bytes_from_connection(&connection);
 
                 // They initiated the connection to us = Server side
-                if let Err(e) =
+                if let Err(_e) =
                     self.inner
                         .spawn_connection_handler(remote_addr, connection, Side::Server)
                 {
-                    error!("Failed to spawn connection handler: {}", e);
+                    error!("Failed to spawn connection handler: {}", _e);
                     return None;
                 }
 
@@ -1848,8 +1848,8 @@ impl P2pEndpoint {
 
                 Some(peer_conn)
             }
-            Err(e) => {
-                debug!("Accept failed: {}", e);
+            Err(_e) => {
+                debug!("Accept failed: {}", _e);
                 None
             }
         }
@@ -2140,8 +2140,8 @@ impl P2pEndpoint {
                     connected += 1;
                     info!("Connected to known peer {}", addr);
                 }
-                Err(e) => {
-                    warn!("Failed to connect to known peer {}: {}", addr, e);
+                Err(_e) => {
+                    warn!("Failed to connect to known peer {}: {}", addr, _e);
                 }
             }
         }
@@ -2211,7 +2211,7 @@ impl P2pEndpoint {
         // Bounded timeout prevents blocking when the remote peer is unresponsive.
         match timeout(SHUTDOWN_DRAIN_TIMEOUT, self.inner.shutdown()).await {
             Err(_) => warn!("Inner endpoint shutdown timed out, proceeding"),
-            Ok(Err(e)) => warn!("Inner endpoint shutdown error: {e}"),
+            Ok(Err(_e)) => warn!("Inner endpoint shutdown error: {_e}"),
             Ok(Ok(())) => {}
         }
     }
@@ -2243,8 +2243,8 @@ impl P2pEndpoint {
                 // Accept the next unidirectional stream
                 let mut recv_stream = match connection.accept_uni().await {
                     Ok(stream) => stream,
-                    Err(e) => {
-                        debug!("Reader task for {} ending: accept_uni error: {}", addr, e);
+                    Err(_e) => {
+                        debug!("Reader task for {} ending: accept_uni error: {}", addr, _e);
                         break;
                     }
                 };
@@ -2252,14 +2252,14 @@ impl P2pEndpoint {
                 let data = match recv_stream.read_to_end(max_read_bytes).await {
                     Ok(data) if data.is_empty() => continue,
                     Ok(data) => data,
-                    Err(e) => {
-                        debug!("Reader task for {}: read_to_end error: {}", addr, e);
+                    Err(_e) => {
+                        debug!("Reader task for {}: read_to_end error: {}", addr, _e);
                         break;
                     }
                 };
 
                 let data_len = data.len();
-                tracing::trace!("Reader task: {} bytes from {}", data_len, addr);
+                crate::trace!("Reader task: {} bytes from {}", data_len, addr);
 
                 // Update last_activity
                 if let Some(peer_conn) = connected_peers.write().await.get_mut(&addr) {
@@ -2272,7 +2272,7 @@ impl P2pEndpoint {
                 if data.len() == 2 && data[0] == HEALTH_CHECK_PREFIX {
                     if data[1] == HEALTH_PING[1] {
                         // Received PING — respond with PONG
-                        tracing::trace!("Health PING from {}, sending PONG", addr);
+                        crate::trace!("Health PING from {}, sending PONG", addr);
                         if let Ok(mut send) = connection.open_uni().await {
                             let _ = send.write_all(&HEALTH_PONG).await;
                             let _ = send.finish();
@@ -2280,7 +2280,7 @@ impl P2pEndpoint {
                         continue;
                     } else if data[1] == HEALTH_PONG[1] {
                         // Received PONG — update health timestamp
-                        tracing::trace!("Health PONG from {}", addr);
+                        crate::trace!("Health PONG from {}", addr);
                         if let Some(peer_conn) = connected_peers.write().await.get_mut(&addr) {
                             peer_conn.last_health_pong_received = Some(Instant::now());
                         }
@@ -2389,7 +2389,7 @@ impl P2pEndpoint {
                             .unwrap_or_else(|| wrapper.remote_addr.to_synthetic_socket_addr());
 
                         let data_len = data.len();
-                        tracing::trace!(
+                        crate::trace!(
                             "Constrained poller: {} bytes from {}",
                             data_len,
                             synthetic_addr
@@ -2462,13 +2462,13 @@ impl P2pEndpoint {
                         }
                     }
                     EngineEvent::ConnectionError {
-                        connection_id,
-                        error,
+                        connection_id: _connection_id,
+                        error: _error,
                     } => {
                         warn!(
                             "Constrained poller: conn_id={}, error={}",
-                            connection_id.value(),
-                            error
+                            _connection_id.value(),
+                            _error
                         );
                     }
                     EngineEvent::Transmit { .. } => {}
@@ -2607,11 +2607,11 @@ impl P2pEndpoint {
                                     if let Some(pc) = connected_peers.write().await.get_mut(addr) {
                                         pc.last_health_ping_sent = Some(Instant::now());
                                     }
-                                    tracing::trace!("Health PING sent to {}", addr);
+                                    crate::trace!("Health PING sent to {}", addr);
                                 }
                             }
-                            Err(e) => {
-                                debug!("Health check: failed to open stream to {}: {}", addr, e);
+                            Err(_e) => {
+                                debug!("Health check: failed to open stream to {}: {}", addr, _e);
                             }
                         }
                     }

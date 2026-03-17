@@ -217,7 +217,7 @@ impl StructuredEvent {
     pub fn log(&self) {
         match self.severity {
             EventSeverity::Trace => {
-                tracing::trace!(
+                crate::trace!(
                     component = %self.component,
                     kind = %self.kind,
                     peer_id = ?self.peer_id,
@@ -229,7 +229,7 @@ impl StructuredEvent {
                 );
             }
             EventSeverity::Debug => {
-                tracing::debug!(
+                crate::debug!(
                     component = %self.component,
                     kind = %self.kind,
                     peer_id = ?self.peer_id,
@@ -241,7 +241,7 @@ impl StructuredEvent {
                 );
             }
             EventSeverity::Info => {
-                tracing::info!(
+                crate::info!(
                     component = %self.component,
                     kind = %self.kind,
                     peer_id = ?self.peer_id,
@@ -253,7 +253,7 @@ impl StructuredEvent {
                 );
             }
             EventSeverity::Warn => {
-                tracing::warn!(
+                crate::warn!(
                     component = %self.component,
                     kind = %self.kind,
                     peer_id = ?self.peer_id,
@@ -265,7 +265,7 @@ impl StructuredEvent {
                 );
             }
             EventSeverity::Error => {
-                tracing::error!(
+                crate::error!(
                     component = %self.component,
                     kind = %self.kind,
                     peer_id = ?self.peer_id,

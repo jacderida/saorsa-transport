@@ -8,8 +8,8 @@
 use std::collections::hash_map::Entry;
 use std::mem;
 
+use crate::debug;
 use thiserror::Error;
-use tracing::debug;
 
 use super::state::get_or_insert_recv;
 use super::{ClosedStream, Retransmits, ShouldTransmit, StreamId, StreamsState};

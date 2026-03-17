@@ -44,9 +44,9 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use crate::{debug, info, warn};
 use thiserror::Error;
 use tokio::task::JoinHandle;
-use tracing::{debug, info, warn};
 
 /// Which address family to prefer when interleaving connection attempts.
 ///
@@ -234,7 +234,7 @@ enum AttemptResult<C> {
 /// The task sends its result (success or failure) through the provided channel sender.
 fn spawn_attempt<F, Fut, C, E>(
     addr: SocketAddr,
-    attempt_num: usize,
+    _attempt_num: usize,
     connect_fn: &F,
     tx: &tokio::sync::mpsc::UnboundedSender<AttemptResult<C>>,
 ) -> JoinHandle<()>
@@ -244,7 +244,7 @@ where
     C: Send + 'static,
     E: std::fmt::Display + Send + 'static,
 {
-    debug!(addr = %addr, attempt = attempt_num, "Starting connection attempt");
+    debug!(addr = %addr, attempt = _attempt_num, "Starting connection attempt");
     let fut = connect_fn(addr);
     let tx_clone = tx.clone();
     tokio::spawn(async move {

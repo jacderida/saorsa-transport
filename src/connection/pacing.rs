@@ -9,7 +9,7 @@
 
 use crate::{Duration, Instant};
 
-use tracing::warn;
+use crate::warn;
 
 /// A simple token-bucket pacer
 ///

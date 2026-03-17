@@ -7,9 +7,9 @@
 
 use crate::TransportError;
 use crate::VarInt;
+use crate::error;
 use crate::frame;
 use crate::transport_parameters::{Side, TransportParameters};
-use tracing::error;
 
 /// Enhanced error handling for transport parameter validation
 pub(crate) struct TransportParameterErrorHandler;
@@ -17,25 +17,25 @@ pub(crate) struct TransportParameterErrorHandler;
 impl TransportParameterErrorHandler {
     /// Log specific validation failures with RFC references
     pub(super) fn log_validation_failure(
-        param_name: &str,
-        value: u64,
-        expected: &str,
-        rfc_ref: &str,
+        _param_name: &str,
+        _value: u64,
+        _expected: &str,
+        _rfc_ref: &str,
     ) {
         error!(
-            param_name = param_name,
-            value = value,
-            expected = expected,
-            rfc_ref = rfc_ref,
+            param_name = _param_name,
+            value = _value,
+            expected = _expected,
+            rfc_ref = _rfc_ref,
             "Transport parameter validation failed"
         );
     }
 
     /// Log semantic validation errors
-    pub(super) fn log_semantic_error(error_desc: &str, context: &str) {
+    pub(super) fn log_semantic_error(_error_desc: &str, _context: &str) {
         error!(
-            error = error_desc,
-            context = context,
+            error = _error_desc,
+            context = _context,
             compliance = "RFC 9000 Section 18",
             "Transport parameter semantic validation failed"
         );
@@ -44,11 +44,11 @@ impl TransportParameterErrorHandler {
     /// Log NAT traversal parameter errors
     /// (Not currently used - kept for potential future diagnostic needs)
     #[allow(dead_code)]
-    pub(super) fn log_nat_traversal_error(side: Side, received_variant: &str, expected: &str) {
+    pub(super) fn log_nat_traversal_error(_side: Side, _received_variant: &str, _expected: &str) {
         error!(
-            side = ?side,
-            received = received_variant,
-            expected = expected,
+            side = ?_side,
+            received = _received_variant,
+            expected = _expected,
             compliance = "draft-seemann-quic-nat-traversal-02",
             "NAT traversal parameter role mismatch"
         );

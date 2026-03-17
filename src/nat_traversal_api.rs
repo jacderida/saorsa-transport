@@ -79,17 +79,17 @@ fn broadcast_address_to_peers(
     priority: u32,
 ) {
     for mut entry in connections.iter_mut() {
-        let remote_addr = *entry.key();
+        let _remote_addr = *entry.key();
         let conn = entry.value_mut();
         match conn.send_nat_address_advertisement(address, priority) {
-            Ok(seq) => {
+            Ok(_seq) => {
                 info!(
                     "Sent ADD_ADDRESS to {}: addr={}, seq={}",
-                    remote_addr, address, seq
+                    _remote_addr, address, _seq
                 );
             }
-            Err(e) => {
-                debug!("Failed to send ADD_ADDRESS to {}: {:?}", remote_addr, e);
+            Err(_e) => {
+                debug!("Failed to send ADD_ADDRESS to {}: {:?}", _remote_addr, _e);
             }
         }
     }
@@ -168,7 +168,7 @@ impl TransportCandidate {
     }
 }
 
-use tracing::{debug, error, info, trace, warn};
+use crate::{debug, error, info, trace, warn};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 // Use parking_lot for faster, non-poisoning locks that work better with async code
@@ -1360,7 +1360,7 @@ impl NatTraversalEndpoint {
             let transport_count = online_providers.len();
 
             if transport_count > 0 {
-                let transport_names: Vec<_> = online_providers
+                let _transport_names: Vec<_> = online_providers
                     .iter()
                     .map(|p| format!("{}({})", p.name(), p.transport_type()))
                     .collect();
@@ -1368,20 +1368,20 @@ impl NatTraversalEndpoint {
                 debug!(
                     "Listening on {} transports: {}",
                     transport_count,
-                    transport_names.join(", ")
+                    _transport_names.join(", ")
                 );
 
                 let mut handles = Vec::new();
 
                 for provider in online_providers {
                     let transport_type = provider.transport_type();
-                    let transport_name = provider.name().to_string();
+                    let _transport_name = provider.name().to_string();
 
                     // Skip UDP transports since they're already handled by the QUIC endpoint
                     if transport_type == crate::transport::TransportType::Udp {
                         debug!(
                             "Skipping UDP transport '{}' (already handled by QUIC endpoint)",
-                            transport_name
+                            _transport_name
                         );
                         continue;
                     }
@@ -1395,21 +1395,24 @@ impl NatTraversalEndpoint {
                     let event_tx_clone = endpoint.constrained_event_tx.clone();
 
                     let handle = tokio::spawn(async move {
-                        debug!("Started listening on transport '{}'", transport_name);
+                        debug!("Started listening on transport '{}'", _transport_name);
 
                         loop {
                             // Fallback shutdown check: notify_waiters() can be missed
                             // if no task is awaiting .notified() at the moment shutdown()
                             // fires, so we check the AtomicBool on each iteration.
                             if shutdown_flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                                debug!("Shutting down transport listener for '{}'", transport_name);
+                                debug!(
+                                    "Shutting down transport listener for '{}'",
+                                    _transport_name
+                                );
                                 break;
                             }
 
                             tokio::select! {
                                 // Instant shutdown via Notify
                                 _ = shutdown_notify_clone.notified() => {
-                                    debug!("Shutting down transport listener for '{}'", transport_name);
+                                    debug!("Shutting down transport listener for '{}'", _transport_name);
                                     break;
                                 }
 
@@ -1421,7 +1424,7 @@ impl NatTraversalEndpoint {
                                                 "Received {} bytes from {} on transport '{}' ({})",
                                                 datagram.data.len(),
                                                 datagram.source,
-                                                transport_name,
+                                                _transport_name,
                                                 transport_type
                                             );
 
@@ -1434,10 +1437,10 @@ impl NatTraversalEndpoint {
                                                 let mut engine = engine_clone.lock();
                                                 match engine.process_incoming(remote_addr, &datagram.data) {
                                                     Ok(responses) => responses,
-                                                    Err(e) => {
+                                                    Err(_e) => {
                                                         debug!(
                                                             "Constrained engine error processing packet from {}: {:?}",
-                                                            datagram.source, e
+                                                            datagram.source, _e
                                                         );
                                                         Vec::new()
                                                     }
@@ -1449,10 +1452,10 @@ impl NatTraversalEndpoint {
                                                 if let Some(registry) = &registry_clone {
                                                     for (_dest_addr, response_data) in responses {
                                                         // Send response back to the source transport address
-                                                        if let Err(e) = registry.send(&response_data, &datagram.source).await {
+                                                        if let Err(_e) = registry.send(&response_data, &datagram.source).await {
                                                             debug!(
                                                                 "Failed to send constrained response to {}: {:?}",
-                                                                datagram.source, e
+                                                                datagram.source, _e
                                                             );
                                                         }
                                                     }
@@ -1471,14 +1474,14 @@ impl NatTraversalEndpoint {
                                                         event,
                                                         remote_addr: source_addr.clone(),
                                                     };
-                                                    if let Err(e) = event_tx_clone.send(event_with_addr) {
-                                                        debug!("Failed to forward constrained event: {}", e);
+                                                    if let Err(_e) = event_tx_clone.send(event_with_addr) {
+                                                        debug!("Failed to forward constrained event: {}", _e);
                                                     }
                                                 }
                                             }
                                         }
                                         None => {
-                                            debug!("Transport '{}' inbound channel closed", transport_name);
+                                            debug!("Transport '{}' inbound channel closed", _transport_name);
                                             break;
                                         }
                                     }
@@ -1486,7 +1489,7 @@ impl NatTraversalEndpoint {
                             }
                         }
 
-                        debug!("Transport listener for '{}' terminated", transport_name);
+                        debug!("Transport listener for '{}' terminated", _transport_name);
                     });
 
                     handles.push(handle);
@@ -1758,7 +1761,7 @@ impl NatTraversalEndpoint {
             let transport_count = online_providers.len();
 
             if transport_count > 0 {
-                let transport_names: Vec<_> = online_providers
+                let _transport_names: Vec<_> = online_providers
                     .iter()
                     .map(|p| format!("{}({})", p.name(), p.transport_type()))
                     .collect();
@@ -1766,20 +1769,20 @@ impl NatTraversalEndpoint {
                 debug!(
                     "Listening on {} transports: {}",
                     transport_count,
-                    transport_names.join(", ")
+                    _transport_names.join(", ")
                 );
 
                 let mut handles = Vec::new();
 
                 for provider in online_providers {
                     let transport_type = provider.transport_type();
-                    let transport_name = provider.name().to_string();
+                    let _transport_name = provider.name().to_string();
 
                     // Skip UDP transports since they're already handled by the QUIC endpoint
                     if transport_type == crate::transport::TransportType::Udp {
                         debug!(
                             "Skipping UDP transport '{}' (already handled by QUIC endpoint)",
-                            transport_name
+                            _transport_name
                         );
                         continue;
                     }
@@ -1793,21 +1796,24 @@ impl NatTraversalEndpoint {
                     let event_tx_clone = endpoint.constrained_event_tx.clone();
 
                     let handle = tokio::spawn(async move {
-                        debug!("Started listening on transport '{}'", transport_name);
+                        debug!("Started listening on transport '{}'", _transport_name);
 
                         loop {
                             // Fallback shutdown check: notify_waiters() can be missed
                             // if no task is awaiting .notified() at the moment shutdown()
                             // fires, so we check the AtomicBool on each iteration.
                             if shutdown_flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                                debug!("Shutting down transport listener for '{}'", transport_name);
+                                debug!(
+                                    "Shutting down transport listener for '{}'",
+                                    _transport_name
+                                );
                                 break;
                             }
 
                             tokio::select! {
                                 // Instant shutdown via Notify
                                 _ = shutdown_notify_clone.notified() => {
-                                    debug!("Shutting down transport listener for '{}'", transport_name);
+                                    debug!("Shutting down transport listener for '{}'", _transport_name);
                                     break;
                                 }
 
@@ -1819,7 +1825,7 @@ impl NatTraversalEndpoint {
                                                 "Received {} bytes from {} on transport '{}' ({})",
                                                 datagram.data.len(),
                                                 datagram.source,
-                                                transport_name,
+                                                _transport_name,
                                                 transport_type
                                             );
 
@@ -1832,10 +1838,10 @@ impl NatTraversalEndpoint {
                                                 let mut engine = engine_clone.lock();
                                                 match engine.process_incoming(remote_addr, &datagram.data) {
                                                     Ok(responses) => responses,
-                                                    Err(e) => {
+                                                    Err(_e) => {
                                                         debug!(
                                                             "Constrained engine error processing packet from {}: {:?}",
-                                                            datagram.source, e
+                                                            datagram.source, _e
                                                         );
                                                         Vec::new()
                                                     }
@@ -1847,10 +1853,10 @@ impl NatTraversalEndpoint {
                                                 if let Some(registry) = &registry_clone {
                                                     for (_dest_addr, response_data) in responses {
                                                         // Send response back to the source transport address
-                                                        if let Err(e) = registry.send(&response_data, &datagram.source).await {
+                                                        if let Err(_e) = registry.send(&response_data, &datagram.source).await {
                                                             debug!(
                                                                 "Failed to send constrained response to {}: {:?}",
-                                                                datagram.source, e
+                                                                datagram.source, _e
                                                             );
                                                         }
                                                     }
@@ -1869,14 +1875,14 @@ impl NatTraversalEndpoint {
                                                         event,
                                                         remote_addr: source_addr.clone(),
                                                     };
-                                                    if let Err(e) = event_tx_clone.send(event_with_addr) {
-                                                        debug!("Failed to forward constrained event: {}", e);
+                                                    if let Err(_e) = event_tx_clone.send(event_with_addr) {
+                                                        debug!("Failed to forward constrained event: {}", _e);
                                                     }
                                                 }
                                             }
                                         }
                                         None => {
-                                            debug!("Transport '{}' inbound channel closed", transport_name);
+                                            debug!("Transport '{}' inbound channel closed", _transport_name);
                                             break;
                                         }
                                     }
@@ -1884,7 +1890,7 @@ impl NatTraversalEndpoint {
                             }
                         }
 
-                        debug!("Transport listener for '{}' terminated", transport_name);
+                        debug!("Transport listener for '{}' terminated", _transport_name);
                     });
 
                     handles.push(handle);
@@ -2352,7 +2358,7 @@ impl NatTraversalEndpoint {
                             if let Some(mut session) = sessions.get_mut(&addr) {
                                 session.session_state.state = ConnectionState::Closed;
                                 session.session_state.last_transition = std::time::Instant::now();
-                                tracing::warn!("Connection to {} timed out", addr);
+                                crate::warn!("Connection to {} timed out", addr);
                             }
                         }
                         SessionUpdate::Disconnected => {
@@ -2360,7 +2366,7 @@ impl NatTraversalEndpoint {
                                 session.session_state.state = ConnectionState::Closed;
                                 session.session_state.last_transition = std::time::Instant::now();
                                 session.session_state.connection = None;
-                                tracing::info!("Connection to {} closed", addr);
+                                crate::info!("Connection to {} closed", addr);
                             }
                         }
                         SessionUpdate::UpdateMetrics => {
@@ -2379,7 +2385,7 @@ impl NatTraversalEndpoint {
                             if let Some(mut session) = sessions.get_mut(&addr) {
                                 session.session_state.state = ConnectionState::Closed;
                                 session.session_state.last_transition = std::time::Instant::now();
-                                tracing::error!("Session {} in invalid state", addr);
+                                crate::error!("Session {} in invalid state", addr);
                             }
                         }
                         SessionUpdate::Retry => {
@@ -2387,7 +2393,7 @@ impl NatTraversalEndpoint {
                                 session.session_state.state = ConnectionState::Connecting;
                                 session.session_state.last_transition = std::time::Instant::now();
                                 session.attempt += 1;
-                                tracing::info!(
+                                crate::info!(
                                     "Retrying connection to {} (attempt {})",
                                     addr,
                                     session.attempt
@@ -2398,12 +2404,12 @@ impl NatTraversalEndpoint {
                             if let Some(mut session) = sessions.get_mut(&addr) {
                                 session.session_state.state = ConnectionState::Closed;
                                 session.session_state.last_transition = std::time::Instant::now();
-                                tracing::warn!("Migration timeout for {}", addr);
+                                crate::warn!("Migration timeout for {}", addr);
                             }
                         }
                         SessionUpdate::Remove => {
                             sessions.remove(&addr);
-                            tracing::debug!("Removed old session for {}", addr);
+                            crate::debug!("Removed old session for {}", addr);
                         }
                     }
                 }
@@ -2637,11 +2643,11 @@ impl NatTraversalEndpoint {
         // Priority: 1) quinn_socket parameter, 2) transport registry address, 3) create new
         let std_socket = if let Some(socket) = quinn_socket {
             // Use pre-bound socket (preferred for socket sharing with transport registry)
-            let socket_addr = socket
+            let _socket_addr = socket
                 .local_addr()
                 .map(|addr| addr.to_string())
                 .unwrap_or_else(|_| "unknown".to_string());
-            info!("Using pre-bound UDP socket at {}", socket_addr);
+            info!("Using pre-bound UDP socket at {}", _socket_addr);
             socket
         } else if let Some(registry_addr) = transport_registry.get_udp_local_addr() {
             // Transport registry has UDP - bind new socket on same interface
@@ -2815,8 +2821,8 @@ impl NatTraversalEndpoint {
                                 // Handle connection streams
                                 Self::handle_connection(remote_address, connection, event_tx).await;
                             }
-                            Err(e) => {
-                                debug!("Connection failed: {}", e);
+                            Err(_e) => {
+                                debug!("Connection failed: {}", _e);
                             }
                         }
                     });
@@ -2871,18 +2877,18 @@ impl NatTraversalEndpoint {
 
                                                 // Send the response
                                                 let response_bytes = response.encode();
-                                                if let Err(e) =
+                                                if let Err(_e) =
                                                     send_stream.write_all(&response_bytes).await
                                                 {
                                                     warn!(
                                                         "Failed to send relay response to {}: {}",
-                                                        addr, e
+                                                        addr, _e
                                                     );
                                                 }
-                                                if let Err(e) = send_stream.finish() {
+                                                if let Err(_e) = send_stream.finish() {
                                                     warn!(
                                                         "Failed to finish relay stream to {}: {}",
-                                                        addr, e
+                                                        addr, _e
                                                     );
                                                 }
                                             }
@@ -2902,26 +2908,26 @@ impl NatTraversalEndpoint {
                                             }
                                         }
                                     }
-                                    Err(e) => {
+                                    Err(_e) => {
                                         // Not a CONNECT-UDP request, ignore
                                         debug!(
                                             "Stream from {} is not a CONNECT-UDP request: {}",
-                                            addr, e
+                                            addr, _e
                                         );
                                     }
                                 }
                             }
-                            Err(e) => {
-                                debug!("Failed to read relay request from {}: {}", addr, e);
+                            Err(_e) => {
+                                debug!("Failed to read relay request from {}: {}", addr, _e);
                             }
                         }
                     });
                 }
-                Err(e) => {
+                Err(_e) => {
                     // Connection closed or error
                     debug!(
                         "Relay handler stopping for {} - accept_bi error: {}",
-                        client_addr, e
+                        client_addr, _e
                     );
                     break;
                 }
@@ -2953,7 +2959,7 @@ impl NatTraversalEndpoint {
 
             // 1. Check active connections for observed addresses and feed them to discovery
             // DashMap allows concurrent iteration without blocking
-            tracing::trace!(
+            crate::trace!(
                 "poll_discovery_task: checking {} connections for observed addresses",
                 connections.len()
             );
@@ -2961,7 +2967,7 @@ impl NatTraversalEndpoint {
                 let remote_addr = *entry.key();
                 let conn = entry.value();
                 let observed = conn.observed_address();
-                tracing::trace!(
+                crate::trace!(
                     "poll_discovery_task: remote {} observed_address={:?}",
                     remote_addr,
                     observed
@@ -3154,10 +3160,10 @@ impl NatTraversalEndpoint {
                 info!("Direct connection to {} succeeded", remote_addr);
                 return Ok(conn);
             }
-            Err(e) => {
+            Err(_e) => {
                 info!(
                     "Direct connection to {} failed ({:?}), trying hole punching",
-                    remote_addr, e
+                    remote_addr, _e
                 );
             }
         }
@@ -3183,18 +3189,18 @@ impl NatTraversalEndpoint {
                         info!("Connection via hole punching to {} succeeded", remote_addr);
                         return Ok(conn);
                     }
-                    Err(e) => {
+                    Err(_e) => {
                         info!(
                             "Connection after hole punching failed ({:?}), trying relay",
-                            e
+                            _e
                         );
                     }
                 }
             }
-            Err(e) => {
+            Err(_e) => {
                 info!(
                     "Hole punching for {} failed ({:?}), trying relay",
-                    remote_addr, e
+                    remote_addr, _e
                 );
             }
         }
@@ -3245,10 +3251,10 @@ impl NatTraversalEndpoint {
 
             // Establish relay session (CONNECT-UDP Bind)
             match self.establish_relay_session(relay_addr).await {
-                Ok(public_addr) => {
+                Ok(_public_addr) => {
                     info!(
                         "Relay session established via {} with public address {:?}",
-                        relay_addr, public_addr
+                        relay_addr, _public_addr
                     );
 
                     // Now attempt the connection through the relay
@@ -3261,7 +3267,7 @@ impl NatTraversalEndpoint {
                         Ok(conn) => {
                             info!(
                                 "Connected to {} via relay {} (public addr: {:?})",
-                                remote_addr, relay_addr, public_addr
+                                remote_addr, relay_addr, _public_addr
                             );
                             return Ok(conn);
                         }
@@ -3447,12 +3453,12 @@ impl NatTraversalEndpoint {
                     match event_rx.try_recv() {
                         Ok(NatTraversalEvent::ConnectionEstablished {
                             remote_address,
-                            side,
+                            side: _side,
                             ..
                         }) => {
                             info!(
                                 "Received ConnectionEstablished event for {} (side: {:?})",
-                                remote_address, side
+                                remote_address, _side
                             );
                             let connection = self
                                 .connections
@@ -3467,10 +3473,10 @@ impl NatTraversalEndpoint {
                             info!("Retrieved accepted connection from {}", remote_address);
                             return Ok((remote_address, connection));
                         }
-                        Ok(event) => {
+                        Ok(_event) => {
                             debug!(
                                 "Ignoring non-connection event while waiting for accept: {:?}",
-                                event
+                                _event
                             );
                         }
                         Err(mpsc::error::TryRecvError::Empty) => break,
@@ -3535,8 +3541,8 @@ impl NatTraversalEndpoint {
         addr: SocketAddr,
         connection: InnerConnection,
     ) -> Result<(), NatTraversalError> {
-        let observed = connection.observed_address();
-        info!("add_connection: {} observed_address={:?}", addr, observed);
+        let _observed = connection.observed_address();
+        info!("add_connection: {} observed_address={:?}", addr, _observed);
         // DashMap provides lock-free .insert()
         self.connections.insert(addr, connection);
         info!(
@@ -3718,7 +3724,7 @@ impl NatTraversalEndpoint {
 
         // For non-UDP transports, we need to store the transport candidate
         // and advertise it via the extended ADD_ADDRESS frames
-        let candidate = TransportCandidate {
+        let _candidate = TransportCandidate {
             address: address.clone(),
             priority,
             source: CandidateSource::Local,
@@ -3728,7 +3734,7 @@ impl NatTraversalEndpoint {
 
         info!(
             "Advertising {:?} transport address with priority {} (capabilities: {:?})",
-            candidate.transport_type(),
+            _candidate.transport_type(),
             priority,
             capabilities
         );
@@ -4108,8 +4114,8 @@ impl NatTraversalEndpoint {
             );
             match tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, async {
                 for handle in handles {
-                    if let Err(e) = handle.await {
-                        warn!("Transport listener task failed during shutdown: {e}");
+                    if let Err(_e) = handle.await {
+                        warn!("Transport listener task failed during shutdown: {_e}");
                     }
                 }
             })
@@ -4165,8 +4171,8 @@ impl NatTraversalEndpoint {
                         // Send ADD_ADDRESS frame to advertise this candidate to the target
                         self.send_candidate_advertisement(target_addr, &candidate)
                             .await
-                            .unwrap_or_else(|e| {
-                                debug!("Failed to send candidate advertisement: {}", e)
+                            .unwrap_or_else(|_e| {
+                                debug!("Failed to send candidate advertisement: {}", _e)
                             });
                     }
                     DiscoveryEvent::ServerReflexiveCandidateDiscovered { candidate, .. } => {
@@ -4175,8 +4181,8 @@ impl NatTraversalEndpoint {
                         // Send ADD_ADDRESS frame to advertise this candidate to the target
                         self.send_candidate_advertisement(target_addr, &candidate)
                             .await
-                            .unwrap_or_else(|e| {
-                                debug!("Failed to send candidate advertisement: {}", e)
+                            .unwrap_or_else(|_e| {
+                                debug!("Failed to send candidate advertisement: {}", _e)
                             });
                     }
                     // Prediction events removed in minimal flow
@@ -4421,10 +4427,10 @@ impl NatTraversalEndpoint {
 
             // Send the packet to the remote candidate address
             match local_socket.send_to(&path_challenge_packet, pair.remote_candidate.address) {
-                Ok(bytes_sent) => {
+                Ok(_bytes_sent) => {
                     debug!(
                         "Sent {} bytes for hole punch from {} to {}",
-                        bytes_sent, pair.local_candidate.address, pair.remote_candidate.address
+                        _bytes_sent, pair.local_candidate.address, pair.remote_candidate.address
                     );
 
                     // Set a short timeout for response
@@ -4462,13 +4468,13 @@ impl NatTraversalEndpoint {
                         {
                             debug!("No response received for hole punch attempt");
                         }
-                        Err(e) => {
-                            debug!("Error receiving hole punch response: {}", e);
+                        Err(_e) => {
+                            debug!("Error receiving hole punch response: {}", _e);
                         }
                     }
                 }
-                Err(e) => {
-                    debug!("Failed to send hole punch packet: {}", e);
+                Err(_e) => {
+                    debug!("Failed to send hole punch packet: {}", _e);
                 }
             }
         }
@@ -4586,7 +4592,7 @@ impl NatTraversalEndpoint {
                         let event_tx = event_tx.clone();
                         let connections = self.connections.clone();
                         let incoming_notify = self.incoming_notify.clone();
-                        let address = candidate.address;
+                        let _address = candidate.address;
 
                         tokio::spawn(async move {
                             match connecting.await {
@@ -4596,14 +4602,14 @@ impl NatTraversalEndpoint {
                                     if connections.contains_key(&remote) {
                                         debug!(
                                             "Connection already exists for {}, discarding duplicate from {}",
-                                            remote, address
+                                            remote, _address
                                         );
                                         // Close the duplicate connection to free resources
                                         connection.close(0u32.into(), b"duplicate connection");
                                         return;
                                     }
 
-                                    info!("Successfully connected to {} for {}", address, remote);
+                                    info!("Successfully connected to {} for {}", _address, remote);
 
                                     let public_key =
                                         Self::extract_public_key_from_connection(&connection);
@@ -4624,8 +4630,8 @@ impl NatTraversalEndpoint {
                                     // Handle the connection
                                     Self::handle_connection(remote, connection, event_tx).await;
                                 }
-                                Err(e) => {
-                                    warn!("Connection to {} failed: {}", address, e);
+                                Err(_e) => {
+                                    warn!("Connection to {} failed: {}", _address, _e);
                                 }
                             }
                         });
@@ -4764,10 +4770,10 @@ impl NatTraversalEndpoint {
                             // Retry discovery with exponential backoff
                             session.attempt += 1;
                             session.started_at = now;
-                            let backoff_duration = self.calculate_backoff(session.attempt);
+                            let _backoff_duration = self.calculate_backoff(session.attempt);
                             warn!(
                                 "Discovery timeout for {}, retrying (attempt {}), backoff: {:?}",
-                                target_addr, session.attempt, backoff_duration
+                                target_addr, session.attempt, _backoff_duration
                             );
                         } else {
                             // Max attempts reached, fail
@@ -5035,10 +5041,10 @@ impl NatTraversalEndpoint {
             // Retry with backoff
             session.attempt += 1;
             session.started_at = now;
-            let backoff = self.calculate_backoff(session.attempt);
+            let _backoff = self.calculate_backoff(session.attempt);
             warn!(
                 "Phase {:?} failed for {:?}: {:?}, retrying (attempt {}) after {:?}",
-                session.phase, session.target_addr, error, session.attempt, backoff
+                session.phase, session.target_addr, error, session.attempt, _backoff
             );
         } else {
             // Max attempts reached
@@ -5196,16 +5202,16 @@ impl NatTraversalEndpoint {
                                             coordinator, target_addr
                                         );
                                     }
-                                    Err(e) => {
+                                    Err(_e) => {
                                         warn!(
                                             "Failed to send PUNCH_ME_NOW after connecting: {:?}",
-                                            e
+                                            _e
                                         );
                                     }
                                 }
                             }
-                            Ok(Err(e)) => {
-                                warn!("Failed to connect to coordinator {}: {}", coordinator, e);
+                            Ok(Err(_e)) => {
+                                warn!("Failed to connect to coordinator {}: {}", coordinator, _e);
                             }
                             Err(_) => {
                                 warn!(
@@ -5325,10 +5331,10 @@ impl NatTraversalEndpoint {
                             candidate.address
                         );
                     }
-                    Err(e) => {
+                    Err(_e) => {
                         warn!(
                             "Failed to initiate connection to {}: {:?}",
-                            candidate.address, e
+                            candidate.address, _e
                         );
                     }
                 }
@@ -5558,10 +5564,13 @@ impl NatTraversalEndpoint {
         event: crate::shared::EndpointEventInner,
     ) -> Result<(), NatTraversalError> {
         match event {
-            crate::shared::EndpointEventInner::NatCandidateValidated { address, challenge } => {
+            crate::shared::EndpointEventInner::NatCandidateValidated {
+                address,
+                challenge: _challenge,
+            } => {
                 info!(
                     "NAT candidate validation succeeded for {} with challenge {:016x}",
-                    address, challenge
+                    address, _challenge
                 );
 
                 // Find and update the active session with validated candidate
@@ -5690,7 +5699,7 @@ impl NatTraversalEndpoint {
                     .map(|entry| (*entry.key(), entry.value().clone()))
                     .collect();
 
-                for (addr, connection) in connections_snapshot {
+                for (_addr, connection) in connections_snapshot {
                     // Send AddAddress frame via unidirectional stream
                     let mut send_stream = connection.open_uni().await.map_err(|e| {
                         NatTraversalError::NetworkError(format!("Failed to open stream: {e}"))
@@ -5706,7 +5715,7 @@ impl NatTraversalEndpoint {
 
                     let _ = send_stream.finish();
 
-                    debug!("Sent AddAddress frame to {}", addr);
+                    debug!("Sent AddAddress frame to {}", _addr);
                 }
 
                 Ok(())
@@ -5808,10 +5817,10 @@ impl NatTraversalEndpoint {
             let conn = entry.value_mut();
             // Use the connection's API to enqueue a proper NAT traversal frame
             match conn.send_nat_address_advertisement(candidate.address, candidate.priority) {
-                Ok(seq) => {
+                Ok(_seq) => {
                     info!(
                         "Queued ADD_ADDRESS via connection API: addr={}, candidate={}, priority={}, seq={}",
-                        addr, candidate.address, candidate.priority, seq
+                        addr, candidate.address, candidate.priority, _seq
                     );
                     Ok(())
                 }

@@ -133,7 +133,7 @@ pub trait BufMutExt {
     /// Write a variable-length integer, debug-asserting on overflow in debug builds
     fn write_var_or_debug_assert(&mut self, x: u64) {
         if self.write_var(x).is_err() {
-            tracing::error!("VarInt overflow: {} exceeds maximum", x);
+            crate::error!("VarInt overflow: {} exceeds maximum", x);
             debug_assert!(false, "VarInt overflow: {}", x);
         }
     }

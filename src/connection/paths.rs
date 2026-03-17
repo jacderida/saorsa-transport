@@ -7,7 +7,7 @@
 
 use std::{cmp, net::SocketAddr};
 
-use tracing::trace;
+use crate::trace;
 
 use super::{
     mtud::MtuDiscovery,

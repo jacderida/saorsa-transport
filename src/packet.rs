@@ -312,7 +312,7 @@ impl Header {
         match self.try_encode(w) {
             Ok(encode) => encode,
             Err(_) => {
-                tracing::error!("VarInt overflow while encoding Header");
+                crate::error!("VarInt overflow while encoding Header");
                 debug_assert!(false, "VarInt overflow while encoding Header");
                 PartialEncode {
                     start: w.len(),

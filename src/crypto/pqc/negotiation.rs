@@ -20,8 +20,8 @@ use crate::crypto::pqc::{
     config::PqcConfig,
     tls_extensions::{NamedGroup, SignatureScheme},
 };
+use crate::{debug, info, trace, warn};
 use std::collections::HashSet;
-use tracing::{debug, info, trace, warn};
 
 /// Result of algorithm negotiation
 #[derive(Debug, Clone, PartialEq)]

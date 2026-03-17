@@ -9,10 +9,10 @@
 
 use crate::bootstrap_cache::BootstrapCache;
 use crate::token::TokenStore;
+use crate::{debug, warn};
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use tracing::{debug, warn};
 
 /// A TokenStore implementation that persists tokens to the BootstrapCache.
 ///

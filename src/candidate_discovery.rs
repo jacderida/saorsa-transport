@@ -21,7 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tracing::{debug, error, info, warn};
+use crate::{debug, error, info, warn};
 
 use crate::{
     connection::nat_traversal::{CandidateSource, CandidateState},
@@ -847,8 +847,11 @@ impl CandidateDiscoveryManager {
                 // Step 1: Start interface scan if just entering phase (within first 50ms)
                 if started_at.elapsed().as_millis() < 50 {
                     let scan_result = self.interface_discovery.lock().start_scan();
-                    if let Err(e) = scan_result {
-                        error!("Failed to start interface scan for {:?}: {}", session_id, e);
+                    if let Err(_e) = scan_result {
+                        error!(
+                            "Failed to start interface scan for {:?}: {}",
+                            session_id, _e
+                        );
                     } else {
                         debug!("Started local interface scan for {:?}", session_id);
                         all_events.push(DiscoveryEvent::LocalScanningStarted);
@@ -1285,8 +1288,8 @@ impl CandidateDiscoveryManager {
         use crate::nat_traversal_api::CandidateAddress;
         let allow_loopback = self.config.allow_loopback;
 
-        if let Err(e) = CandidateAddress::validate_address(address) {
-            debug!("Address {} failed validation: {}", address, e);
+        if let Err(_e) = CandidateAddress::validate_address(address) {
+            debug!("Address {} failed validation: {}", address, _e);
             return false;
         }
 

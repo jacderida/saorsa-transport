@@ -26,6 +26,7 @@ use super::{
     udp_transmit,
 };
 use crate::Instant;
+use crate::error;
 use crate::{
     ClientConfig, ConnectError, ConnectionError, ConnectionHandle, DatagramEvent, EndpointEvent,
     ServerConfig,
@@ -37,7 +38,6 @@ use rustc_hash::FxHashMap;
 #[cfg(all(not(wasm_browser), feature = "network-discovery"))]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{Notify, futures::Notified, mpsc};
-use tracing::error;
 use tracing::{Instrument, Span};
 
 use super::{
@@ -88,8 +88,8 @@ impl Endpoint {
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
         if addr.is_ipv6() {
-            if let Err(e) = socket.set_only_v6(false) {
-                tracing::debug!(%e, "unable to make socket dual-stack");
+            if let Err(_e) = socket.set_only_v6(false) {
+                crate::debug!(%_e, "unable to make socket dual-stack");
             }
         }
 
@@ -97,11 +97,11 @@ impl Endpoint {
         // and ensure reliable QUIC connections, especially with PQC
         use crate::config::buffer_defaults;
         let buffer_size = buffer_defaults::PLATFORM_DEFAULT;
-        if let Err(e) = socket.set_send_buffer_size(buffer_size) {
-            tracing::debug!(%e, "unable to set send buffer size to {}", buffer_size);
+        if let Err(_e) = socket.set_send_buffer_size(buffer_size) {
+            crate::debug!(%_e, "unable to set send buffer size to {}", buffer_size);
         }
-        if let Err(e) = socket.set_recv_buffer_size(buffer_size) {
-            tracing::debug!(%e, "unable to set recv buffer size to {}", buffer_size);
+        if let Err(_e) = socket.set_recv_buffer_size(buffer_size) {
+            crate::debug!(%_e, "unable to set recv buffer size to {}", buffer_size);
         }
 
         socket.bind(&addr.into())?;
@@ -142,8 +142,8 @@ impl Endpoint {
 
         // Enable dual-stack for IPv6 sockets (consistent with client() behavior)
         if addr.is_ipv6() {
-            if let Err(e) = socket.set_only_v6(false) {
-                tracing::debug!(%e, "unable to make server socket dual-stack");
+            if let Err(_e) = socket.set_only_v6(false) {
+                crate::debug!(%_e, "unable to make server socket dual-stack");
             }
         }
 
@@ -153,11 +153,11 @@ impl Endpoint {
         // and ensure reliable QUIC connections, especially with PQC
         use crate::config::buffer_defaults;
         let buffer_size = buffer_defaults::PLATFORM_DEFAULT;
-        if let Err(e) = socket.set_send_buffer_size(buffer_size) {
-            tracing::debug!(%e, "unable to set send buffer size to {}", buffer_size);
+        if let Err(_e) = socket.set_send_buffer_size(buffer_size) {
+            crate::debug!(%_e, "unable to set send buffer size to {}", buffer_size);
         }
-        if let Err(e) = socket.set_recv_buffer_size(buffer_size) {
-            tracing::debug!(%e, "unable to set recv buffer size to {}", buffer_size);
+        if let Err(_e) = socket.set_recv_buffer_size(buffer_size) {
+            crate::debug!(%_e, "unable to set recv buffer size to {}", buffer_size);
         }
 
         socket.bind(&addr.into())?;
@@ -224,8 +224,8 @@ impl Endpoint {
         let driver = EndpointDriver(rc.clone());
         runtime.spawn(Box::pin(
             async {
-                if let Err(e) = driver.await {
-                    tracing::error!("I/O error: {}", e);
+                if let Err(_e) = driver.await {
+                    crate::error!("I/O error: {}", _e);
                 }
             }
             .instrument(Span::current()),
@@ -677,10 +677,10 @@ impl State {
         for (ch, event) in self.inner.drain_relay_events() {
             did_work = true;
             if let Some(sender) = self.recv_state.connections.senders.get_mut(&ch) {
-                tracing::debug!("Sending relay event to connection {:?}", ch);
+                crate::debug!("Sending relay event to connection {:?}", ch);
                 let _ = sender.send(ConnectionEvent::Proto(event));
             } else {
-                tracing::warn!(
+                crate::warn!(
                     "Cannot send relay event: connection {:?} not found in senders",
                     ch
                 );

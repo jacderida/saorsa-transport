@@ -16,8 +16,8 @@ use std::{
     time::Instant,
 };
 
+use crate::{debug, error, info, warn};
 use nix::libc;
-use tracing::{debug, error, info, warn};
 
 use crate::candidate_discovery::{NetworkInterface, NetworkInterfaceDiscovery};
 
@@ -518,10 +518,10 @@ impl LinuxInterfaceDiscovery {
                         interfaces.push(interface);
                     }
                 }
-                Err(e) => {
+                Err(_e) => {
                     warn!(
                         "Failed to get interface details for {}: {:?}",
-                        interface_name, e
+                        interface_name, _e
                     );
                 }
             }
@@ -981,8 +981,8 @@ impl NetworkInterfaceDiscovery for LinuxInterfaceDiscovery {
 
         // Initialize netlink socket if monitoring is enabled
         if self.interface_config.enable_monitoring {
-            if let Err(e) = self.initialize_netlink_socket() {
-                warn!("Failed to initialize netlink socket: {:?}", e);
+            if let Err(_e) = self.initialize_netlink_socket() {
+                warn!("Failed to initialize netlink socket: {:?}", _e);
             }
         }
 
@@ -1048,8 +1048,8 @@ impl NetworkInterfaceDiscovery for LinuxInterfaceDiscovery {
                 self.scan_state = ScanState::Idle;
                 Some(results)
             }
-            ScanState::Failed { error } => {
-                warn!("Scan failed: {}", error);
+            ScanState::Failed { error: _error } => {
+                warn!("Scan failed: {}", _error);
                 self.scan_state = ScanState::Idle;
                 None
             }

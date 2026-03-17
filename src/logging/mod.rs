@@ -15,7 +15,8 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tracing::{Level, Span, debug, error, info, trace, warn};
+use crate::{debug, error, info, trace, warn};
+use tracing::{Level, Span};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{

@@ -5,11 +5,12 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
+use crate::{debug, info, warn};
 /// Connection lifecycle logging
 ///
 /// Tracks and logs the complete lifecycle of QUIC connections
 use std::collections::HashMap;
-use tracing::{Span, debug, info, warn};
+use tracing::Span;
 
 use super::{ConnectionRole, LogEvent, logger};
 use crate::{ConnectionId, Duration, Instant};
@@ -216,55 +217,55 @@ impl ConnectionLifecycle {
 
 /// Log connection lifecycle events
 pub fn log_connection_initiated(
-    conn_id: &ConnectionId,
-    role: ConnectionRole,
-    remote_addr: std::net::SocketAddr,
+    _conn_id: &ConnectionId,
+    _role: ConnectionRole,
+    _remote_addr: std::net::SocketAddr,
 ) {
     info!(
         target: "saorsa_transport::connection::lifecycle",
-        conn_id = ?conn_id,
-        role = ?role,
-        remote_addr = %remote_addr,
+        conn_id = ?_conn_id,
+        role = ?_role,
+        remote_addr = %_remote_addr,
         "Connection initiated"
     );
 }
 
 /// Log when a handshake process starts for a connection
-pub fn log_handshake_started(conn_id: &ConnectionId) {
+pub fn log_handshake_started(_conn_id: &ConnectionId) {
     debug!(
         target: "saorsa_transport::connection::lifecycle",
-        conn_id = ?conn_id,
+        conn_id = ?_conn_id,
         "Handshake started"
     );
 }
 
 /// Log successful handshake completion and its duration
-pub fn log_handshake_completed(conn_id: &ConnectionId, duration: Duration) {
+pub fn log_handshake_completed(_conn_id: &ConnectionId, _duration: Duration) {
     info!(
         target: "saorsa_transport::connection::lifecycle",
-        conn_id = ?conn_id,
-        duration_ms = duration.as_millis(),
+        conn_id = ?_conn_id,
+        duration_ms = _duration.as_millis(),
         "Handshake completed"
     );
 }
 
 /// Log connection established event including QUIC version info
-pub fn log_connection_established(conn_id: &ConnectionId, negotiated_version: u32) {
+pub fn log_connection_established(_conn_id: &ConnectionId, _negotiated_version: u32) {
     info!(
         target: "saorsa_transport::connection::lifecycle",
-        conn_id = ?conn_id,
-        negotiated_version = format!("0x{:08x}", negotiated_version),
+        conn_id = ?_conn_id,
+        negotiated_version = format!("0x{:08x}", _negotiated_version),
         "Connection established"
     );
 }
 
 /// Log a connection migration from one path to another
-pub fn log_connection_migration(conn_id: &ConnectionId, old_path: &str, new_path: &str) {
+pub fn log_connection_migration(_conn_id: &ConnectionId, _old_path: &str, _new_path: &str) {
     info!(
         target: "saorsa_transport::connection::lifecycle",
-        conn_id = ?conn_id,
-        old_path = old_path,
-        new_path = new_path,
+        conn_id = ?_conn_id,
+        old_path = _old_path,
+        new_path = _new_path,
         "Connection migrated to new path"
     );
 }
@@ -290,11 +291,11 @@ pub fn log_connection_closed(conn_id: &ConnectionId, reason: &str, error_code: O
 }
 
 /// Log a connection lost event caused by unexpected conditions
-pub fn log_connection_lost(conn_id: &ConnectionId, reason: &str) {
+pub fn log_connection_lost(_conn_id: &ConnectionId, _reason: &str) {
     warn!(
         target: "saorsa_transport::connection::lifecycle",
-        conn_id = ?conn_id,
-        reason = reason,
+        conn_id = ?_conn_id,
+        reason = _reason,
         "Connection lost"
     );
 }

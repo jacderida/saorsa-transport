@@ -228,7 +228,7 @@ impl RelayAuthenticator {
         let mut used_nonces = match self.used_nonces.lock() {
             Ok(guard) => guard,
             Err(_poisoned) => {
-                tracing::error!(
+                crate::error!(
                     "Mutex poisoned in relay authenticator - potential security compromise, \
                      failing authentication to prevent replay attacks"
                 );

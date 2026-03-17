@@ -14,11 +14,11 @@ use crate::{
     high_level::{Connection, Endpoint},
     transport_parameters::TransportParameters,
 };
+use crate::{error, info, warn};
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::time::Duration;
 use tokio::time::timeout;
-use tracing::{error, info, warn};
 
 /// Known public QUIC endpoints for testing
 /// Last verified: 2025-07-25
@@ -106,8 +106,8 @@ impl EndpointTester {
 
     /// Test all endpoints
     pub async fn test_all_endpoints(&mut self) -> EndpointValidationReport {
-        self.init_endpoint().await.unwrap_or_else(|e| {
-            error!("Failed to initialize endpoint: {}", e);
+        self.init_endpoint().await.unwrap_or_else(|_e| {
+            error!("Failed to initialize endpoint: {}", _e);
         });
 
         let mut all_endpoints = PUBLIC_QUIC_ENDPOINTS

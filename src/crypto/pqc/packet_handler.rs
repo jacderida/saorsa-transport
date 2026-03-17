@@ -18,8 +18,8 @@
 //! - Coalescing logic aware of PQC constraints
 
 use crate::{MAX_UDP_PAYLOAD, MtuDiscoveryConfig, frame::Crypto, packet::SpaceId};
+use crate::{debug, trace};
 use std::cmp;
-use tracing::{debug, trace};
 
 /// Size constants for PQC algorithms
 pub const ML_KEM_768_HANDSHAKE_OVERHEAD: u16 = 1184 + 1088; // Public key + ciphertext
@@ -229,9 +229,9 @@ impl PqcPacketHandler {
     }
 
     /// Update statistics after packet sent
-    pub fn on_packet_sent(&mut self, space: SpaceId, size: u16) {
+    pub fn on_packet_sent(&mut self, space: SpaceId, _size: u16) {
         if self.pqc_detected && matches!(space, SpaceId::Initial | SpaceId::Handshake) {
-            trace!("PQC packet sent in {:?}: {} bytes", space, size);
+            trace!("PQC packet sent in {:?}: {} bytes", space, _size);
         }
     }
 

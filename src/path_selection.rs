@@ -363,7 +363,7 @@ impl PathManager {
             }
         }
 
-        tracing::debug!(
+        crate::debug!(
             closed = to_close.len(),
             remaining = self.direct_path_count(),
             "Closed redundant paths"

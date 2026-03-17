@@ -17,11 +17,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::{debug, info, warn};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
 
 /// Default timeout for graceful shutdown
 pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);

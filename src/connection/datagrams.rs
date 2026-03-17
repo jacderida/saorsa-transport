@@ -7,9 +7,9 @@
 
 use std::collections::VecDeque;
 
+use crate::{debug, trace};
 use bytes::Bytes;
 use thiserror::Error;
-use tracing::{debug, trace};
 
 use super::Connection;
 use crate::{

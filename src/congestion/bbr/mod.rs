@@ -9,8 +9,8 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
+use crate::{debug, warn};
 use rand::{Rng, SeedableRng};
-use tracing::{debug, warn};
 
 use crate::congestion::ControllerMetrics;
 use crate::congestion::bbr::bw_estimation::BandwidthEstimation;

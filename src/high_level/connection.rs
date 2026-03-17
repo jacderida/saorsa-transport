@@ -17,12 +17,13 @@ use std::{
     task::{Context, Poll, Waker, ready},
 };
 
+use crate::{debug_span, error};
 use bytes::Bytes;
 use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
-use tracing::{Instrument, Span, debug_span, error};
+use tracing::{Instrument, Span};
 
 use super::{
     ConnectionEvent,
@@ -70,8 +71,8 @@ impl Connecting {
         let driver = ConnectionDriver(conn.clone());
         runtime.spawn(Box::pin(
             async {
-                if let Err(e) = driver.await {
-                    tracing::error!("I/O error: {e}");
+                if let Err(_e) = driver.await {
+                    crate::error!("I/O error: {_e}");
                 }
             }
             .instrument(Span::current()),
@@ -145,7 +146,7 @@ impl Connecting {
             match self.conn.take() {
                 Some(conn) => Ok((Connection(conn), ZeroRttAccepted(self.connected))),
                 None => {
-                    tracing::error!("Connection state missing during 0-RTT acceptance");
+                    crate::error!("Connection state missing during 0-RTT acceptance");
                     Err(self)
                 }
             }
@@ -168,7 +169,7 @@ impl Connecting {
             let _ = x.await;
         }
         let conn = self.conn.as_ref().ok_or_else(|| {
-            tracing::error!("Connection state missing while retrieving handshake data");
+            crate::error!("Connection state missing while retrieving handshake data");
             ConnectionError::LocallyClosed
         })?;
         let inner = conn.state.lock("handshake");
@@ -1378,7 +1379,7 @@ impl State {
                 }
                 DatagramDropped(drop) => {
                     // Buffer overflow - surface to application via dedicated queue and notify
-                    tracing::debug!(
+                    crate::debug!(
                         datagrams = drop.datagrams,
                         bytes = drop.bytes,
                         "datagrams dropped due to receive buffer overflow"

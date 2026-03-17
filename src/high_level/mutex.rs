@@ -15,9 +15,9 @@ use std::{
 #[cfg(feature = "lock_tracking")]
 mod tracking {
     use super::*;
+    use crate::warn;
     use crate::{Duration, Instant};
     use std::collections::VecDeque;
-    use tracing::warn;
 
     #[derive(Debug)]
     struct Inner<T> {

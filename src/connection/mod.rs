@@ -19,9 +19,9 @@ use bytes::{Bytes, BytesMut};
 use frame::StreamMetaVec;
 // Removed qlog feature
 
+use crate::{debug, error, info, trace, trace_span, warn};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use thiserror::Error;
-use tracing::{debug, error, info, trace, trace_span, warn};
 
 use crate::{
     Dir, Duration, EndpointConfig, Frame, INITIAL_MTU, Instant, MAX_CID_SIZE, MAX_STREAM_COUNT,
@@ -1408,12 +1408,12 @@ impl Connection {
         let challenge = self.rng.r#gen::<u64>();
 
         // Start validation for this candidate
-        if let Err(e) =
+        if let Err(_e) =
             self.nat_traversal
                 .as_mut()?
                 .start_validation(remote_sequence, challenge, now)
         {
-            warn!("Failed to start NAT traversal validation: {}", e);
+            warn!("Failed to start NAT traversal validation: {}", _e);
             return None;
         }
 
@@ -2063,8 +2063,8 @@ impl Connection {
         largest_sent_time: Instant,
     ) {
         match self.spaces[space].detect_ecn(newly_acked, ecn) {
-            Err(e) => {
-                debug!("halting ECN due to verification failure: {}", e);
+            Err(_e) => {
+                debug!("halting ECN due to verification failure: {}", _e);
                 self.path.sending_ecn = false;
                 // Wipe out the existing value because it might be garbage and could interfere with
                 // future attempts to use ECN on new paths.
@@ -2534,8 +2534,8 @@ impl Connection {
                     };
                     self.set_peer_params(params);
                 }
-                Err(e) => {
-                    error!("session ticket has malformed transport parameters: {}", e);
+                Err(_e) => {
+                    error!("session ticket has malformed transport parameters: {}", _e);
                     return;
                 }
             }
@@ -2729,8 +2729,8 @@ impl Connection {
                     remaining = rest;
                     self.handle_decode(now, remote, ecn, partial_decode);
                 }
-                Err(e) => {
-                    trace!("malformed header: {}", e);
+                Err(_e) => {
+                    trace!("malformed header: {}", _e);
                     return;
                 }
             }
@@ -2763,13 +2763,13 @@ impl Connection {
         stateless_reset: bool,
     ) {
         self.stats.udp_rx.ios += 1;
-        if let Some(ref packet) = packet {
+        if let Some(ref _packet) = packet {
             trace!(
                 "got {:?} packet ({} bytes) from {} using id {}",
-                packet.header.space(),
-                packet.payload.len() + packet.header_data.len(),
+                _packet.header.space(),
+                _packet.payload.len() + _packet.header_data.len(),
                 remote,
-                packet.header.dst_cid(),
+                _packet.header.dst_cid(),
             );
 
             // Trace packet received
@@ -2777,7 +2777,7 @@ impl Connection {
             {
                 use crate::trace_packet_received;
                 // Tracing imports handled by macros
-                let packet_size = packet.payload.len() + packet.header_data.len();
+                let packet_size = _packet.payload.len() + _packet.header_data.len();
                 trace_packet_received!(
                     &self.event_log,
                     self.trace_context.trace_id(),
@@ -2828,7 +2828,7 @@ impl Connection {
             }
             Ok((packet, number)) => {
                 let span = match number {
-                    Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn),
+                    Some(_pn) => trace_span!("recv", space = ?packet.header.space(), _pn),
                     None => trace_span!("recv", space = ?packet.header.space()),
                 };
                 let _guard = span.enter();
@@ -2943,8 +2943,8 @@ impl Connection {
                 for result in frame::Iter::new(packet.payload.freeze())? {
                     let frame = match result {
                         Ok(frame) => frame,
-                        Err(err) => {
-                            debug!("frame decoding error: {err:?}");
+                        Err(_err) => {
+                            debug!("frame decoding error: {_err:?}");
                             continue;
                         }
                     };
@@ -3261,17 +3261,17 @@ impl Connection {
             // Crypto, Stream and Datagram frames are special cased in order no pollute
             // the log with payload data
             match &frame {
-                Frame::Crypto(f) => {
-                    trace!(offset = f.offset, len = f.data.len(), "got crypto frame");
+                Frame::Crypto(_f) => {
+                    trace!(offset = _f.offset, len = _f.data.len(), "got crypto frame");
                 }
-                Frame::Stream(f) => {
-                    trace!(id = %f.id, offset = f.offset, len = f.data.len(), fin = f.fin, "got stream frame");
+                Frame::Stream(_f) => {
+                    trace!(id = %_f.id, offset = _f.offset, len = _f.data.len(), fin = _f.fin, "got stream frame");
                 }
-                Frame::Datagram(f) => {
-                    trace!(len = f.data.len(), "got datagram frame");
+                Frame::Datagram(_f) => {
+                    trace!(len = _f.data.len(), "got datagram frame");
                 }
-                f => {
-                    trace!("got frame {:?}", f);
+                _f => {
+                    trace!("got frame {:?}", _f);
                 }
             }
 
@@ -3339,10 +3339,10 @@ impl Connection {
                     } else if let Some(nat_traversal) = &mut self.nat_traversal {
                         // Check if this is a response to NAT traversal PATH_CHALLENGE
                         match nat_traversal.handle_validation_success(remote, token, now) {
-                            Ok(sequence) => {
+                            Ok(_sequence) => {
                                 trace!(
                                     "NAT traversal candidate {} validated for sequence {}",
-                                    remote, sequence
+                                    remote, _sequence
                                 );
 
                                 // Check if this was part of a coordination round
@@ -3368,12 +3368,12 @@ impl Connection {
                                                     "NAT traversal found better path, initiating migration"
                                                 );
                                                 // Trigger migration to the better NAT-traversed path
-                                                if let Err(e) =
+                                                if let Err(_e) =
                                                     self.migrate_to_nat_traversal_path(now)
                                                 {
                                                     warn!(
                                                         "Failed to migrate to NAT traversal path: {:?}",
-                                                        e
+                                                        _e
                                                     );
                                                 }
                                             }
@@ -3392,8 +3392,8 @@ impl Connection {
                                     remote
                                 );
                             }
-                            Err(e) => {
-                                debug!("NAT traversal validation error: {}", e);
+                            Err(_e) => {
+                                debug!("NAT traversal validation error: {}", _e);
                             }
                         }
                     } else {
@@ -3414,10 +3414,13 @@ impl Connection {
                         self.spaces[SpaceId::Data].pending.max_data = true;
                     }
                 }
-                Frame::DataBlocked { offset } => {
-                    debug!(offset, "peer claims to be blocked at connection level");
+                Frame::DataBlocked { offset: _offset } => {
+                    debug!(_offset, "peer claims to be blocked at connection level");
                 }
-                Frame::StreamDataBlocked { id, offset } => {
+                Frame::StreamDataBlocked {
+                    id,
+                    offset: _offset,
+                } => {
                     if id.initiator() == self.side.side() && id.dir() == Dir::Uni {
                         debug!("got STREAM_DATA_BLOCKED on send-only {}", id);
                         return Err(TransportError::STREAM_STATE_ERROR(
@@ -3426,18 +3429,21 @@ impl Connection {
                     }
                     debug!(
                         stream = %id,
-                        offset, "peer claims to be blocked at stream level"
+                        _offset, "peer claims to be blocked at stream level"
                     );
                 }
-                Frame::StreamsBlocked { dir, limit } => {
-                    if limit > MAX_STREAM_COUNT {
+                Frame::StreamsBlocked {
+                    dir: _dir,
+                    limit: _limit,
+                } => {
+                    if _limit > MAX_STREAM_COUNT {
                         return Err(TransportError::FRAME_ENCODING_ERROR(
                             "unrepresentable stream limit",
                         ));
                     }
                     debug!(
                         "peer claims to be blocked opening more than {} {} streams",
-                        limit, dir
+                        _limit, _dir
                     );
                 }
                 Frame::StopSending(frame::StopSending { id, error_code }) => {
@@ -3780,8 +3786,8 @@ impl Connection {
         self.peer_params.stateless_reset_token = Some(reset_token);
     }
 
-    fn handle_encode_error(&mut self, now: Instant, context: &'static str) {
-        tracing::error!("VarInt overflow while encoding {context}");
+    fn handle_encode_error(&mut self, now: Instant, _context: &'static str) {
+        crate::error!("VarInt overflow while encoding {_context}");
         self.close_inner(
             now,
             Close::from(TransportError::INTERNAL_ERROR(
@@ -4110,8 +4116,8 @@ impl Connection {
                 &mut self.rng,
             ) {
                 Ok(token) => token,
-                Err(err) => {
-                    error!(?err, "failed to encode validation token");
+                Err(_err) => {
+                    error!(?_err, "failed to encode validation token");
                     continue;
                 }
             };
@@ -4411,8 +4417,8 @@ impl Connection {
                     self.initiate_nat_traversal_process();
                 }
             }
-            Err(e) => {
-                warn!("NAT traversal capability negotiation failed: {}", e);
+            Err(_e) => {
+                warn!("NAT traversal capability negotiation failed: {}", _e);
                 self.emit_nat_traversal_capability_event(false);
                 self.set_nat_traversal_compatibility_mode(false);
             }
@@ -4543,8 +4549,8 @@ impl Connection {
                         Instant::now() + Duration::from_millis(100),
                     );
                 }
-                Err(e) => {
-                    warn!("Failed to initiate NAT traversal process: {}", e);
+                Err(_e) => {
+                    warn!("Failed to initiate NAT traversal process: {}", _e);
                 }
             }
         }
@@ -4591,8 +4597,8 @@ impl Connection {
                         nat_traversal::TimeoutAction::RetryDiscovery => {
                             debug!("NAT traversal timeout: retrying candidate discovery");
                             if let Some(nat_state) = &mut self.nat_traversal {
-                                if let Err(e) = nat_state.start_candidate_discovery() {
-                                    warn!("Failed to retry candidate discovery: {}", e);
+                                if let Err(_e) = nat_state.start_candidate_discovery() {
+                                    warn!("Failed to retry candidate discovery: {}", _e);
                                 }
                             }
                         }
@@ -4619,8 +4625,8 @@ impl Connection {
                     }
                 }
             }
-            Err(e) => {
-                warn!("NAT traversal timeout handling failed: {}", e);
+            Err(_e) => {
+                warn!("NAT traversal timeout handling failed: {}", _e);
                 self.handle_nat_traversal_failure();
             }
         }
@@ -4632,7 +4638,7 @@ impl Connection {
             // Get candidate pairs that need validation
             let pairs = nat_state.get_next_validation_pairs(3);
 
-            for pair in pairs {
+            for _pair in pairs {
                 // Send PATH_CHALLENGE to validate the path
                 let challenge = self.rng.r#gen();
                 self.path.challenge = Some(challenge);
@@ -4640,7 +4646,7 @@ impl Connection {
 
                 debug!(
                     "Starting path validation for NAT traversal candidate: {}",
-                    pair.remote_addr
+                    _pair.remote_addr
                 );
             }
 
@@ -4782,8 +4788,8 @@ impl Connection {
                 // Silently ignore duplicates (peer may resend)
                 Ok(())
             }
-            Err(e) => {
-                warn!("Failed to add remote candidate: {}", e);
+            Err(_e) => {
+                warn!("Failed to add remote candidate: {}", _e);
                 Ok(()) // Don't terminate connection for non-critical errors
             }
         }
@@ -4842,8 +4848,8 @@ impl Connection {
                         trace!("Coordination completed or no action needed");
                         return Ok(());
                     }
-                    Err(e) => {
-                        warn!("Coordination failed: {}", e);
+                    Err(_e) => {
+                        warn!("Coordination failed: {}", _e);
                         return Ok(());
                     }
                 }
@@ -4923,7 +4929,7 @@ impl Connection {
         observed_address: &crate::frame::ObservedAddress,
         now: Instant,
     ) -> Result<(), TransportError> {
-        tracing::info!(
+        crate::info!(
             address = %observed_address.address,
             sequence = %observed_address.sequence_number,
             "handle_observed_address_frame: RECEIVED OBSERVED_ADDRESS from peer"
@@ -5912,20 +5918,20 @@ impl Connection {
 
         // Now process candidates with mutable access
         if let Some(nat_state) = &mut self.nat_traversal {
-            for (seq, address) in candidates {
+            for (seq, _address) in candidates {
                 // Generate a random challenge token
                 let challenge: u64 = self.rng.r#gen();
 
                 // Start validation for this candidate
-                if let Err(e) = nat_state.start_validation(seq, challenge, now) {
-                    debug!("Failed to start validation for candidate {}: {}", seq, e);
+                if let Err(_e) = nat_state.start_validation(seq, challenge, now) {
+                    debug!("Failed to start validation for candidate {}: {}", seq, _e);
                     continue;
                 }
 
                 // NAT traversal PATH_CHALLENGE frames are sent via send_nat_traversal_challenge()
                 trace!(
                     "Started NAT validation for {} with token {:08x}",
-                    address, challenge
+                    _address, challenge
                 );
             }
         }
@@ -6602,13 +6608,13 @@ impl AddressDiscoveryState {
     ) -> Option<frame::ObservedAddress> {
         // Check if address discovery is enabled
         if !self.enabled {
-            tracing::debug!("queue_observed_address_frame: BLOCKED - address discovery disabled");
+            crate::debug!("queue_observed_address_frame: BLOCKED - address discovery disabled");
             return None;
         }
 
         // Check path restrictions
         if !self.observe_all_paths && path_id != 0 {
-            tracing::debug!(
+            crate::debug!(
                 "queue_observed_address_frame: BLOCKED - path {} not allowed (observe_all_paths={})",
                 path_id,
                 self.observe_all_paths
@@ -6619,7 +6625,7 @@ impl AddressDiscoveryState {
         // Check if this path has already been notified
         if let Some(info) = self.sent_observations.get(&path_id) {
             if info.notified {
-                tracing::trace!(
+                crate::trace!(
                     "queue_observed_address_frame: BLOCKED - path {} already notified",
                     path_id
                 );
@@ -6629,14 +6635,14 @@ impl AddressDiscoveryState {
 
         // Check rate limiting
         if self.rate_limiter.tokens < 1.0 {
-            tracing::debug!(
+            crate::debug!(
                 "queue_observed_address_frame: BLOCKED - rate limited (tokens={})",
                 self.rate_limiter.tokens
             );
             return None;
         }
 
-        tracing::info!(
+        crate::info!(
             "queue_observed_address_frame: SENDING OBSERVED_ADDRESS to {} for path {}",
             address,
             path_id
@@ -6653,7 +6659,7 @@ impl AddressDiscoveryState {
         info.observed_address = Some(address);
         info.notified = true;
 
-        tracing::trace!(
+        crate::trace!(
             path_id = ?path_id,
             address = %address,
             "queue_observed_address_frame: queuing frame"

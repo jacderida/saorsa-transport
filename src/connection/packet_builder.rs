@@ -5,9 +5,9 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
+use crate::{debug, trace, trace_span};
 use bytes::Bytes;
 use rand::Rng;
-use tracing::{debug, trace, trace_span};
 
 use super::{Connection, SentFrames, spaces::SentPacket};
 use crate::{

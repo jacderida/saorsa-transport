@@ -12,9 +12,9 @@ use std::{
     ops::{Bound, Index, IndexMut},
 };
 
+use crate::trace;
 use rand::Rng;
 use rustc_hash::FxHashSet;
-use tracing::trace;
 
 use super::assembler::Assembler;
 use crate::{

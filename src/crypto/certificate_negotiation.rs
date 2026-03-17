@@ -21,7 +21,8 @@ use std::{
 
 use parking_lot::{Mutex, RwLock};
 
-use tracing::{Level, debug, info, span, warn};
+use crate::{debug, info, warn};
+use tracing::{Level, span};
 
 use super::tls_extensions::{
     CertificateTypeList, CertificateTypePreferences, NegotiationResult, TlsExtensionError,
@@ -469,7 +470,7 @@ impl CertificateNegotiationManager {
         let mut sessions = self.sessions.write();
         let cutoff = Instant::now() - max_age;
 
-        sessions.retain(|id, state| {
+        sessions.retain(|_id, state| {
             let should_retain = match state {
                 NegotiationState::Completed { completed_at, .. } => *completed_at > cutoff,
                 NegotiationState::Failed { failed_at, .. } => *failed_at > cutoff,
@@ -478,7 +479,7 @@ impl CertificateNegotiationManager {
             };
 
             if !should_retain {
-                debug!("Cleaned up old negotiation session: {:?}", id);
+                debug!("Cleaned up old negotiation session: {:?}", _id);
             }
 
             should_retain

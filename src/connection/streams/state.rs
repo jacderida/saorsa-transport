@@ -11,9 +11,9 @@ use std::{
     mem,
 };
 
+use crate::{debug, trace};
 use bytes::BufMut;
 use rustc_hash::FxHashMap;
-use tracing::{debug, trace};
 
 use super::{
     PendingStreamsQueue, Recv, Retransmits, Send, SendState, ShouldTransmit, StreamEvent,

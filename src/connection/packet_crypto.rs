@@ -5,7 +5,7 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
-use tracing::{debug, trace};
+use crate::{debug, trace};
 
 use crate::Instant;
 use crate::connection::spaces::PacketSpace;
@@ -57,8 +57,8 @@ pub(super) fn unprotect_header(
             packet: None,
             stateless_reset: true,
         }),
-        Err(e) => {
-            trace!("unable to complete packet decoding: {}", e);
+        Err(_e) => {
+            trace!("unable to complete packet decoding: {}", _e);
             None
         }
     }

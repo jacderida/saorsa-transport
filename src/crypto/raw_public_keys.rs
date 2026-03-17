@@ -30,7 +30,7 @@ use rustls::{
 
 use super::tls_extension_simulation::{Rfc7250ClientConfig, Rfc7250ServerConfig};
 
-use tracing::{debug, info, warn};
+use crate::{debug, info, warn};
 
 // Re-export Pure PQC types from pqc module
 pub use pqc::{

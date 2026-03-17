@@ -330,11 +330,14 @@ impl RelaySession {
             Capsule::CompressionAssign(assign) => self.handle_compression_assign(assign),
             Capsule::CompressionAck(ack) => self.handle_compression_ack(ack),
             Capsule::CompressionClose(close) => self.handle_compression_close(close),
-            Capsule::Unknown { capsule_type, .. } => {
+            Capsule::Unknown {
+                capsule_type: _capsule_type,
+                ..
+            } => {
                 // Unknown capsules should be ignored per spec
-                tracing::debug!(
+                crate::debug!(
                     session_id = self.session_id,
-                    capsule_type = capsule_type.into_inner(),
+                    capsule_type = _capsule_type.into_inner(),
                     "Ignoring unknown capsule type"
                 );
                 Ok(None)
@@ -385,11 +388,11 @@ impl RelaySession {
                     assign.context_id,
                 ))))
             }
-            Err(e) => {
-                tracing::warn!(
+            Err(_e) => {
+                crate::warn!(
                     session_id = self.session_id,
                     context_id = assign.context_id.into_inner(),
-                    error = %e,
+                    error = %_e,
                     "Failed to register context"
                 );
                 // Send CLOSE on error
@@ -404,11 +407,11 @@ impl RelaySession {
     fn handle_compression_ack(&mut self, ack: CompressionAck) -> RelayResult<Option<Capsule>> {
         match self.context_manager.handle_ack(ack.context_id) {
             Ok(_) => Ok(None),
-            Err(e) => {
-                tracing::warn!(
+            Err(_e) => {
+                crate::warn!(
                     session_id = self.session_id,
                     context_id = ack.context_id.into_inner(),
-                    error = %e,
+                    error = %_e,
                     "Unexpected ACK for unknown context"
                 );
                 Ok(None)
@@ -429,11 +432,11 @@ impl RelaySession {
         // Close the context
         match self.context_manager.close(close.context_id) {
             Ok(_) | Err(ContextError::UnknownContext) => Ok(None),
-            Err(e) => {
-                tracing::warn!(
+            Err(_e) => {
+                crate::warn!(
                     session_id = self.session_id,
                     context_id = close.context_id.into_inner(),
-                    error = %e,
+                    error = %_e,
                     "Error closing context"
                 );
                 Ok(None)

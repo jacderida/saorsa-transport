@@ -5,8 +5,8 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
+use crate::error;
 use crate::{Duration, Instant};
-use tracing::error;
 
 /// Limits the amount of time spent on a certain type of work in a cycle
 ///

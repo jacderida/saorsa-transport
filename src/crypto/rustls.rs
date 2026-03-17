@@ -707,10 +707,10 @@ pub fn configured_provider_with_pqc(
     // Use the PQC crypto provider factory
     match crate::crypto::pqc::create_crypto_provider(pqc_config) {
         Ok(provider) => provider,
-        Err(e) => {
-            tracing::warn!(
+        Err(_e) => {
+            crate::warn!(
                 "Failed to create PQC provider: {:?}, falling back to default",
-                e
+                _e
             );
             configured_provider()
         }

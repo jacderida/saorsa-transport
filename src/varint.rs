@@ -216,7 +216,7 @@ impl Codec for VarInt {
 
     fn encode<B: BufMut>(&self, w: &mut B) {
         if let Err(_) = Self::encode_checked(self.0, w) {
-            tracing::error!("VarInt overflow: {} exceeds maximum", self.0);
+            crate::error!("VarInt overflow: {} exceeds maximum", self.0);
             debug_assert!(false, "VarInt overflow: {}", self.0);
         }
     }

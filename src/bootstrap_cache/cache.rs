@@ -11,11 +11,11 @@ use super::config::BootstrapCacheConfig;
 use super::entry::{CachedPeer, ConnectionOutcome, PeerCapabilities, PeerSource};
 use super::persistence::{CacheData, CachePersistence};
 use super::selection::select_epsilon_greedy;
+use crate::{debug, info, warn};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{RwLock, broadcast};
-use tracing::{debug, info, warn};
 
 /// Bootstrap cache event for notifications
 #[derive(Debug, Clone)]
@@ -441,8 +441,8 @@ impl BootstrapCache {
             loop {
                 tokio::select! {
                     _ = save_interval.tick() => {
-                        if let Err(e) = cache.save().await {
-                            warn!("Failed to save cache: {}", e);
+                        if let Err(_e) = cache.save().await {
+                            warn!("Failed to save cache: {}", _e);
                         }
                     }
                     _ = cleanup_interval.tick() => {

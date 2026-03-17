@@ -427,7 +427,7 @@ impl MasqueRelayServer {
             self.record_bridged_connection();
         }
 
-        tracing::info!(
+        crate::info!(
             session_id = session_id,
             client = %client_addr,
             public_addr = %advertised_address,
@@ -635,7 +635,7 @@ impl MasqueRelayServer {
 
         self.stats.record_session_terminated();
 
-        tracing::info!(session_id = session_id, "MASQUE relay session closed");
+        crate::info!(session_id = session_id, "MASQUE relay session closed");
 
         Ok(())
     }
@@ -671,17 +671,17 @@ impl MasqueRelayServer {
 
         let count = expired_ids.len();
         for session_id in expired_ids {
-            if let Err(e) = self.close_session(session_id).await {
-                tracing::warn!(
+            if let Err(_e) = self.close_session(session_id).await {
+                crate::warn!(
                     session_id = session_id,
-                    error = %e,
+                    error = %_e,
                     "Failed to close expired session"
                 );
             }
         }
 
         if count > 0 {
-            tracing::debug!(count = count, "Cleaned up expired MASQUE sessions");
+            crate::debug!(count = count, "Cleaned up expired MASQUE sessions");
         }
 
         count

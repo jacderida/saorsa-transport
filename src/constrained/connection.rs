@@ -375,8 +375,8 @@ impl ConstrainedConnection {
             ConnectionState::Established => {
                 // Process ACK
                 if header.is_ack() {
-                    let acked = self.send_window.acknowledge(header.ack);
-                    tracing::trace!(acked, ack = header.ack.value(), "Processed ACK");
+                    let _acked = self.send_window.acknowledge(header.ack);
+                    crate::trace!(_acked, ack = header.ack.value(), "Processed ACK");
                 }
 
                 // Process DATA

@@ -201,7 +201,7 @@ impl StateMachine {
         self.state = new_state;
         self.state_entered = Instant::now();
 
-        tracing::trace!(
+        crate::trace!(
             from = %old_state,
             event = %event,
             to = %new_state,

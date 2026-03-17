@@ -20,8 +20,8 @@ use crate::crypto::pqc::{
     tls_extensions::{NamedGroup, SignatureScheme},
     types::*,
 };
+use crate::{debug, info, warn};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
 
 /// TLS handshake extension for pure PQC negotiation
 ///

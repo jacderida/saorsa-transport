@@ -331,7 +331,7 @@ impl RelayManager {
         let mut relays = self.relays.write().await;
         if !relays.contains_key(&address) && relays.len() < self.config.max_relays {
             relays.insert(address, RelayNodeInfo::new(address));
-            tracing::debug!(relay = %address, "Added relay node");
+            crate::debug!(relay = %address, "Added relay node");
         }
     }
 
@@ -344,7 +344,7 @@ impl RelayManager {
         let mut relays = self.relays.write().await;
         if !relays.contains_key(&primary) && relays.len() < self.config.max_relays {
             relays.insert(primary, RelayNodeInfo::new_dual_stack(primary, secondary));
-            tracing::debug!(
+            crate::debug!(
                 primary = %primary,
                 secondary = %secondary,
                 "Added dual-stack relay node"
@@ -405,7 +405,7 @@ impl RelayManager {
             if info.client.is_some() {
                 self.stats.record_disconnect();
             }
-            tracing::debug!(relay = %address, "Removed relay node");
+            crate::debug!(relay = %address, "Removed relay node");
         }
     }
 
@@ -477,7 +477,7 @@ impl RelayManager {
 
         self.stats.record_attempt(true);
 
-        tracing::info!(
+        crate::info!(
             relay = %relay,
             public_addr = ?public_addr,
             "Relay connection established"
@@ -534,7 +534,7 @@ impl RelayManager {
 
         self.stats.record_sent(payload.len() as u64);
 
-        tracing::trace!(
+        crate::trace!(
             relay = %relay,
             target = %target,
             bytes = payload.len(),
@@ -561,7 +561,7 @@ impl RelayManager {
             info.client = None;
         }
 
-        tracing::info!("Closed all relay connections");
+        crate::info!("Closed all relay connections");
     }
 
     /// Get number of active relay connections
@@ -659,7 +659,7 @@ impl RelayManager {
                     self.stats.record_disconnect();
                     disconnected += 1;
 
-                    tracing::warn!(
+                    crate::warn!(
                         relay = %info.address,
                         "Health check: relay disconnected"
                     );
@@ -704,7 +704,7 @@ impl RelayManager {
 
                 let disconnected = manager.health_check_relays().await;
                 if disconnected > 0 {
-                    tracing::info!(disconnected, "Keepalive: detected disconnected relays");
+                    crate::info!(disconnected, "Keepalive: detected disconnected relays");
                 }
             }
         })

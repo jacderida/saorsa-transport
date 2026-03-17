@@ -15,8 +15,8 @@ use std::{
     task::{Context, Poll},
 };
 
+use crate::error;
 use quinn_udp::{RecvMeta, Transmit};
-use tracing::error;
 
 use crate::Instant;
 

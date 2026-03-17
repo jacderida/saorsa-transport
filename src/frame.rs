@@ -25,7 +25,7 @@ use crate::{
 };
 
 fn log_encode_overflow(context: &'static str) {
-    tracing::error!("VarInt overflow while encoding {context}");
+    crate::error!("VarInt overflow while encoding {context}");
     debug_assert!(false, "VarInt overflow while encoding {context}");
 }
 
@@ -513,7 +513,7 @@ impl Ack {
         let first = match rest.next() {
             Some(first) => first,
             None => {
-                tracing::error!("ACK ranges should have at least one range");
+                crate::error!("ACK ranges should have at least one range");
                 return Err(VarIntBoundsExceeded);
             }
         };

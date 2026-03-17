@@ -40,10 +40,10 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
+use crate::{debug, error, info, warn};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use tokio::sync::{RwLock as TokioRwLock, broadcast};
-use tracing::{debug, error, info, warn};
 
 use crate::high_level::{
     Connection as HighLevelConnection, RecvStream as HighLevelRecvStream,
@@ -556,8 +556,8 @@ impl P2pLinkTransport {
                         }
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("Event forwarder lagged by {} events", n);
+                Err(broadcast::error::RecvError::Lagged(_n)) => {
+                    warn!("Event forwarder lagged by {} events", _n);
                 }
                 Err(broadcast::error::RecvError::Closed) => {
                     debug!("Event forwarder channel closed");
@@ -1010,14 +1010,14 @@ where
             let handlers = self.handlers.read().await;
             let mut seen = std::collections::HashSet::new();
 
-            for (stream_type, handler) in handlers.iter() {
+            for (_stream_type, handler) in handlers.iter() {
                 let ptr = Arc::as_ptr(handler) as usize;
                 if seen.insert(ptr) {
-                    if let Err(e) = handler.shutdown().await {
+                    if let Err(_e) = handler.shutdown().await {
                         error!(
                             handler = %handler.name(),
-                            stream_type = %stream_type,
-                            error = %e,
+                            stream_type = %_stream_type,
+                            error = %_e,
                             "Handler shutdown error"
                         );
                     }
@@ -1028,9 +1028,9 @@ where
         // Close all connections
         {
             let connections = self.connections.read().await;
-            for (addr, conn) in connections.iter() {
+            for (_addr, conn) in connections.iter() {
                 conn.close(0, "transport shutdown");
-                debug!(addr = %addr, "Closed connection");
+                debug!(addr = %_addr, "Closed connection");
             }
         }
 
@@ -1201,8 +1201,8 @@ where
                                 ).await;
                             });
                         }
-                        Some(Err(e)) => {
-                            warn!(error = %e, "Error accepting connection");
+                        Some(Err(_e)) => {
+                            warn!(error = %_e, "Error accepting connection");
                         }
                         None => {
                             debug!("Incoming connection stream ended");
@@ -1279,8 +1279,8 @@ where
                                 ).await;
                             });
                         }
-                        Some(Err(e)) => {
-                            warn!(addr = %addr, error = %e, "Error accepting stream");
+                        Some(Err(_e)) => {
+                            warn!(addr = %addr, error = %_e, "Error accepting stream");
                         }
                         None => {
                             debug!(addr = %addr, "Connection closed");
@@ -1316,8 +1316,8 @@ where
         // Read incoming data
         let data = match recv.read_to_end(max_message_size).await {
             Ok(data) => Bytes::from(data),
-            Err(e) => {
-                warn!(addr = %addr, error = %e, "Failed to read stream");
+            Err(_e) => {
+                warn!(addr = %addr, error = %_e, "Failed to read stream");
                 return;
             }
         };
@@ -1342,16 +1342,16 @@ where
             .await
         {
             Ok(Some(response)) => {
-                if let Err(e) = send.write_all(&response).await {
-                    warn!(addr = %addr, error = %e, "Failed to send response");
+                if let Err(_e) = send.write_all(&response).await {
+                    warn!(addr = %addr, error = %_e, "Failed to send response");
                 }
                 let _ = send.finish();
             }
             Ok(None) => {
                 let _ = send.finish();
             }
-            Err(e) => {
-                error!(addr = %addr, error = %e, "Handler error");
+            Err(_e) => {
+                error!(addr = %addr, error = %_e, "Handler error");
                 let _ = send.finish();
             }
         }

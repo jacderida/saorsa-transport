@@ -10,9 +10,9 @@ use std::{
     io,
 };
 
+use crate::{trace, warn};
 use bytes::Bytes;
 use thiserror::Error;
-use tracing::{trace, warn};
 
 use super::spaces::{Retransmits, ThinRetransmits};
 use crate::{

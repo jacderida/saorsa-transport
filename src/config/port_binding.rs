@@ -59,7 +59,7 @@ mod socket2_impl {
             }
             // Try half the size
             size /= 2;
-            tracing::debug!(
+            crate::debug!(
                 "Send buffer size {} rejected, trying {} bytes",
                 size * 2,
                 size
@@ -89,7 +89,7 @@ mod socket2_impl {
             }
             // Try half the size
             size /= 2;
-            tracing::debug!(
+            crate::debug!(
                 "Recv buffer size {} rejected, trying {} bytes",
                 size * 2,
                 size
@@ -150,21 +150,21 @@ mod socket2_impl {
 
         // Apply buffer sizes with graceful fallback
         if let Some(size) = opts.send_buffer_size {
-            if let Err(e) = try_set_send_buffer(&socket, size) {
-                tracing::warn!(
+            if let Err(_e) = try_set_send_buffer(&socket, size) {
+                crate::warn!(
                     "Failed to set send buffer to {} bytes: {}. Using OS default.",
                     size,
-                    e
+                    _e
                 );
             }
         }
 
         if let Some(size) = opts.recv_buffer_size {
-            if let Err(e) = try_set_recv_buffer(&socket, size) {
-                tracing::warn!(
+            if let Err(_e) = try_set_recv_buffer(&socket, size) {
+                crate::warn!(
                     "Failed to set recv buffer to {} bytes: {}. Using OS default.",
                     size,
-                    e
+                    _e
                 );
             }
         }
@@ -219,28 +219,28 @@ mod socket2_impl {
             {
                 // On supported Unix platforms, try to set SO_REUSEPORT
                 // This is a best-effort attempt - failure is not critical
-                tracing::debug!("SO_REUSEPORT requested but skipped for compatibility");
+                crate::debug!("SO_REUSEPORT requested but skipped for compatibility");
             }
         }
 
         // Apply buffer sizes with graceful fallback
         // If the kernel rejects the requested size, try progressively smaller sizes
         if let Some(size) = opts.send_buffer_size {
-            if let Err(e) = try_set_send_buffer(&socket, size) {
-                tracing::warn!(
+            if let Err(_e) = try_set_send_buffer(&socket, size) {
+                crate::warn!(
                     "Failed to set send buffer to {} bytes: {}. Using OS default.",
                     size,
-                    e
+                    _e
                 );
             }
         }
 
         if let Some(size) = opts.recv_buffer_size {
-            if let Err(e) = try_set_recv_buffer(&socket, size) {
-                tracing::warn!(
+            if let Err(_e) = try_set_recv_buffer(&socket, size) {
+                crate::warn!(
                     "Failed to set recv buffer to {} bytes: {}. Using OS default.",
                     size,
-                    e
+                    _e
                 );
             }
         }
@@ -340,17 +340,17 @@ fn bind_single_socket(
                         let local_addr = socket
                             .local_addr()
                             .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
-                        tracing::info!(
+                        crate::info!(
                             "Created true dual-stack socket on {} (accepts IPv4 and IPv6)",
                             local_addr
                         );
                         std::mem::forget(socket);
                         return Ok(vec![local_addr]);
                     }
-                    Err(e) => {
-                        tracing::debug!(
+                    Err(_e) => {
+                        crate::debug!(
                             "True dual-stack socket failed: {:?}, falling back to separate sockets",
-                            e
+                            _e
                         );
                         // Fall through to separate socket binding
                     }
@@ -374,7 +374,7 @@ fn bind_single_socket(
                         .local_addr()
                         .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
 
-                    tracing::info!(
+                    crate::info!(
                         "Created separate IPv4 ({}) and IPv6 ({}) sockets (fallback mode)",
                         v4_local,
                         v6_local
@@ -383,13 +383,13 @@ fn bind_single_socket(
                     std::mem::forget(v6_socket);
                     Ok(vec![v4_local, v6_local])
                 }
-                Err(e) => {
+                Err(_e) => {
                     // IPv6 not available - gracefully degrade to IPv4-only
-                    tracing::debug!(
+                    crate::debug!(
                         "IPv6 socket creation failed ({:?}), using IPv4-only mode",
-                        e
+                        _e
                     );
-                    tracing::info!(
+                    crate::info!(
                         "Created IPv4-only socket on {} (IPv6 not available on this system)",
                         v4_local
                     );
@@ -459,7 +459,7 @@ pub fn bind_endpoint(config: &EndpointPortConfig) -> PortConfigResult<BoundSocke
                         return Err(EndpointConfigError::PortInUse(*port));
                     }
                     PortRetryBehavior::FallbackToOsAssigned => {
-                        tracing::warn!("Port {} in use, falling back to OS-assigned", port);
+                        crate::warn!("Port {} in use, falling back to OS-assigned", port);
                         bind_single_socket(0, &config.ip_mode, &config.socket_options)?
                     }
                     PortRetryBehavior::TryNext => {

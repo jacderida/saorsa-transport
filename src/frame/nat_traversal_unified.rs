@@ -25,7 +25,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 pub const TRANSPORT_PARAM_RFC_NAT_TRAVERSAL: u64 = 0x3d7e9f0bca12fea8;
 
 fn log_encode_overflow(context: &'static str) {
-    tracing::error!("VarInt overflow while encoding {context}");
+    crate::error!("VarInt overflow while encoding {context}");
     debug_assert!(false, "VarInt overflow while encoding {context}");
 }
 

@@ -35,7 +35,7 @@ use windows::Win32::{
     System::{IO::OVERLAPPED, Threading::WaitForSingleObject},
 };
 
-use tracing::{debug, error, info, warn};
+use crate::{debug, error, info, warn};
 
 use crate::candidate_discovery::{NetworkInterface, NetworkInterfaceDiscovery};
 

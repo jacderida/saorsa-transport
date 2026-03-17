@@ -5,11 +5,11 @@
 //
 // Full details available at https://saorsalabs.com/licenses
 
+use crate::{debug, trace};
 /// Component-specific logging functions
 ///
 /// Provides specialized logging for different components of the QUIC stack
 use std::collections::HashMap;
-use tracing::{debug, trace};
 
 use crate::{ConnectionId, Frame};
 
@@ -276,49 +276,49 @@ pub fn log_error_with_context(error: &dyn std::error::Error, context: super::Err
 
 /// Log detailed frame information
 #[allow(dead_code)]
-pub(crate) fn log_frame_details(frame: &Frame, direction: &str, conn_id: &ConnectionId) {
+pub(crate) fn log_frame_details(_frame: &Frame, _direction: &str, _conn_id: &ConnectionId) {
     trace!(
         target: "saorsa_transport::frame::details",
-        conn_id = ?conn_id,
-        direction = direction,
-        frame_type = ?frame.ty(),
+        conn_id = ?_conn_id,
+        direction = _direction,
+        frame_type = ?_frame.ty(),
         "Processing frame"
     );
 
-    match frame {
-        Frame::ObservedAddress(addr) => {
+    match _frame {
+        Frame::ObservedAddress(_addr) => {
             debug!(
                 target: "saorsa_transport::frame::observed_address",
-                conn_id = ?conn_id,
-                sequence_number = addr.sequence_number.0,
-                address = ?addr.address,
+                conn_id = ?_conn_id,
+                sequence_number = _addr.sequence_number.0,
+                address = ?_addr.address,
                 "OBSERVED_ADDRESS frame"
             );
         }
-        Frame::AddAddress(addr) => {
+        Frame::AddAddress(_addr) => {
             debug!(
                 target: "saorsa_transport::frame::add_address",
-                conn_id = ?conn_id,
-                sequence = addr.sequence.0,
-                address = ?addr.address,
-                priority = addr.priority.0,
+                conn_id = ?_conn_id,
+                sequence = _addr.sequence.0,
+                address = ?_addr.address,
+                priority = _addr.priority.0,
                 "ADD_ADDRESS frame"
             );
         }
-        Frame::PunchMeNow(punch) => {
+        Frame::PunchMeNow(_punch) => {
             debug!(
                 target: "saorsa_transport::frame::punch_me_now",
-                conn_id = ?conn_id,
-                paired_with_sequence_number = punch.paired_with_sequence_number.0,
-                round = punch.round.0,
+                conn_id = ?_conn_id,
+                paired_with_sequence_number = _punch.paired_with_sequence_number.0,
+                round = _punch.round.0,
                 "PUNCH_ME_NOW frame"
             );
         }
         _ => {
             trace!(
                 target: "saorsa_transport::frame::other",
-                conn_id = ?conn_id,
-                frame_type = ?frame.ty(),
+                conn_id = ?_conn_id,
+                frame_type = ?_frame.ty(),
                 "Standard QUIC frame"
             );
         }

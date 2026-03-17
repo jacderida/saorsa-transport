@@ -16,13 +16,13 @@ use std::{
 
 use indexmap::IndexMap;
 
+use crate::{debug, error, trace, warn};
 use bytes::{BufMut, Bytes, BytesMut};
 use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 use rustc_hash::FxHashMap;
 use rustls;
 use slab::Slab;
 use thiserror::Error;
-use tracing::{debug, error, trace, warn};
 
 use crate::{
     Duration, INITIAL_MTU, Instant, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, ResetToken,
@@ -241,11 +241,11 @@ impl RelayQueue {
 
         // Remove expired items
         for key in expired_keys {
-            if let Some(expired) = self.pending.shift_remove(&key) {
+            if let Some(_expired) = self.pending.shift_remove(&key) {
                 debug!(
                     "Relay request for peer {:?} timed out after {:?}",
-                    expired.target_peer_id,
-                    now.saturating_duration_since(expired.created_at)
+                    _expired.target_peer_id,
+                    now.saturating_duration_since(_expired.created_at)
                 );
             }
         }
@@ -396,10 +396,10 @@ impl Endpoint {
 
     /// Unregister a peer ID from the connection mapping
     pub fn unregister_peer(&mut self, peer_id: &PeerId) {
-        if let Some(handle) = self.peer_connections.remove(peer_id) {
+        if let Some(_handle) = self.peer_connections.remove(peer_id) {
             trace!(
                 "Unregistered peer {:?} from connection {:?}",
-                peer_id, handle
+                peer_id, _handle
             );
         }
     }
@@ -469,11 +469,11 @@ impl Endpoint {
         if self.connections.get(ch.0).is_some() {
             // Store the event to be processed by the high-level layer
             // The high-level endpoint will drain these and send to the appropriate connections
-            tracing::info!("Queueing PUNCH_ME_NOW relay event for connection {:?}", ch);
+            crate::info!("Queueing PUNCH_ME_NOW relay event for connection {:?}", ch);
             self.pending_relay_events.push((ch, event));
             true
         } else {
-            tracing::warn!("Cannot relay PUNCH_ME_NOW: connection {:?} not found", ch);
+            crate::warn!("Cannot relay PUNCH_ME_NOW: connection {:?} not found", ch);
             false
         }
     }
@@ -670,23 +670,26 @@ impl Endpoint {
                     add_address_frame,
                 )));
             }
-            NatCandidateValidated { address, challenge } => {
+            NatCandidateValidated {
+                address: _address,
+                challenge: _challenge,
+            } => {
                 // Handle successful NAT traversal candidate validation
                 trace!(
                     "NAT candidate validation succeeded for {} with challenge {:016x}",
-                    address, challenge
+                    _address, _challenge
                 );
 
                 // The validation success is primarily handled by the connection-level state machine
                 // This event serves as notification to the endpoint for potential coordination
                 // with other components or logging/metrics collection
-                debug!("NAT candidate {} validated successfully", address);
+                debug!("NAT candidate {} validated successfully", _address);
             }
             TryConnectTo {
-                request_id,
-                target_address,
-                timeout_ms,
-                requester_connection,
+                request_id: _request_id,
+                target_address: _target_address,
+                timeout_ms: _timeout_ms,
+                requester_connection: _requester_connection,
                 requested_at: _,
             } => {
                 // Handle TryConnectTo request from a peer
@@ -694,7 +697,7 @@ impl Endpoint {
                 // to a target to verify connectivity
                 trace!(
                     "TryConnectTo request received: request_id={}, target={}, timeout={}ms, from={}",
-                    request_id, target_address, timeout_ms, requester_connection
+                    _request_id, _target_address, _timeout_ms, _requester_connection
                 );
 
                 // Since the endpoint is synchronous and we can't spawn async tasks here,
@@ -703,7 +706,7 @@ impl Endpoint {
                 // For now, we queue a "not implemented" response to acknowledge the request.
                 debug!(
                     "TryConnectTo: endpoint received callback request for {}",
-                    target_address
+                    _target_address
                 );
 
                 // TODO: In the async wrapper (high_level/mod.rs), implement the actual
@@ -787,8 +790,8 @@ impl Endpoint {
                     src_ip: local_ip,
                 }));
             }
-            Err(e) => {
-                trace!("malformed header: {}", e);
+            Err(_e) => {
+                trace!("malformed header: {}", _e);
                 return None;
             }
         };
@@ -1067,8 +1070,8 @@ impl Endpoint {
 
         let packet = match event.first_decode.finish(Some(&*crypto.header.remote)) {
             Ok(packet) => packet,
-            Err(e) => {
-                trace!("unable to decode initial packet: {}", e);
+            Err(_e) => {
+                trace!("unable to decode initial packet: {}", _e);
                 return None;
             }
         };
@@ -1382,8 +1385,8 @@ impl Endpoint {
             &mut self.rng,
         ) {
             Ok(token) => token,
-            Err(err) => {
-                error!(?err, "failed to encode retry token");
+            Err(_err) => {
+                error!(?_err, "failed to encode retry token");
                 return Err(RetryError::incoming(incoming));
             }
         };

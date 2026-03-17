@@ -67,7 +67,7 @@ impl coding::Codec for Code {
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
         if buf.write_var(self.0).is_err() {
-            tracing::error!("VarInt overflow while encoding TransportErrorCode");
+            crate::error!("VarInt overflow while encoding TransportErrorCode");
             debug_assert!(false, "VarInt overflow while encoding TransportErrorCode");
         }
     }

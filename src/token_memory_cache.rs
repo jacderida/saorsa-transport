@@ -12,9 +12,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::{error, trace};
 use bytes::Bytes;
 use lru_slab::LruSlab;
-use tracing::{error, trace};
 
 use crate::token::TokenStore;
 
@@ -38,8 +38,8 @@ impl TokenStore for TokenMemoryCache {
         trace!(%server_name, "storing token");
         let mut state = match self.0.lock() {
             Ok(state) => state,
-            Err(e) => {
-                error!("Token cache mutex poisoned: {}", e);
+            Err(_e) => {
+                error!("Token cache mutex poisoned: {}", _e);
                 return;
             }
         };
@@ -49,8 +49,8 @@ impl TokenStore for TokenMemoryCache {
     fn take(&self, server_name: &str) -> Option<Bytes> {
         let mut state = match self.0.lock() {
             Ok(state) => state,
-            Err(e) => {
-                error!("Token cache mutex poisoned: {}", e);
+            Err(_e) => {
+                error!("Token cache mutex poisoned: {}", _e);
                 return None;
             }
         };

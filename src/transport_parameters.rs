@@ -216,7 +216,7 @@ impl TransportParameters {
                 let micros = TIMER_GRANULARITY.as_micros();
                 // TIMER_GRANULARITY should always fit in u64 and be less than 2^62
                 let micros_u64 = u64::try_from(micros).unwrap_or_else(|_| {
-                    tracing::error!("Timer granularity {} micros exceeds u64::MAX", micros);
+                    crate::error!("Timer granularity {} micros exceeds u64::MAX", micros);
                     1_000_000 // Default to 1 second
                 });
                 VarInt::from_u64_bounded(micros_u64)
@@ -871,18 +871,23 @@ impl TransportParameters {
             match (side, nat_config) {
                 // Traditional: Server receives ClientSupport from client
                 (Side::Server, NatTraversalConfig::ClientSupport) => {
-                    tracing::debug!("Server received valid ClientSupport NAT traversal parameter");
+                    crate::debug!("Server received valid ClientSupport NAT traversal parameter");
                 }
                 // Traditional: Client receives ServerSupport from server
-                (Side::Client, NatTraversalConfig::ServerSupport { concurrency_limit }) => {
-                    tracing::debug!(
+                (
+                    Side::Client,
+                    NatTraversalConfig::ServerSupport {
+                        concurrency_limit: _concurrency_limit,
+                    },
+                ) => {
+                    crate::debug!(
                         "Client received valid ServerSupport with concurrency_limit: {}",
-                        concurrency_limit
+                        _concurrency_limit
                     );
                 }
                 // P2P: Server receives ServerSupport from peer (symmetric P2P)
                 (Side::Server, NatTraversalConfig::ServerSupport { concurrency_limit }) => {
-                    tracing::debug!(
+                    crate::debug!(
                         "P2P: Server received ServerSupport with concurrency_limit: {} (symmetric P2P)",
                         concurrency_limit
                     );
@@ -899,7 +904,7 @@ impl TransportParameters {
                 }
                 // P2P: Client receives ClientSupport from peer (symmetric P2P)
                 (Side::Client, NatTraversalConfig::ClientSupport) => {
-                    tracing::debug!("P2P: Client received ClientSupport (symmetric P2P)");
+                    crate::debug!("P2P: Client received ClientSupport (symmetric P2P)");
                     // Valid for P2P - both peers have client capabilities
                 }
             }

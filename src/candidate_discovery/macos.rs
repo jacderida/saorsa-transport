@@ -32,7 +32,7 @@ const SIOCGIFMTU: libc::c_ulong = 0xc0206933;
 // Used in FFI bindings
 const SIOCGIFADDR: libc::c_ulong = 0xc0206921;
 
-use tracing::{debug, error, info, warn};
+use crate::{debug, error, info, warn};
 
 use crate::candidate_discovery::{NetworkInterface, NetworkInterfaceDiscovery};
 

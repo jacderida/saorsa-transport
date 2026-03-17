@@ -98,6 +98,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::unnecessary_literal_unwrap)]
 #![allow(clippy::assertions_on_constants)]
+pub(crate) mod logging_macros;
 
 use std::{
     fmt,

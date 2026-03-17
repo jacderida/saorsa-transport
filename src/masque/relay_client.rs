@@ -248,7 +248,7 @@ impl MasqueRelayClient {
         // Store public address if provided
         if let Some(addr) = response.proxy_public_address {
             *self.public_address.write().await = Some(addr);
-            tracing::info!(
+            crate::info!(
                 relay = %self.relay_address,
                 public_addr = %addr,
                 "MASQUE relay session established"
@@ -267,9 +267,12 @@ impl MasqueRelayClient {
             Capsule::CompressionAck(ack) => self.handle_ack(ack).await,
             Capsule::CompressionClose(close) => self.handle_close(close).await,
             Capsule::CompressionAssign(assign) => self.handle_assign(assign).await,
-            Capsule::Unknown { capsule_type, .. } => {
-                tracing::debug!(
-                    capsule_type = capsule_type.into_inner(),
+            Capsule::Unknown {
+                capsule_type: _capsule_type,
+                ..
+            } => {
+                crate::debug!(
+                    capsule_type = _capsule_type.into_inner(),
                     "Ignoring unknown capsule from relay"
                 );
                 Ok(None)
@@ -287,7 +290,7 @@ impl MasqueRelayClient {
         match result {
             Ok(_) => {
                 self.stats.record_context();
-                tracing::debug!(
+                crate::debug!(
                     context_id = ack.context_id.into_inner(),
                     "Context acknowledged by relay"
                 );
@@ -295,7 +298,7 @@ impl MasqueRelayClient {
                 // Flush pending datagrams for this context - payloads can be re-sent
                 let flushed_payloads = self.flush_pending_for_context(ack.context_id).await;
                 if !flushed_payloads.is_empty() {
-                    tracing::debug!(
+                    crate::debug!(
                         context_id = ack.context_id.into_inner(),
                         count = flushed_payloads.len(),
                         "Flushed pending datagrams for acknowledged context"
@@ -303,10 +306,10 @@ impl MasqueRelayClient {
                 }
                 Ok(None)
             }
-            Err(e) => {
-                tracing::warn!(
+            Err(_e) => {
+                crate::warn!(
                     context_id = ack.context_id.into_inner(),
-                    error = %e,
+                    error = %_e,
                     "Unexpected ACK from relay"
                 );
                 Ok(None)
@@ -330,7 +333,7 @@ impl MasqueRelayClient {
         let mut mgr = self.context_manager.write().await;
         let _ = mgr.close(close.context_id);
 
-        tracing::debug!(
+        crate::debug!(
             context_id = close.context_id.into_inner(),
             "Context closed by relay"
         );
@@ -345,10 +348,10 @@ impl MasqueRelayClient {
         // Register the remote context
         {
             let mut mgr = self.context_manager.write().await;
-            if let Err(e) = mgr.register_remote(assign.context_id, target) {
-                tracing::warn!(
+            if let Err(_e) = mgr.register_remote(assign.context_id, target) {
+                crate::warn!(
                     context_id = assign.context_id.into_inner(),
-                    error = %e,
+                    error = %_e,
                     "Failed to register remote context"
                 );
                 // Send CLOSE to reject
@@ -551,7 +554,7 @@ impl MasqueRelayClient {
         self.target_to_context.write().await.clear();
         self.pending_datagrams.write().await.clear();
 
-        tracing::info!(
+        crate::info!(
             relay = %self.relay_address,
             "MASQUE relay client closed"
         );

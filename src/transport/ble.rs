@@ -328,7 +328,7 @@ impl BlePacketFragmenter {
         if total_fragments > 255 {
             // Data too large - would need more than 255 fragments
             // In practice, this is ~61KB with 244-byte MTU
-            tracing::warn!(
+            crate::warn!(
                 data_len = data.len(),
                 max_fragments = 255,
                 "Data exceeds maximum fragment count"
@@ -898,7 +898,7 @@ impl Drop for BleConnection {
     fn drop(&mut self) {
         // Attempt graceful disconnect on drop
         // We can't do async operations in Drop, so we just log
-        tracing::debug!(
+        crate::debug!(
             device_id = ?self.device_id,
             "BleConnection dropped"
         );
@@ -1424,7 +1424,7 @@ impl BleTransport {
         // Load persisted sessions from disk if configured
         if transport.config.session_persist_path.is_some() {
             if let Err(e) = transport.load_sessions_from_disk().await {
-                tracing::warn!(error = %e, "Failed to load session cache from disk");
+                crate::warn!(error = %e, "Failed to load session cache from disk");
             }
         }
 
@@ -1485,7 +1485,7 @@ impl BleTransport {
         // Set locally administered bit to indicate this is derived, not actual MAC
         device_id[0] |= 0x02;
 
-        tracing::info!(
+        crate::info!(
             adapter = %adapter_info,
             device_id = ?device_id,
             "BLE adapter initialized"
@@ -1614,7 +1614,7 @@ impl BleTransport {
 
         self.cache_session(device_id, session_key, session_id).await;
 
-        tracing::debug!(
+        crate::debug!(
             device_id = ?device_id,
             session_id,
             "Cached session for future resumption"
@@ -1661,7 +1661,7 @@ impl BleTransport {
 
         let total_removed = expired_removed + lru_removed;
         if total_removed > 0 {
-            tracing::debug!(
+            crate::debug!(
                 expired = expired_removed,
                 lru = lru_removed,
                 remaining = cache.len(),
@@ -1690,7 +1690,7 @@ impl BleTransport {
         cache.drain(0..count);
         let removed = before - cache.len();
 
-        tracing::debug!(removed, remaining = cache.len(), "Evicted LRU sessions");
+        crate::debug!(removed, remaining = cache.len(), "Evicted LRU sessions");
         removed
     }
 
@@ -1699,7 +1699,7 @@ impl BleTransport {
         let mut cache = self.session_cache.write().await;
         let count = cache.len();
         cache.clear();
-        tracing::debug!(count, "Cleared session cache");
+        crate::debug!(count, "Cleared session cache");
     }
 
     /// Save session cache to disk for persistence across restarts
@@ -1726,7 +1726,7 @@ impl BleTransport {
             message: format!("Failed to save session cache to {}: {}", path.display(), e),
         })?;
 
-        tracing::info!(
+        crate::info!(
             path = %path.display(),
             sessions = cache.len(),
             "Saved session cache to disk"
@@ -1747,7 +1747,7 @@ impl BleTransport {
 
         // Check if file exists
         if !path.exists() {
-            tracing::debug!(path = %path.display(), "Session cache file does not exist");
+            crate::debug!(path = %path.display(), "Session cache file does not exist");
             return Ok(0);
         }
 
@@ -1764,7 +1764,7 @@ impl BleTransport {
         let file = match SessionCacheFile::from_bytes(&bytes) {
             Some(f) => f,
             None => {
-                tracing::warn!(
+                crate::warn!(
                     path = %path.display(),
                     "Invalid or corrupted session cache file, ignoring"
                 );
@@ -1781,7 +1781,7 @@ impl BleTransport {
         // key to still be in memory. Future enhancement: store encrypted
         // session keys with a master key.
 
-        tracing::info!(
+        crate::info!(
             path = %path.display(),
             sessions = file.sessions.len(),
             "Loaded session cache metadata from disk (keys not restored)"
@@ -1810,19 +1810,19 @@ impl BleTransport {
                 // Prune expired sessions
                 let pruned = transport.prune_expired_sessions().await;
                 if pruned > 0 {
-                    tracing::debug!(pruned, "Periodic session cleanup completed");
+                    crate::debug!(pruned, "Periodic session cleanup completed");
                 }
 
                 // Prune stale reassembly buffers
                 let stale = transport.prune_stale_reassemblies().await;
                 if stale > 0 {
-                    tracing::debug!(stale, "Pruned stale reassembly buffers");
+                    crate::debug!(stale, "Pruned stale reassembly buffers");
                 }
 
                 // Save to disk if persistence is configured
                 if transport.config.session_persist_path.is_some() {
                     if let Err(e) = transport.save_sessions_to_disk().await {
-                        tracing::warn!(error = %e, "Failed to persist session cache");
+                        crate::warn!(error = %e, "Failed to persist session cache");
                     }
                 }
             }
@@ -1907,7 +1907,7 @@ impl BleTransport {
 
         *state = ScanState::Scanning;
 
-        tracing::info!(
+        crate::info!(
             service_uuid = ?self.config.service_uuid,
             platform = %Self::platform_name(),
             "Starting BLE scan"
@@ -1938,7 +1938,7 @@ impl BleTransport {
             let mut events = match adapter.events().await {
                 Ok(events) => events,
                 Err(e) => {
-                    tracing::error!(error = %e, "Failed to get adapter events stream");
+                    crate::error!(error = %e, "Failed to get adapter events stream");
                     return;
                 }
             };
@@ -1978,7 +1978,7 @@ impl BleTransport {
                                 let is_new = !devices.contains_key(&device_id);
                                 devices.insert(device_id, device.clone());
 
-                                tracing::debug!(
+                                crate::debug!(
                                     device_id = ?device_id,
                                     local_name = ?device.local_name,
                                     rssi = ?device.rssi,
@@ -1990,7 +1990,7 @@ impl BleTransport {
                                 // Send scan event
                                 let event = ScanEvent { device, is_new };
                                 if scan_event_tx.send(event).await.is_err() {
-                                    tracing::debug!("Scan event receiver dropped");
+                                    crate::debug!("Scan event receiver dropped");
                                 }
                             }
                         }
@@ -2013,7 +2013,7 @@ impl BleTransport {
                                         device.has_service = true;
                                     }
 
-                                    tracing::trace!(
+                                    crate::trace!(
                                         device_id = ?device_id,
                                         rssi = ?device.rssi,
                                         "Updated BLE device"
@@ -2024,7 +2024,7 @@ impl BleTransport {
                     }
                     CentralEvent::DeviceDisconnected(id) => {
                         let device_id = Self::peripheral_id_to_device_id(&id.to_string());
-                        tracing::debug!(device_id = ?device_id, "BLE device disconnected");
+                        crate::debug!(device_id = ?device_id, "BLE device disconnected");
                     }
                     _ => {
                         // Ignore other events
@@ -2032,7 +2032,7 @@ impl BleTransport {
                 }
             }
 
-            tracing::info!("BLE scan event processing stopped");
+            crate::info!("BLE scan event processing stopped");
         });
 
         Ok(())
@@ -2073,7 +2073,7 @@ impl BleTransport {
 
         *state = ScanState::Stopping;
 
-        tracing::info!(
+        crate::info!(
             platform = %Self::platform_name(),
             "Stopping BLE scan"
         );
@@ -2144,7 +2144,7 @@ impl BleTransport {
         // Send scan event
         let event = ScanEvent { device, is_new };
         if self.scan_event_tx.send(event).await.is_err() {
-            tracing::debug!("Scan event receiver dropped");
+            crate::debug!("Scan event receiver dropped");
         }
 
         is_new
@@ -2231,18 +2231,18 @@ impl BleTransport {
         let using_session_resumption = resume_token.is_some();
 
         if using_session_resumption {
-            tracing::info!(
+            crate::info!(
                 device_id = ?device_id,
                 "Found cached session - using fast handshake (32 bytes vs ~8KB)"
             );
         } else {
-            tracing::info!(
+            crate::info!(
                 device_id = ?device_id,
                 "No cached session - will perform full PQC handshake"
             );
         }
 
-        tracing::info!(
+        crate::info!(
             device_id = ?device_id,
             btleplug_id = %btleplug_id_str,
             platform = %Self::platform_name(),
@@ -2311,7 +2311,7 @@ impl BleTransport {
                 message: "RX characteristic not found".to_string(),
             })?;
 
-        tracing::debug!(
+        crate::debug!(
             tx_uuid = %tx_char.uuid,
             rx_uuid = %rx_char.uuid,
             "Found saorsa-transport characteristics"
@@ -2325,7 +2325,7 @@ impl BleTransport {
                 message: format!("Failed to subscribe to RX notifications: {e}"),
             })?;
 
-        tracing::debug!(
+        crate::debug!(
             device_id = ?device_id,
             "Subscribed to RX notifications"
         );
@@ -2359,7 +2359,7 @@ impl BleTransport {
             let mut notifications = match peripheral_arc.notifications().await {
                 Ok(stream) => stream,
                 Err(e) => {
-                    tracing::error!(
+                    crate::error!(
                         device_id = ?device_id,
                         error = %e,
                         "Failed to get notification stream"
@@ -2368,7 +2368,7 @@ impl BleTransport {
                 }
             };
 
-            tracing::info!(
+            crate::info!(
                 device_id = ?device_id,
                 "Started notification handler"
             );
@@ -2393,14 +2393,14 @@ impl BleTransport {
 
                     // Send to inbound channel
                     if inbound_tx.send(datagram).await.is_err() {
-                        tracing::debug!(
+                        crate::debug!(
                             device_id = ?device_id,
                             "Inbound channel closed, stopping notification handler"
                         );
                         break;
                     }
 
-                    tracing::trace!(
+                    crate::trace!(
                         device_id = ?device_id,
                         data_len,
                         "Received BLE notification"
@@ -2408,13 +2408,13 @@ impl BleTransport {
                 }
             }
 
-            tracing::info!(
+            crate::info!(
                 device_id = ?device_id,
                 "Notification handler stopped"
             );
         });
 
-        tracing::info!(
+        crate::info!(
             device_id = ?device_id,
             session_resumed = using_session_resumption,
             "BLE device connected"
@@ -2426,7 +2426,7 @@ impl BleTransport {
         if !using_session_resumption {
             // Generate a session ID from the connection timestamp
             let session_id = (Instant::now().elapsed().as_millis() & 0xFFFF) as u16;
-            tracing::debug!(
+            crate::debug!(
                 device_id = ?device_id,
                 session_id,
                 "New connection - session can be cached after PQC handshake"
@@ -2519,7 +2519,7 @@ impl BleTransport {
             .await
             .insert(device_id, connection.clone());
 
-        tracing::debug!(
+        crate::debug!(
             device_id = ?device_id,
             "Created simulated BLE connection (test mode)"
         );
@@ -2536,7 +2536,7 @@ impl BleTransport {
         if let Some(conn) = connections.remove(device_id) {
             let conn = conn.read().await;
             conn.start_disconnect().await?;
-            tracing::info!(
+            crate::info!(
                 device_id = ?device_id,
                 "BLE device disconnected"
             );
@@ -2585,7 +2585,7 @@ impl BleTransport {
         for (device_id, conn) in connections.drain() {
             let conn = conn.read().await;
             if let Err(e) = conn.start_disconnect().await {
-                tracing::warn!(
+                crate::warn!(
                     device_id = ?device_id,
                     error = %e,
                     "Error disconnecting device"
@@ -2593,7 +2593,7 @@ impl BleTransport {
             }
         }
 
-        tracing::info!(count, "Disconnected all BLE devices");
+        crate::info!(count, "Disconnected all BLE devices");
         count
     }
 
@@ -2615,7 +2615,7 @@ impl BleTransport {
             match self.connect_to_device(device_id).await {
                 Ok(conn) => return Ok(conn),
                 Err(e) if attempts >= max_attempts => {
-                    tracing::error!(
+                    crate::error!(
                         device_id = ?device_id,
                         attempts,
                         error = %e,
@@ -2624,7 +2624,7 @@ impl BleTransport {
                     return Err(e);
                 }
                 Err(e) => {
-                    tracing::warn!(
+                    crate::warn!(
                         device_id = ?device_id,
                         attempt = attempts,
                         max_attempts,
@@ -2713,7 +2713,7 @@ impl BleTransport {
         let complete_data = match complete_data {
             Some(data) => data,
             None => {
-                tracing::trace!(
+                crate::trace!(
                     device_id = ?device_id,
                     fragment_len,
                     "BLE fragment received, waiting for more"
@@ -2754,7 +2754,7 @@ impl BleTransport {
         // Touch session cache entry to keep it fresh
         self.touch_session(&device_id).await;
 
-        tracing::trace!(
+        crate::trace!(
             device_id = ?device_id,
             data_len,
             "Processed complete BLE message"
@@ -2834,7 +2834,7 @@ impl BleTransport {
             return Err(TransportError::Offline);
         }
 
-        tracing::info!(
+        crate::info!(
             service_uuid = ?self.config.service_uuid,
             platform = %Self::platform_name(),
             "Starting BLE advertising (peripheral mode - stub)"
@@ -2866,7 +2866,7 @@ impl BleTransport {
 
     /// Stop advertising as a BLE peripheral
     pub async fn stop_advertising(&self) -> Result<(), TransportError> {
-        tracing::info!(
+        crate::info!(
             platform = %Self::platform_name(),
             "Stopping BLE advertising"
         );
@@ -2957,13 +2957,13 @@ impl BleTransport {
         if let Some(device_id) = lru_device {
             if let Some(conn) = connections.remove(&device_id) {
                 if let Err(e) = conn.read().await.start_disconnect().await {
-                    tracing::warn!(
+                    crate::warn!(
                         device_id = ?device_id,
                         error = %e,
                         "Error during LRU eviction"
                     );
                 }
-                tracing::info!(
+                crate::info!(
                     device_id = ?device_id,
                     idle_secs = max_idle.as_secs(),
                     "Evicted LRU connection"
@@ -2998,7 +2998,7 @@ impl BleTransport {
         }
 
         if !to_evict.is_empty() {
-            tracing::info!(
+            crate::info!(
                 count = to_evict.len(),
                 threshold_secs = idle_threshold.as_secs(),
                 "Evicted idle connections"
@@ -3033,7 +3033,7 @@ impl BleTransport {
         }
 
         if !to_remove.is_empty() {
-            tracing::debug!(
+            crate::debug!(
                 removed = to_remove.len(),
                 remaining = connections.len(),
                 "Pool maintenance: removed disconnected connections"
@@ -3234,7 +3234,7 @@ impl TransportProvider for BleTransport {
                 // Simulated connection - skip actual btleplug write
                 #[cfg(test)]
                 {
-                    tracing::debug!(
+                    crate::debug!(
                         device_id = ?device_id,
                         data_len = data.len(),
                         fragments = fragment_count,
@@ -3285,7 +3285,7 @@ impl TransportProvider for BleTransport {
                         })?;
                 }
 
-                tracing::debug!(
+                crate::debug!(
                     device_id = ?device_id,
                     data_len = data.len(),
                     fragments = fragment_count,
@@ -3298,7 +3298,7 @@ impl TransportProvider for BleTransport {
         #[cfg(not(feature = "ble"))]
         {
             let _ = &fragments; // Silence unused variable warning
-            tracing::debug!(
+            crate::debug!(
                 device_id = ?device_id,
                 data_len = data.len(),
                 fragments = fragment_count,
@@ -3372,7 +3372,7 @@ impl TransportProvider for BleTransport {
         }
 
         // In a full implementation, this would set up BLE advertising with the data
-        tracing::debug!(
+        crate::debug!(
             data_len = data.len(),
             platform = %Self::platform_name(),
             "BLE broadcast (simulated)"

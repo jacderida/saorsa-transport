@@ -357,7 +357,7 @@ impl MigrationCoordinator {
             },
         );
 
-        tracing::debug!(peer = %peer, "Scheduled migration probe");
+        crate::debug!(peer = %peer, "Scheduled migration probe");
     }
 
     /// Poll migration progress - should be called periodically
@@ -429,7 +429,7 @@ impl MigrationCoordinator {
             self.stats.record_probe();
         }
 
-        tracing::info!(
+        crate::info!(
             peer = %peer,
             candidates = probe_candidates.len(),
             "Started probing candidate paths"
@@ -457,7 +457,7 @@ impl MigrationCoordinator {
             );
             self.stats
                 .record_attempt(false, self.config.validation_timeout);
-            tracing::warn!(peer = %peer, "Migration failed after {} attempts", attempts);
+            crate::warn!(peer = %peer, "Migration failed after {} attempts", attempts);
         } else {
             // Schedule another attempt
             states.insert(
@@ -466,7 +466,7 @@ impl MigrationCoordinator {
                     probe_at: Instant::now() + self.config.probe_interval,
                 },
             );
-            tracing::debug!(peer = %peer, "Scheduling retry after probe timeout");
+            crate::debug!(peer = %peer, "Scheduling retry after probe timeout");
         }
     }
 
@@ -497,7 +497,7 @@ impl MigrationCoordinator {
                 },
             );
 
-            tracing::info!(
+            crate::info!(
                 peer = %peer,
                 path = %path,
                 rtt_ms = rtt.as_millis(),
@@ -522,7 +522,7 @@ impl MigrationCoordinator {
                 },
             );
 
-            tracing::info!(peer = %peer, path = %path, "Migration completed - direct path active");
+            crate::info!(peer = %peer, path = %path, "Migration completed - direct path active");
         }
     }
 
@@ -545,7 +545,7 @@ impl MigrationCoordinator {
             },
         );
 
-        tracing::warn!(peer = %peer, reason = reason, "Forced fallback to relay");
+        crate::warn!(peer = %peer, reason = reason, "Forced fallback to relay");
     }
 
     /// Reset migration state for a peer

@@ -72,7 +72,7 @@ pub type Result<T> = std::result::Result<T, SaorsaTransportError>;
 /// Error handling utilities
 pub mod utils {
     use super::*;
-    use tracing::{error, warn, info, debug};
+    use crate::{debug, error, info, warn};
 
     /// Log an error with appropriate level based on severity
     pub fn log_error<E: std::error::Error>(error: &E, context: &str) {

@@ -13,9 +13,9 @@ use std::{
     task::{Context, Poll},
 };
 
+use crate::error;
 use crate::{ConnectionError, ConnectionId, ServerConfig};
 use thiserror::Error;
-use tracing::error;
 
 use super::{
     connection::{Connecting, Connection},

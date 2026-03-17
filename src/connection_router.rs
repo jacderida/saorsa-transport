@@ -422,7 +422,7 @@ impl RoutedConnection {
                 handle,
                 ..
             } => {
-                tracing::debug!(
+                crate::debug!(
                     connection_id = connection_id.0,
                     reason_code,
                     "closing constrained connection with reason"
@@ -945,7 +945,7 @@ impl ConnectionRouter {
             ProtocolEngine::Constrained => self.stats.constrained_selections += 1,
         }
 
-        tracing::debug!(
+        crate::debug!(
             engine = ?engine,
             reason = %reason,
             supports_quic = supports_quic,
@@ -980,7 +980,7 @@ impl ConnectionRouter {
             ProtocolEngine::Quic if constrained_available => {
                 // Fall back to constrained
                 self.stats.fallback_selections += 1;
-                tracing::warn!(
+                crate::warn!(
                     preferred = "QUIC",
                     fallback = "Constrained",
                     "preferred engine unavailable, using fallback"
@@ -1001,7 +1001,7 @@ impl ConnectionRouter {
             ProtocolEngine::Constrained if quic_available && capabilities.supports_full_quic() => {
                 // Fall back to QUIC (only if transport supports it)
                 self.stats.fallback_selections += 1;
-                tracing::warn!(
+                crate::warn!(
                     preferred = "Constrained",
                     fallback = "QUIC",
                     "preferred engine unavailable, using fallback"
@@ -1018,7 +1018,7 @@ impl ConnectionRouter {
             }
             _ => {
                 // No suitable engine available
-                tracing::error!(
+                crate::error!(
                     quic_available,
                     constrained_available,
                     "no suitable engine available"
@@ -1175,7 +1175,7 @@ impl ConnectionRouter {
         self.next_quic_id += 1;
         self.stats.quic_connections += 1;
 
-        tracing::info!(
+        crate::info!(
             connection_id,
             remote = %socket_addr,
             "QUIC connection established via router"
@@ -1305,7 +1305,7 @@ impl ConnectionRouter {
         self.next_quic_id += 1;
         self.stats.quic_connections += 1;
 
-        tracing::info!(
+        crate::info!(
             connection_id,
             remote = %remote_addr,
             "Accepted incoming QUIC connection via router"

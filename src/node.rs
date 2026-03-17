@@ -48,8 +48,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::crypto::pqc::types::{MlDsaPublicKey, MlDsaSecretKey};
+use crate::info;
 use tokio::sync::broadcast;
-use tracing::info;
 
 use crate::host_identity::HostIdentity;
 use crate::node_config::NodeConfig;
@@ -310,9 +310,9 @@ impl Node {
                         // Channel closed, endpoint shutting down
                         break;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                    Err(broadcast::error::RecvError::Lagged(_n)) => {
                         // Subscriber lagged behind, log and continue
-                        tracing::warn!("Event bridge lagged by {} events", n);
+                        crate::warn!("Event bridge lagged by {} events", _n);
                     }
                 }
             }
