@@ -1991,6 +1991,33 @@ impl P2pEndpoint {
                     .finish()
                     .map_err(|e| EndpointError::Connection(e.to_string()))?;
 
+                // Wait for the peer to acknowledge receipt of all stream data.
+                // Without this, finish() only buffers a FIN locally — if the
+                // connection is dead the caller would see Ok(()) despite the
+                // data never arriving.
+                //
+                // Bounded by send_ack_timeout so phantom connections don't
+                // block the caller for the full QUIC idle timeout (~30 s).
+                let ack_timeout = self.config.timeouts.send_ack_timeout;
+                match timeout(ack_timeout, send_stream.stopped()).await {
+                    Ok(Ok(None)) => {}
+                    Ok(Ok(Some(stop_code))) => {
+                        return Err(EndpointError::Connection(format!(
+                            "peer stopped stream with code {stop_code}"
+                        )));
+                    }
+                    Ok(Err(e)) => {
+                        return Err(EndpointError::Connection(format!(
+                            "peer did not acknowledge stream data: {e}"
+                        )));
+                    }
+                    Err(_elapsed) => {
+                        return Err(EndpointError::Connection(format!(
+                            "peer did not acknowledge stream data within {ack_timeout:?}"
+                        )));
+                    }
+                }
+
                 debug!("Sent {} bytes to {} via QUIC", data.len(), addr);
             }
             crate::transport::ProtocolEngine::Constrained => {

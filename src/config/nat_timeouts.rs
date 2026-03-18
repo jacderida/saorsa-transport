@@ -131,8 +131,14 @@ impl Default for RelayTimeouts {
     }
 }
 
+/// Default time to wait for the peer to acknowledge stream data after a send.
+const DEFAULT_SEND_ACK_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Fast-network send ACK timeout.
+const FAST_SEND_ACK_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// Master timeout configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeoutConfig {
     /// NAT traversal timeouts
     pub nat_traversal: NatTraversalTimeouts,
@@ -142,6 +148,27 @@ pub struct TimeoutConfig {
 
     /// Relay timeouts
     pub relay: RelayTimeouts,
+
+    /// Maximum time to wait for the peer to acknowledge stream data after
+    /// `finish()`.  If this expires the send is treated as failed and the
+    /// connection is considered dead.
+    ///
+    /// This must be **shorter** than any outer send timeout applied by the
+    /// caller (e.g. saorsa-core's `connection_timeout`) so that the
+    /// transport layer can surface the error before the caller's timeout
+    /// fires.
+    pub send_ack_timeout: Duration,
+}
+
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        Self {
+            nat_traversal: NatTraversalTimeouts::default(),
+            discovery: DiscoveryTimeouts::default(),
+            relay: RelayTimeouts::default(),
+            send_ack_timeout: DEFAULT_SEND_ACK_TIMEOUT,
+        }
+    }
 }
 
 impl TimeoutConfig {
@@ -149,8 +176,9 @@ impl TimeoutConfig {
     pub fn fast() -> Self {
         Self {
             nat_traversal: NatTraversalTimeouts::fast(),
-            discovery: DiscoveryTimeouts::default(), // Keep default for discovery
+            discovery: DiscoveryTimeouts::default(),
             relay: RelayTimeouts::default(),
+            send_ack_timeout: FAST_SEND_ACK_TIMEOUT,
         }
     }
 
@@ -160,6 +188,7 @@ impl TimeoutConfig {
             nat_traversal: NatTraversalTimeouts::conservative(),
             discovery: DiscoveryTimeouts::default(),
             relay: RelayTimeouts::default(),
+            send_ack_timeout: DEFAULT_SEND_ACK_TIMEOUT,
         }
     }
 }
