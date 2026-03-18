@@ -388,7 +388,7 @@ jobs:
 
   publish-crate:
     name: Publish to crates.io
-    needs: [validate, build, changelog]
+    needs: [validate, test, changelog]
     runs-on: ubuntu-latest
     if: github.event.inputs.dry_run != 'true'
     steps:
