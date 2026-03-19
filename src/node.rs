@@ -466,13 +466,6 @@ impl Node {
         self.inner.is_connected(addr).await
     }
 
-    /// Query the health status of a connection to a specific peer.
-    ///
-    /// Returns `None` if the peer is not connected.
-    pub async fn connection_health(&self, addr: &SocketAddr) -> Option<crate::ConnectionHealth> {
-        self.inner.connection_health(addr).await
-    }
-
     // === Messaging ===
 
     /// Send data to a peer by address

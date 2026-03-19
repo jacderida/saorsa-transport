@@ -81,22 +81,11 @@ use rustls;
 /// Event channel capacity
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
-/// Health check protocol prefix byte.
-///
-/// Uni streams whose payload starts with this byte are health check messages
-/// handled by the reader task; they are NOT forwarded to the application data channel.
-const HEALTH_CHECK_PREFIX: u8 = 0xFF;
-
-/// Health PING payload: `[0xFF, 0x01]`.  Sent periodically by the stale connection
-/// reaper.  The remote reader task responds with a PONG.
-const HEALTH_PING: [u8; 2] = [HEALTH_CHECK_PREFIX, 0x01];
-
-/// Health PONG payload: `[0xFF, 0x02]`.  Sent in response to a PING.
-const HEALTH_PONG: [u8; 2] = [HEALTH_CHECK_PREFIX, 0x02];
-
-/// Maximum age of the last health check response before a connection is
-/// considered unresponsive and evicted (2 check intervals = 60s).
-const HEALTH_CHECK_EVICTION_THRESHOLD: Duration = Duration::from_secs(60);
+/// How often the stale connection reaper checks for QUIC-dead connections
+/// via `is_connected()`.  This is a cheap local state check — no network
+/// traffic.  Kept short so the reaper acts as a fast safety net behind the
+/// event-driven reader-exit detection.
+const STALE_REAPER_INTERVAL: Duration = Duration::from_secs(10);
 
 use crate::SHUTDOWN_DRAIN_TIMEOUT;
 
@@ -185,6 +174,14 @@ pub struct P2pEndpoint {
 
     /// Per-address abort handles for targeted reader task cancellation
     reader_handles: Arc<RwLock<HashMap<SocketAddr, tokio::task::AbortHandle>>>,
+
+    /// Channel for reader tasks to notify immediate cleanup on exit.
+    ///
+    /// When a reader task detects a dead QUIC connection (`accept_uni` error),
+    /// it sends the peer address here.  The reader-exit handler task receives
+    /// it and calls `do_cleanup_connection` immediately — no waiting for the
+    /// periodic stale reaper.
+    reader_exit_tx: mpsc::UnboundedSender<SocketAddr>,
 }
 
 impl std::fmt::Debug for P2pEndpoint {
@@ -194,17 +191,6 @@ impl std::fmt::Debug for P2pEndpoint {
             .field("config", &self.config)
             .finish_non_exhaustive()
     }
-}
-
-/// Health status for a connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionHealth {
-    /// Connection recently confirmed alive (PONG received within threshold).
-    Healthy,
-    /// A health PING has been sent but no PONG received yet.
-    Checking,
-    /// No PONG received within the eviction threshold — connection is phantom/dead.
-    Unresponsive,
 }
 
 /// Connection information for a peer
@@ -224,12 +210,6 @@ pub struct PeerConnection {
 
     /// Last activity time
     pub last_activity: Instant,
-
-    /// Timestamp of the last health PING sent to this peer.
-    pub last_health_ping_sent: Option<Instant>,
-
-    /// Timestamp of the last health PONG received from this peer.
-    pub last_health_pong_received: Option<Instant>,
 }
 
 /// Connection metrics for P2P peers
@@ -286,9 +266,6 @@ pub struct EndpointStats {
 
     /// Average coordination time for NAT traversal
     pub average_coordination_time: Duration,
-
-    /// Number of phantom/unresponsive connections evicted by health checks
-    pub phantom_connections_evicted: u64,
 }
 
 impl Default for EndpointStats {
@@ -305,7 +282,6 @@ impl Default for EndpointStats {
             connected_bootstrap_nodes: 0,
             start_time: Instant::now(),
             average_coordination_time: Duration::ZERO,
-            phantom_connections_evicted: 0,
         }
     }
 }
@@ -718,6 +694,9 @@ impl P2pEndpoint {
         let reader_tasks = Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new()));
         let reader_handles = Arc::new(RwLock::new(HashMap::new()));
 
+        // Channel for reader tasks to signal immediate cleanup on exit
+        let (reader_exit_tx, reader_exit_rx) = mpsc::unbounded_channel();
+
         let endpoint = Self {
             inner: inner_arc,
             // v0.2: auth_manager removed
@@ -738,6 +717,7 @@ impl P2pEndpoint {
             data_rx: Arc::new(tokio::sync::Mutex::new(data_rx)),
             reader_tasks,
             reader_handles,
+            reader_exit_tx,
         };
 
         // Spawn background constrained poller task
@@ -746,6 +726,10 @@ impl P2pEndpoint {
         // Spawn stale connection reaper — periodically detects and removes
         // dead connections from tracking structures (issue #137 fix).
         endpoint.spawn_stale_connection_reaper();
+
+        // Spawn reader-exit handler — immediately cleans up when a reader
+        // task detects a dead QUIC connection, without waiting for the reaper.
+        endpoint.spawn_reader_exit_handler(reader_exit_rx);
 
         Ok(endpoint)
     }
@@ -899,8 +883,6 @@ impl P2pEndpoint {
             authenticated: true, // TLS handles authentication
             connected_at: Instant::now(),
             last_activity: Instant::now(),
-            last_health_ping_sent: None,
-            last_health_pong_received: None,
         };
 
         // Spawn background reader task BEFORE storing peer in connected_peers
@@ -996,8 +978,6 @@ impl P2pEndpoint {
                     authenticated: false,
                     connected_at: Instant::now(),
                     last_activity: Instant::now(),
-                    last_health_ping_sent: None,
-                    last_health_pong_received: None,
                 };
 
                 // Store peer keyed by synthetic address
@@ -1630,8 +1610,6 @@ impl P2pEndpoint {
             authenticated: true,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
-            last_health_ping_sent: None,
-            last_health_pong_received: None,
         };
 
         // Spawn reader task before storing peer to prevent data loss race
@@ -1704,8 +1682,6 @@ impl P2pEndpoint {
                             authenticated: true,
                             connected_at: Instant::now(),
                             last_activity: Instant::now(),
-                            last_health_ping_sent: None,
-                            last_health_pong_received: None,
                         };
 
                         // Spawn background reader task BEFORE storing in connected_peers
@@ -1818,8 +1794,6 @@ impl P2pEndpoint {
                     authenticated: true, // TLS handles authentication
                     connected_at: Instant::now(),
                     last_activity: Instant::now(),
-                    last_health_ping_sent: None,
-                    last_health_pong_received: None,
                 };
 
                 // Spawn background reader task BEFORE storing in connected_peers
@@ -1885,28 +1859,6 @@ impl P2pEndpoint {
             Ok(())
         } else {
             Err(EndpointError::PeerNotFound(*addr))
-        }
-    }
-
-    /// Query the health status of a connection to a specific address.
-    ///
-    /// Returns `None` if the address is not connected.
-    pub async fn connection_health(&self, addr: &SocketAddr) -> Option<ConnectionHealth> {
-        let peers = self.connected_peers.read().await;
-        let pc = peers.get(addr)?;
-
-        // Not yet probed — treat as healthy (just connected)
-        let Some(ping_sent) = pc.last_health_ping_sent else {
-            return Some(ConnectionHealth::Healthy);
-        };
-
-        let pong_time = pc.last_health_pong_received.unwrap_or(pc.connected_at);
-        if pong_time >= ping_sent {
-            Some(ConnectionHealth::Healthy)
-        } else if Instant::now().duration_since(ping_sent) > HEALTH_CHECK_EVICTION_THRESHOLD {
-            Some(ConnectionHealth::Unresponsive)
-        } else {
-            Some(ConnectionHealth::Checking)
         }
     }
 
@@ -2264,6 +2216,7 @@ impl P2pEndpoint {
         let connected_peers = Arc::clone(&self.connected_peers);
         let event_tx = self.event_tx.clone();
         let max_read_bytes = self.config.max_message_size;
+        let exit_tx = self.reader_exit_tx.clone();
 
         let abort_handle = self.reader_tasks.lock().await.spawn(async move {
             loop {
@@ -2293,30 +2246,6 @@ impl P2pEndpoint {
                     peer_conn.last_activity = Instant::now();
                 }
 
-                // Health check protocol: only exact PING/PONG messages are internal.
-                // All other messages (including those starting with 0xFF) are forwarded
-                // to the application to avoid silent data loss.
-                if data.len() == 2 && data[0] == HEALTH_CHECK_PREFIX {
-                    if data[1] == HEALTH_PING[1] {
-                        // Received PING — respond with PONG
-                        tracing::trace!("Health PING from {}, sending PONG", addr);
-                        if let Ok(mut send) = connection.open_uni().await {
-                            let _ = send.write_all(&HEALTH_PONG).await;
-                            let _ = send.finish();
-                        }
-                        continue;
-                    } else if data[1] == HEALTH_PONG[1] {
-                        // Received PONG — update health timestamp
-                        tracing::trace!("Health PONG from {}", addr);
-                        if let Some(peer_conn) = connected_peers.write().await.get_mut(&addr) {
-                            peer_conn.last_health_pong_received = Some(Instant::now());
-                        }
-                        continue;
-                    }
-                }
-                // Any other message (including 0xFF-prefixed non-health messages) is
-                // forwarded to the application.
-
                 // Emit DataReceived event
                 let _ = event_tx.send(P2pEvent::DataReceived {
                     addr,
@@ -2330,6 +2259,8 @@ impl P2pEndpoint {
                 }
             }
 
+            // Notify the reader-exit handler for immediate cleanup.
+            let _ = exit_tx.send(addr);
             addr
         });
 
@@ -2377,8 +2308,6 @@ impl P2pEndpoint {
                     authenticated: false,
                     connected_at: Instant::now(),
                     last_activity: Instant::now(),
-                    last_health_ping_sent: None,
-                    last_health_pong_received: None,
                 },
             );
             let _ = event_tx.send(P2pEvent::PeerConnected {
@@ -2507,15 +2436,56 @@ impl P2pEndpoint {
     /// Spawn a background task that periodically detects and removes stale connections
     /// and probes live connections with health-check PINGs.
     ///
-    /// Two-tier detection for issue #137 phantom connections:
+    /// Spawn a task that immediately cleans up connections when their reader
+    /// task exits (QUIC connection died).
     ///
-    /// 1. **QUIC-level:** connections whose underlying transport is dead
-    ///    (`is_peer_connected() == false`) are reaped immediately.
-    /// 2. **App-level:** connections whose QUIC state looks alive but have not
-    ///    responded to a health PING within [`HEALTH_CHECK_EVICTION_THRESHOLD`]
-    ///    are considered phantom and evicted.
+    /// This is the primary, event-driven detection path.  The stale reaper
+    /// serves as a periodic safety net behind this.
+    fn spawn_reader_exit_handler(&self, mut reader_exit_rx: mpsc::UnboundedReceiver<SocketAddr>) {
+        let connected_peers = Arc::clone(&self.connected_peers);
+        let inner = Arc::clone(&self.inner);
+        let event_tx = self.event_tx.clone();
+        let stats = Arc::clone(&self.stats);
+        let reader_handles = Arc::clone(&self.reader_handles);
+        let shutdown = self.shutdown.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let addr = tokio::select! {
+                    addr = reader_exit_rx.recv() => {
+                        match addr {
+                            Some(a) => a,
+                            None => return, // channel closed
+                        }
+                    }
+                    _ = shutdown.cancelled() => {
+                        debug!("Reader-exit handler shutting down");
+                        return;
+                    }
+                };
+
+                debug!("Reader task exited for {}, running immediate cleanup", addr);
+                do_cleanup_connection(
+                    &connected_peers,
+                    &inner,
+                    &reader_handles,
+                    &stats,
+                    &event_tx,
+                    &addr,
+                    DisconnectReason::Timeout,
+                )
+                .await;
+            }
+        });
+    }
+
+    /// Safety-net reaper that periodically checks for QUIC-dead connections
+    /// whose reader task has not yet exited (or whose exit was missed).
     ///
-    /// Runs every 30 seconds until the endpoint shuts down.
+    /// The primary detection path is event-driven: the reader-exit handler
+    /// cleans up immediately when a reader task detects a dead connection.
+    /// This reaper is a cheap fallback that runs every [`STALE_REAPER_INTERVAL`]
+    /// and calls `is_connected()` — a local state check with no network traffic.
     fn spawn_stale_connection_reaper(&self) {
         let connected_peers = Arc::clone(&self.connected_peers);
         let inner = Arc::clone(&self.inner);
@@ -2525,7 +2495,7 @@ impl P2pEndpoint {
         let shutdown = self.shutdown.clone();
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            let mut interval = tokio::time::interval(STALE_REAPER_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
@@ -2536,9 +2506,6 @@ impl P2pEndpoint {
                         return;
                     }
                 }
-
-                // --- Phase A: Remove QUIC-dead connections ---
-                // Collect addrs for connections whose inner transport is dead.
 
                 let stale_addrs: Vec<SocketAddr> = {
                     let peers = connected_peers.read().await;
@@ -2558,90 +2525,15 @@ impl P2pEndpoint {
 
                 for addr in &stale_addrs {
                     do_cleanup_connection(
-                        &*connected_peers,
-                        &*inner,
-                        &*reader_handles,
-                        &*stats,
+                        &connected_peers,
+                        &inner,
+                        &reader_handles,
+                        &stats,
                         &event_tx,
                         addr,
                         DisconnectReason::Timeout,
                     )
                     .await;
-                }
-
-                // --- Phase B: Health-check live connections ---
-
-                let alive_addrs: Vec<SocketAddr> = {
-                    let peers = connected_peers.read().await;
-                    peers
-                        .keys()
-                        .filter(|addr| inner.is_connected(addr))
-                        .copied()
-                        .collect()
-                };
-
-                let now = Instant::now();
-
-                for addr in &alive_addrs {
-                    // Check if this peer has missed too many health checks.
-                    let should_evict = {
-                        let peers = connected_peers.read().await;
-                        if let Some(pc) = peers.get(addr) {
-                            if let Some(ping_sent) = pc.last_health_ping_sent {
-                                let pong_time =
-                                    pc.last_health_pong_received.unwrap_or(pc.connected_at);
-                                ping_sent > pong_time
-                                    && now.duration_since(ping_sent)
-                                        > HEALTH_CHECK_EVICTION_THRESHOLD
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    };
-
-                    if should_evict {
-                        warn!(
-                            "Health check: {} unresponsive for {:?}, evicting phantom connection",
-                            addr, HEALTH_CHECK_EVICTION_THRESHOLD
-                        );
-                        if let Ok(Some(conn)) = inner.get_connection(addr) {
-                            conn.close(0u32.into(), b"health_check_failed");
-                        }
-                        let was_present = do_cleanup_connection(
-                            &*connected_peers,
-                            &*inner,
-                            &*reader_handles,
-                            &*stats,
-                            &event_tx,
-                            addr,
-                            DisconnectReason::ConnectionLost,
-                        )
-                        .await;
-                        if was_present {
-                            stats.write().await.phantom_connections_evicted += 1;
-                        }
-                        continue;
-                    }
-
-                    // Send health PING
-                    if let Ok(Some(conn)) = inner.get_connection(addr) {
-                        match conn.open_uni().await {
-                            Ok(mut send) => {
-                                if send.write_all(&HEALTH_PING).await.is_ok() {
-                                    let _ = send.finish();
-                                    if let Some(pc) = connected_peers.write().await.get_mut(addr) {
-                                        pc.last_health_ping_sent = Some(Instant::now());
-                                    }
-                                    tracing::trace!("Health PING sent to {}", addr);
-                                }
-                            }
-                            Err(e) => {
-                                debug!("Health check: failed to open stream to {}: {}", addr, e);
-                            }
-                        }
-                    }
                 }
             }
         });
@@ -2672,6 +2564,7 @@ impl Clone for P2pEndpoint {
             data_rx: Arc::clone(&self.data_rx),
             reader_tasks: Arc::clone(&self.reader_tasks),
             reader_handles: Arc::clone(&self.reader_handles),
+            reader_exit_tx: self.reader_exit_tx.clone(),
         }
     }
 }
@@ -2706,8 +2599,6 @@ mod tests {
             authenticated: false,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
-            last_health_ping_sent: None,
-            last_health_pong_received: None,
         };
         let debug_str = format!("{:?}", conn);
         assert!(debug_str.contains("PeerConnection"));
@@ -2927,8 +2818,6 @@ mod tests {
             authenticated: true,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
-            last_health_ping_sent: None,
-            last_health_pong_received: None,
         };
         assert_eq!(
             udp_conn.remote_addr.as_socket_addr(),
@@ -2947,8 +2836,6 @@ mod tests {
             authenticated: true,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
-            last_health_ping_sent: None,
-            last_health_pong_received: None,
         };
         assert!(
             ble_conn.remote_addr.as_socket_addr().is_none(),
@@ -2995,8 +2882,6 @@ mod tests {
             authenticated: true,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
-            last_health_ping_sent: None,
-            last_health_pong_received: None,
         };
 
         connections.insert(socket_addr, conn.clone());
@@ -3027,8 +2912,6 @@ mod tests {
                 authenticated: true,
                 connected_at: Instant::now(),
                 last_activity: Instant::now(),
-                last_health_ping_sent: None,
-                last_health_pong_received: None,
             },
         );
 
@@ -3047,8 +2930,6 @@ mod tests {
                 authenticated: true,
                 connected_at: Instant::now(),
                 last_activity: Instant::now(),
-                last_health_ping_sent: None,
-                last_health_pong_received: None,
             },
         );
 
@@ -3091,8 +2972,6 @@ mod tests {
                     authenticated: true,
                     connected_at: Instant::now(),
                     last_activity: Instant::now(),
-                    last_health_ping_sent: None,
-                    last_health_pong_received: None,
                 },
             );
         }
@@ -3142,8 +3021,6 @@ mod tests {
             authenticated: false,
             connected_at: Instant::now(),
             last_activity: Instant::now(),
-            last_health_ping_sent: None,
-            last_health_pong_received: None,
         };
 
         // Simulate updating the connection (e.g., after authentication)
