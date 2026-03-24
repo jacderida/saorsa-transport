@@ -74,13 +74,21 @@ pub(crate) enum EndpointEventInner {
     /// When `bool == true`, a new connection ID will be issued to peer
     RetireConnectionId(Instant, u64, bool),
     /// Request to relay a PunchMeNow frame to a target peer
-    RelayPunchMeNow([u8; 32], crate::frame::PunchMeNow),
+    /// Fields: (target_peer_id, coordination_frame, target_remote_address)
+    RelayPunchMeNow([u8; 32], crate::frame::PunchMeNow, std::net::SocketAddr),
     /// Request to send an AddAddress frame to the peer
     #[allow(dead_code)]
     SendAddressFrame(crate::frame::AddAddress),
     /// NAT traversal candidate validation succeeded
     #[allow(dead_code)]
     NatCandidateValidated { address: SocketAddr, challenge: u64 },
+    /// Initiate a hole-punch connection attempt to a peer's address.
+    /// Emitted by the target node when it receives a relayed PUNCH_ME_NOW,
+    /// triggering QUIC Initial packets to create a NAT binding.
+    InitiateHolePunch {
+        /// The peer's external address to connect to
+        peer_address: SocketAddr,
+    },
     /// Request to attempt connection to a target address (NAT callback mechanism)
     TryConnectTo {
         request_id: crate::VarInt,
@@ -231,4 +239,38 @@ pub fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
         }
         SocketAddr::V4(_) => addr,
     }
+}
+
+/// Deterministic 32-byte wire identifier from a `SocketAddr`.
+///
+/// Used to correlate PUNCH_ME_NOW relay targets across connections.
+/// The encoding is deterministic (no hashing): IP bytes are written directly
+/// into a 32-byte array with a version-byte prefix.
+///
+/// Layout for IPv4 (`[4, ip0..ip3, port_hi, port_lo, 0..]`):
+///   byte 0     = 4 (version tag)
+///   bytes 1-4  = IPv4 octets
+///   bytes 5-6  = port (big-endian)
+///   bytes 7-31 = zero padding
+///
+/// Layout for IPv6 (`[6, ip0..ip15, port_hi, port_lo, 0..]`):
+///   byte 0      = 6 (version tag)
+///   bytes 1-16  = IPv6 octets
+///   bytes 17-18 = port (big-endian)
+///   bytes 19-31 = zero padding
+pub fn wire_id_from_addr(addr: SocketAddr) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    match addr {
+        SocketAddr::V4(v4) => {
+            bytes[0] = 4;
+            bytes[1..5].copy_from_slice(&v4.ip().octets());
+            bytes[5..7].copy_from_slice(&v4.port().to_be_bytes());
+        }
+        SocketAddr::V6(v6) => {
+            bytes[0] = 6;
+            bytes[1..17].copy_from_slice(&v6.ip().octets());
+            bytes[17..19].copy_from_slice(&v6.port().to_be_bytes());
+        }
+    }
+    bytes
 }

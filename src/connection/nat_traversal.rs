@@ -2679,6 +2679,30 @@ impl NatTraversalState {
             );
             return Err(NatTraversalError::SuspiciousCoordination);
         }
+        // If there's an existing coordination that's stale (not in an active
+        // negotiation phase), reset it so a new PUNCH_ME_NOW can be processed.
+        let should_reset = if let Some(coord) = &self.coordination {
+            let stale = !matches!(
+                coord.state,
+                CoordinationPhase::Coordinating | CoordinationPhase::Requesting
+            ) || coord.round != peer_round;
+            // Active coordination for the same round — don't reset
+            if !stale && coord.round == peer_round {
+                false
+            } else {
+                stale
+            }
+        } else {
+            false
+        };
+        if should_reset {
+            info!(
+                "Resetting stale coordination for new PUNCH_ME_NOW round {}",
+                peer_round
+            );
+            self.coordination = None;
+        }
+
         if let Some(coord) = &mut self.coordination {
             if coord.round == peer_round {
                 match coord.state {
@@ -2731,8 +2755,28 @@ impl NatTraversalState {
                 Ok(false)
             }
         } else {
-            debug!("Received peer coordination but no active round");
-            Ok(false)
+            // No active coordination round — this is a relayed PUNCH_ME_NOW
+            // from a coordinator, targeting us. Start a new coordination round
+            // to initiate hole-punching toward the requesting peer.
+            info!(
+                "Received peer coordination with no active round — starting new round {}",
+                peer_round
+            );
+            self.coordination = Some(CoordinationState {
+                round: peer_round,
+                punch_targets: Vec::new(),
+                round_start: now,
+                punch_start: now + Duration::from_millis(150),
+                round_duration: self.coordination_timeout,
+                state: CoordinationPhase::Preparing,
+                punch_request_sent: false,
+                peer_punch_received: true,
+                retry_count: 0,
+                max_retries: 3,
+                timeout_state: AdaptiveTimeoutState::new(),
+                last_retry_at: None,
+            });
+            Ok(true)
         }
     }
 

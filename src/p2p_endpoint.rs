@@ -182,6 +182,17 @@ pub struct P2pEndpoint {
     /// it and calls `do_cleanup_connection` immediately — no waiting for the
     /// periodic stale reaper.
     reader_exit_tx: mpsc::UnboundedSender<SocketAddr>,
+
+    /// In-flight connection attempts, keyed by target address.
+    ///
+    /// When multiple concurrent `connect_with_fallback` calls target the same
+    /// address (e.g., 3 chunks all needing the same NATed node), only the first
+    /// call does the actual connection work. Subsequent callers subscribe to a
+    /// broadcast channel and wait for the result instead of starting parallel
+    /// hole-punch attempts that deadlock the runtime.
+    pending_dials: Arc<
+        tokio::sync::Mutex<HashMap<SocketAddr, broadcast::Sender<Result<PeerConnection, String>>>>,
+    >,
 }
 
 impl std::fmt::Debug for P2pEndpoint {
@@ -718,6 +729,7 @@ impl P2pEndpoint {
             reader_tasks,
             reader_handles,
             reader_exit_tx,
+            pending_dials: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         };
 
         // Spawn background constrained poller task
@@ -730,6 +742,16 @@ impl P2pEndpoint {
         // Spawn reader-exit handler — immediately cleans up when a reader
         // task detects a dead QUIC connection, without waiting for the reaper.
         endpoint.spawn_reader_exit_handler(reader_exit_rx);
+
+        // Spawn NAT traversal session driver — periodically polls the
+        // NatTraversalEndpoint to advance sessions through Discovery →
+        // Coordination → Punching phases. Runs independently of
+        // try_hole_punch to avoid DashMap lock contention deadlocks.
+        endpoint.spawn_session_driver();
+
+        // Spawn incoming connection forwarder — bridges accepted connections
+        // from the NatTraversalEndpoint to P2pEndpoint's connected_peers.
+        endpoint.spawn_incoming_connection_forwarder();
 
         Ok(endpoint)
     }
@@ -1298,14 +1320,95 @@ impl P2pEndpoint {
             return Err(EndpointError::ShuttingDown);
         }
 
+        // Dedup: if another task is already connecting to this target, wait for
+        // its result instead of starting a parallel attempt. This prevents
+        // multiple concurrent hole-punch sessions that deadlock the runtime.
+        let target = target_ipv4.or(target_ipv6);
+        if let Some(target_addr) = target {
+            let mut pending = self.pending_dials.lock().await;
+            if let Some(tx) = pending.get(&target_addr) {
+                // Another task is already connecting — subscribe and wait
+                let mut rx = tx.subscribe();
+                drop(pending);
+                info!(
+                    "connect_with_fallback: waiting for in-flight dial to {}",
+                    target_addr
+                );
+                match rx.recv().await {
+                    Ok(Ok(conn)) => {
+                        return Ok((
+                            conn,
+                            ConnectionMethod::HolePunched {
+                                coordinator: target_addr,
+                            },
+                        ));
+                    }
+                    Ok(Err(_)) | Err(_) => {
+                        // Primary dial failed — fall through and try ourselves
+                    }
+                }
+            } else {
+                // We're the first — register ourselves
+                let (tx, _) = broadcast::channel(4);
+                pending.insert(target_addr, tx);
+                drop(pending);
+            }
+        }
+
+        // Do the actual connection work
+        let result = self
+            .connect_with_fallback_inner(target_ipv4, target_ipv6, strategy_config)
+            .await;
+
+        // Broadcast result to any waiters and clean up pending entry
+        if let Some(target_addr) = target {
+            let mut pending = self.pending_dials.lock().await;
+            if let Some(tx) = pending.remove(&target_addr) {
+                match &result {
+                    Ok((conn, _)) => {
+                        let _ = tx.send(Ok(conn.clone()));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e.to_string()));
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Inner implementation of connect_with_fallback (separated for dedup wrapper).
+    async fn connect_with_fallback_inner(
+        &self,
+        target_ipv4: Option<SocketAddr>,
+        target_ipv6: Option<SocketAddr>,
+        strategy_config: Option<StrategyConfig>,
+    ) -> Result<(PeerConnection, ConnectionMethod), EndpointError> {
         // Build strategy config with coordinator and relay from our config
         let mut config = strategy_config.unwrap_or_default();
         if config.coordinator.is_none() {
+            // Try known_peers first (configured bootstrap nodes)
             config.coordinator = self
                 .config
                 .known_peers
                 .first()
                 .and_then(|addr| addr.as_socket_addr());
+
+            // If no known_peers, use any currently connected peer as coordinator.
+            // In the symmetric P2P architecture, any connected node can coordinate
+            // NAT traversal for us.
+            if config.coordinator.is_none() {
+                let peers = self.connected_peers.read().await;
+                let target = target_ipv4.or(target_ipv6);
+                config.coordinator = peers.keys().find(|&&addr| Some(addr) != target).copied();
+                if let Some(coord) = config.coordinator {
+                    info!(
+                        "Using connected peer {} as NAT traversal coordinator",
+                        coord
+                    );
+                }
+            }
         }
         if config.relay_addrs.is_empty() {
             // Optimization: Try to find a high-quality relay from our cache first
@@ -1337,6 +1440,24 @@ impl P2pEndpoint {
                     config.relay_addrs.push(relay_addr);
                 }
             }
+
+            // If still no relay addresses, use connected peers as relay candidates.
+            // In the symmetric architecture, every node runs a MASQUE relay server.
+            if config.relay_addrs.is_empty() {
+                let peers = self.connected_peers.read().await;
+                let target = target_ipv4.or(target_ipv6);
+                for &addr in peers.keys() {
+                    if Some(addr) != target {
+                        config.relay_addrs.push(addr);
+                    }
+                }
+                if !config.relay_addrs.is_empty() {
+                    info!(
+                        "Using {} connected peer(s) as relay candidates",
+                        config.relay_addrs.len()
+                    );
+                }
+            }
         }
 
         let mut strategy = ConnectionStrategy::new(config);
@@ -1356,6 +1477,49 @@ impl P2pEndpoint {
         }
 
         loop {
+            // Check if a previous hole-punch attempt established the connection
+            // asynchronously (e.g. the target connected to us after receiving
+            // a relayed PUNCH_ME_NOW from a prior round).
+            let target = target_ipv4.or(target_ipv6);
+            if let Some(target_addr) = target {
+                if self.inner.is_connected(&target_addr) {
+                    info!(
+                        "connect_with_fallback: connection to {} established asynchronously",
+                        target_addr
+                    );
+                    let peer_conn = PeerConnection {
+                        public_key: None,
+                        remote_addr: TransportAddr::Quic(target_addr),
+                        authenticated: true,
+                        connected_at: Instant::now(),
+                        last_activity: Instant::now(),
+                    };
+                    // Spawn background reader task for data reception
+                    if let Ok(Some(conn)) = self.inner.get_connection(&target_addr) {
+                        self.spawn_reader_task(target_addr, conn).await;
+                    }
+
+                    self.connected_peers
+                        .write()
+                        .await
+                        .insert(target_addr, peer_conn.clone());
+
+                    // Broadcast PeerConnected so the identity exchange is triggered
+                    let _ = self.event_tx.send(P2pEvent::PeerConnected {
+                        addr: TransportAddr::Quic(target_addr),
+                        public_key: peer_conn.public_key.clone(),
+                        side: Side::Client,
+                    });
+
+                    return Ok((
+                        peer_conn,
+                        ConnectionMethod::HolePunched {
+                            coordinator: target_addr, // approximate
+                        },
+                    ));
+                }
+            }
+
             match strategy.current_stage().clone() {
                 ConnectionStage::DirectIPv4 { .. } => {
                     // Use Happy Eyeballs (RFC 8305) to race all direct addresses (IPv4 + IPv6)
@@ -1469,6 +1633,19 @@ impl P2pEndpoint {
                             return Ok((conn, ConnectionMethod::HolePunched { coordinator }));
                         }
                         Ok(Err(e)) => {
+                            // After a failed hole-punch round, try a quick direct
+                            // connect — the NAT binding may have been created by
+                            // the target's outgoing packets even though our
+                            // try_hole_punch didn't detect the connection.
+                            if let Ok(Ok(peer_conn)) =
+                                timeout(Duration::from_secs(3), self.connect(target)).await
+                            {
+                                info!("✓ Post-hole-punch direct connect succeeded to {}", target);
+                                return Ok((
+                                    peer_conn,
+                                    ConnectionMethod::HolePunched { coordinator },
+                                ));
+                            }
                             strategy.record_holepunch_error(round, e.to_string());
                             if strategy.should_retry_holepunch() {
                                 debug!("Hole-punch round {} failed, retrying", round);
@@ -1479,6 +1656,16 @@ impl P2pEndpoint {
                             }
                         }
                         Err(_) => {
+                            // Same: try a quick direct connect after timeout
+                            if let Ok(Ok(peer_conn)) =
+                                timeout(Duration::from_secs(3), self.connect(target)).await
+                            {
+                                info!("✓ Post-hole-punch direct connect succeeded to {}", target);
+                                return Ok((
+                                    peer_conn,
+                                    ConnectionMethod::HolePunched { coordinator },
+                                ));
+                            }
                             strategy.record_holepunch_error(round, "Timeout".to_string());
                             if strategy.should_retry_holepunch() {
                                 debug!("Hole-punch round {} timed out, retrying", round);
@@ -1650,13 +1837,14 @@ impl P2pEndpoint {
             self.connect(coordinator).await?;
         }
 
-        // Derive an inner PeerId for the NAT traversal layer from the target address
-        // Initiate NAT traversal (inner layer uses SocketAddr)
+        // Initiate NAT traversal — sends PUNCH_ME_NOW to coordinator
         self.inner
             .initiate_nat_traversal(target, coordinator)
             .map_err(EndpointError::NatTraversal)?;
 
-        // Poll for completion with event-driven notification instead of sleep loop
+        // Poll for the connection to appear. The target node will receive
+        // the relayed PUNCH_ME_NOW and initiate a QUIC connection to us,
+        // which gets accepted by saorsa-core's transport handler.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
 
         loop {
@@ -1664,50 +1852,36 @@ impl P2pEndpoint {
                 return Err(EndpointError::ShuttingDown);
             }
 
-            let events = self
-                .inner
-                .poll(Instant::now())
-                .map_err(EndpointError::NatTraversal)?;
+            // Check NatTraversalEndpoint's connections
+            if self.inner.is_connected(&target) {
+                info!("try_hole_punch: connection to {} established", target);
+                let peer_conn = PeerConnection {
+                    public_key: None,
+                    remote_addr: TransportAddr::Quic(target),
+                    authenticated: true,
+                    connected_at: Instant::now(),
+                    last_activity: Instant::now(),
+                };
+                self.connected_peers
+                    .write()
+                    .await
+                    .insert(target, peer_conn.clone());
+                return Ok(peer_conn);
+            }
 
-            for event in events {
-                match event {
-                    NatTraversalEvent::ConnectionEstablished {
-                        remote_address,
-                        public_key,
-                        ..
-                    } if remote_address == target => {
-                        let peer_conn = PeerConnection {
-                            public_key: public_key.clone(),
-                            remote_addr: TransportAddr::Quic(remote_address),
-                            authenticated: true,
-                            connected_at: Instant::now(),
-                            last_activity: Instant::now(),
-                        };
-
-                        // Spawn background reader task BEFORE storing in connected_peers
-                        if let Ok(Some(conn)) = self.inner.get_connection(&target) {
-                            self.spawn_reader_task(remote_address, conn).await;
-                        }
-
-                        self.connected_peers
-                            .write()
-                            .await
-                            .insert(remote_address, peer_conn.clone());
-
-                        return Ok(peer_conn);
-                    }
-                    NatTraversalEvent::TraversalFailed {
-                        remote_address,
-                        error,
-                        ..
-                    } if remote_address == target => {
-                        return Err(EndpointError::NatTraversal(error));
-                    }
-                    _ => {}
+            // Check P2pEndpoint's connected_peers (populated by saorsa-core)
+            {
+                let peers = self.connected_peers.read().await;
+                if let Some(existing) = peers.get(&target) {
+                    info!("try_hole_punch: connection to {} found in peers", target);
+                    return Ok(existing.clone());
                 }
             }
 
-            // Wait for connection notification, shutdown, or timeout
+            // The background session driver (spawn_session_driver) calls
+            // poll() every 500ms to advance sessions. We just wait here.
+
+            // Wait briefly then re-check, or timeout
             tokio::select! {
                 _ = self.inner.connection_notify().notified() => {}
                 _ = self.shutdown.cancelled() => {
@@ -1716,6 +1890,8 @@ impl P2pEndpoint {
                 _ = tokio::time::sleep_until(deadline) => {
                     return Err(EndpointError::Timeout);
                 }
+                // Wake periodically to drive session and re-check connections
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {}
             }
         }
     }
@@ -1769,7 +1945,7 @@ impl P2pEndpoint {
         }
 
         let result = tokio::select! {
-            r = self.inner.accept_connection() => r,
+            r = self.inner.accept_connection_direct() => r,
             _ = self.shutdown.cancelled() => return None,
         };
 
@@ -1798,8 +1974,23 @@ impl P2pEndpoint {
 
                 // Spawn background reader task BEFORE storing in connected_peers
                 // to prevent race where recv() misses early data
-                if let Ok(Some(conn)) = self.inner.get_connection(&remote_addr) {
-                    self.spawn_reader_task(remote_addr, conn).await;
+                match self.inner.get_connection(&remote_addr) {
+                    Ok(Some(conn)) => {
+                        info!("accept: spawning reader task for {}", remote_addr);
+                        self.spawn_reader_task(remote_addr, conn).await;
+                    }
+                    Ok(None) => {
+                        error!(
+                            "accept: get_connection({}) returned None — NO reader task spawned!",
+                            remote_addr
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            "accept: get_connection({}) failed: {} — NO reader task spawned!",
+                            remote_addr, e
+                        );
+                    }
                 }
 
                 self.connected_peers
@@ -1906,13 +2097,41 @@ impl P2pEndpoint {
             return Err(EndpointError::ShuttingDown);
         }
 
-        // Get peer's transport address
-        let peer_info = self.connected_peers.read().await;
-        let peer_conn = peer_info
-            .get(addr)
-            .ok_or(EndpointError::PeerNotFound(*addr))?;
-        let transport_addr = peer_conn.remote_addr.clone();
-        drop(peer_info); // Release read lock before async operations
+        // Get peer's transport address and optionally capture the connection
+        // for hole-punched peers that bypassed normal registration.
+        let (transport_addr, cached_connection) = {
+            let peer_info = self.connected_peers.read().await;
+            if let Some(peer_conn) = peer_info.get(addr) {
+                (peer_conn.remote_addr.clone(), None)
+            } else {
+                // Check if the NatTraversalEndpoint has a connection to this
+                // address (e.g. from a hole-punch that bypassed the normal path).
+                // Capture the connection now before it can be cleaned up.
+                drop(peer_info);
+                if let Ok(Some(conn)) = self.inner.get_connection(addr) {
+                    info!(
+                        "send: found hole-punched connection to {}, registering",
+                        addr
+                    );
+                    let peer_conn = PeerConnection {
+                        public_key: None,
+                        remote_addr: TransportAddr::Quic(*addr),
+                        authenticated: true,
+                        connected_at: Instant::now(),
+                        last_activity: Instant::now(),
+                    };
+                    self.connected_peers.write().await.insert(*addr, peer_conn);
+                    let _ = self.event_tx.send(P2pEvent::PeerConnected {
+                        addr: TransportAddr::Quic(*addr),
+                        public_key: None,
+                        side: Side::Server,
+                    });
+                    (TransportAddr::Quic(*addr), Some(conn))
+                } else {
+                    return Err(EndpointError::PeerNotFound(*addr));
+                }
+            }
+        };
 
         // Select protocol engine based on transport address
         let engine = {
@@ -1922,34 +2141,40 @@ impl P2pEndpoint {
 
         match engine {
             crate::transport::ProtocolEngine::Quic => {
-                // Use existing QUIC connection (UDP transport)
-                let connection = self
-                    .inner
-                    .get_connection(addr)
-                    .map_err(EndpointError::NatTraversal)?
-                    .ok_or(EndpointError::PeerNotFound(*addr))?;
+                // Use cached connection (from hole-punch) or look up fresh
+                let connection = if let Some(conn) = cached_connection {
+                    conn
+                } else {
+                    self.inner
+                        .get_connection(addr)
+                        .map_err(EndpointError::NatTraversal)?
+                        .ok_or(EndpointError::PeerNotFound(*addr))?
+                };
 
-                let mut send_stream = connection
-                    .open_uni()
-                    .await
-                    .map_err(|e| EndpointError::Connection(e.to_string()))?;
+                let mut send_stream = connection.open_uni().await.map_err(|e| {
+                    warn!("send({}): open_uni failed: {}", addr, e);
+                    EndpointError::Connection(e.to_string())
+                })?;
 
-                send_stream
-                    .write_all(data)
-                    .await
-                    .map_err(|e| EndpointError::Connection(e.to_string()))?;
+                send_stream.write_all(data).await.map_err(|e| {
+                    warn!(
+                        "send({}): write_all ({} bytes) failed: {}",
+                        addr,
+                        data.len(),
+                        e
+                    );
+                    EndpointError::Connection(e.to_string())
+                })?;
 
-                send_stream
-                    .finish()
-                    .map_err(|e| EndpointError::Connection(e.to_string()))?;
+                send_stream.finish().map_err(|e| {
+                    warn!("send({}): finish failed: {}", addr, e);
+                    EndpointError::Connection(e.to_string())
+                })?;
 
                 // Wait for the peer to acknowledge receipt of all stream data.
                 // Without this, finish() only buffers a FIN locally — if the
                 // connection is dead the caller would see Ok(()) despite the
                 // data never arriving.
-                //
-                // Bounded by send_ack_timeout so phantom connections don't
-                // block the caller for the full QUIC idle timeout (~30 s).
                 let ack_timeout = self.config.timeouts.send_ack_timeout;
                 match timeout(ack_timeout, send_stream.stopped()).await {
                     Ok(Ok(None)) => {}
@@ -2020,11 +2245,6 @@ impl P2pEndpoint {
                     );
                 }
             }
-        }
-
-        // Update last activity
-        if let Some(peer_conn) = self.connected_peers.write().await.get_mut(addr) {
-            peer_conn.last_activity = Instant::now();
         }
 
         Ok(())
@@ -2213,18 +2433,18 @@ impl P2pEndpoint {
     /// The task exits naturally when the connection is closed or the channel is dropped.
     async fn spawn_reader_task(&self, addr: SocketAddr, connection: crate::high_level::Connection) {
         let data_tx = self.data_tx.clone();
-        let connected_peers = Arc::clone(&self.connected_peers);
         let event_tx = self.event_tx.clone();
         let max_read_bytes = self.config.max_message_size;
         let exit_tx = self.reader_exit_tx.clone();
 
         let abort_handle = self.reader_tasks.lock().await.spawn(async move {
+            info!("Reader task STARTED for {}", addr);
             loop {
                 // Accept the next unidirectional stream
                 let mut recv_stream = match connection.accept_uni().await {
                     Ok(stream) => stream,
                     Err(e) => {
-                        debug!("Reader task for {} ending: accept_uni error: {}", addr, e);
+                        info!("Reader task for {} ending: accept_uni error: {}", addr, e);
                         break;
                     }
                 };
@@ -2233,18 +2453,19 @@ impl P2pEndpoint {
                     Ok(data) if data.is_empty() => continue,
                     Ok(data) => data,
                     Err(e) => {
-                        debug!("Reader task for {}: read_to_end error: {}", addr, e);
+                        info!("Reader task for {}: read_to_end error: {}", addr, e);
                         break;
                     }
                 };
 
                 let data_len = data.len();
-                tracing::trace!("Reader task: {} bytes from {}", data_len, addr);
+                info!("Reader task: {} bytes from {}", data_len, addr);
 
-                // Update last_activity
-                if let Some(peer_conn) = connected_peers.write().await.get_mut(&addr) {
-                    peer_conn.last_activity = Instant::now();
-                }
+                // Note: last_activity update moved out of the hot path to avoid
+                // RwLock write contention. With N reader tasks all acquiring
+                // write locks on every message, the lock becomes a bottleneck
+                // that can starve other tasks and deadlock the runtime.
+                // The DataReceived event below serves as a liveness signal.
 
                 // Emit DataReceived event
                 let _ = event_tx.send(P2pEvent::DataReceived {
@@ -2252,10 +2473,35 @@ impl P2pEndpoint {
                     bytes: data_len,
                 });
 
-                // Send through channel; if the receiver is dropped, exit
-                if data_tx.send((addr, data)).await.is_err() {
-                    debug!("Reader task for {}: channel closed, exiting", addr);
-                    break;
+                // Send through channel without blocking the reader task's
+                // event loop. Using try_send avoids holding a tokio worker
+                // thread when the channel is full. If the channel is full,
+                // spawn a short-lived task that retries with a timeout instead
+                // of dropping data immediately.
+                match data_tx.try_send((addr, data)) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full((addr, data))) => {
+                        let tx = data_tx.clone();
+                        let data_len = data.len();
+                        tokio::spawn(async move {
+                            if tokio::time::timeout(
+                                Duration::from_secs(5),
+                                tx.send((addr, data)),
+                            )
+                            .await
+                            .is_err()
+                            {
+                                warn!(
+                                    "Reader task for {}: data channel send timed out, dropping {} bytes",
+                                    addr, data_len
+                                );
+                            }
+                        });
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        debug!("Reader task for {}: channel closed, exiting", addr);
+                        break;
+                    }
                 }
             }
 
@@ -2539,6 +2785,93 @@ impl P2pEndpoint {
         });
     }
 
+    /// Spawn a background task that periodically drives the NAT traversal
+    /// session state machine via `poll()`.
+    ///
+    /// This runs `poll()` on its own task, decoupled from `try_hole_punch`,
+    /// to avoid DashMap lock contention deadlocks between `poll()` and the
+    /// concurrent accept handler.
+    fn spawn_session_driver(&self) {
+        let inner = Arc::clone(&self.inner);
+        let shutdown = self.shutdown.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    _ = shutdown.cancelled() => {
+                        debug!("NAT traversal session driver shutting down");
+                        return;
+                    }
+                }
+
+                // Drive the session state machine. Errors are non-fatal —
+                // the session will retry on the next tick.
+                if let Err(e) = inner.poll(Instant::now()) {
+                    debug!("NAT traversal poll error (will retry): {:?}", e);
+                }
+
+                // Process any hole-punch addresses forwarded from the Quinn driver.
+                // These are addresses from relayed PUNCH_ME_NOW that need fully tracked
+                // outgoing connections (not fire-and-forget).
+                inner.process_pending_hole_punches().await;
+            }
+        });
+    }
+
+    /// Spawn a background task that monitors for new connections accepted by
+    /// the NatTraversalEndpoint and registers them in `connected_peers` +
+    /// emits `PeerConnected` events. This bridges the gap between the
+    /// NatTraversalEndpoint's accept handler and the P2pEndpoint's tracking.
+    fn spawn_incoming_connection_forwarder(&self) {
+        debug!("FORWARDER_DEBUG: spawn_incoming_connection_forwarder called");
+        let connected_peers = Arc::clone(&self.connected_peers);
+        let event_tx = self.event_tx.clone();
+        let shutdown = self.shutdown.clone();
+        let accepted_rx = self.inner.accepted_addrs_rx();
+
+        tokio::spawn(async move {
+            debug!("FORWARDER_DEBUG: started, acquiring rx lock...");
+            let mut rx = accepted_rx.lock().await;
+            info!("Incoming connection forwarder: rx lock acquired, waiting for addresses...");
+            loop {
+                let addr = tokio::select! {
+                    Some(addr) = rx.recv() => {
+                        info!("Incoming connection forwarder: received address {}", addr);
+                        addr
+                    },
+                    _ = shutdown.cancelled() => return,
+                };
+
+                // Check if already registered
+                if connected_peers.read().await.contains_key(&addr) {
+                    continue;
+                }
+
+                info!(
+                    "Incoming connection forwarder: registering {} in connected_peers",
+                    addr
+                );
+                let peer_conn = PeerConnection {
+                    public_key: None,
+                    remote_addr: TransportAddr::Quic(addr),
+                    authenticated: true,
+                    connected_at: Instant::now(),
+                    last_activity: Instant::now(),
+                };
+                connected_peers.write().await.insert(addr, peer_conn);
+                let _ = event_tx.send(P2pEvent::PeerConnected {
+                    addr: TransportAddr::Quic(addr),
+                    public_key: None,
+                    side: Side::Server,
+                });
+            }
+        });
+    }
+
     // v0.2: authenticate_peer removed - TLS handles peer authentication via ML-DSA-65
 }
 
@@ -2565,6 +2898,7 @@ impl Clone for P2pEndpoint {
             reader_tasks: Arc::clone(&self.reader_tasks),
             reader_handles: Arc::clone(&self.reader_handles),
             reader_exit_tx: self.reader_exit_tx.clone(),
+            pending_dials: Arc::clone(&self.pending_dials),
         }
     }
 }

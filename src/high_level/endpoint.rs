@@ -252,7 +252,22 @@ impl Endpoint {
 
     /// Set the client configuration used by `connect`
     pub fn set_default_client_config(&mut self, config: ClientConfig) {
-        self.default_client_config = Some(config);
+        self.default_client_config = Some(config.clone());
+        // Also store in State so the driver can initiate hole-punch connections
+        if let Ok(mut state) = self.inner.0.state.lock() {
+            state.default_client_config = Some(config);
+        }
+    }
+
+    /// Set the channel for forwarding hole-punch addresses to the NatTraversalEndpoint.
+    ///
+    /// When set, the endpoint driver will send hole-punch addresses through this channel
+    /// instead of doing fire-and-forget QUIC connections. This allows the NatTraversalEndpoint
+    /// to fully track and register the resulting connections.
+    pub fn set_hole_punch_tx(&self, tx: mpsc::UnboundedSender<SocketAddr>) {
+        if let Ok(mut state) = self.inner.0.state.lock() {
+            state.hole_punch_tx = Some(tx);
+        }
     }
 
     /// Connect to a remote endpoint
@@ -609,6 +624,11 @@ pub(crate) struct State {
     driver_lost: bool,
     runtime: Arc<dyn Runtime>,
     stats: EndpointStats,
+    /// Client config for initiating hole-punch connections
+    default_client_config: Option<ClientConfig>,
+    /// Channel for forwarding hole-punch addresses to the NatTraversalEndpoint
+    /// for full connection tracking instead of fire-and-forget.
+    hole_punch_tx: Option<mpsc::UnboundedSender<SocketAddr>>,
 }
 
 #[derive(Debug)]
@@ -684,6 +704,61 @@ impl State {
                     "Cannot send relay event: connection {:?} not found in senders",
                     ch
                 );
+            }
+        }
+
+        // Process hole-punch connection attempts from relayed PUNCH_ME_NOW.
+        // Forward addresses to the NatTraversalEndpoint (via channel) for full
+        // connection tracking, or fall back to fire-and-forget if no channel.
+        let hole_punch_addrs: Vec<SocketAddr> = self.inner.drain_hole_punch_addrs().collect();
+        for peer_address in hole_punch_addrs {
+            did_work = true;
+            if let Some(ref tx) = self.hole_punch_tx {
+                // Forward to NatTraversalEndpoint for full tracking
+                match tx.send(peer_address) {
+                    Ok(()) => {
+                        tracing::info!(
+                            "Hole-punch: forwarded {} to NatTraversalEndpoint for tracked connection",
+                            peer_address,
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Hole-punch: failed to forward {} (channel closed): {}",
+                            peer_address,
+                            e,
+                        );
+                    }
+                }
+            } else if let Some(ref config) = self.default_client_config {
+                // Fallback: fire-and-forget (no NatTraversalEndpoint channel configured).
+                // This is intentional for backward compatibility: when no hole_punch_tx
+                // is configured we still send a QUIC Initial to create a NAT binding.
+                // The resulting connection handles (_ch, _conn) are deliberately
+                // discarded — Quinn's internal idle timeout will clean them up.
+                let addr = if self.ipv6 {
+                    SocketAddr::V6(ensure_ipv6(peer_address))
+                } else {
+                    peer_address
+                };
+                match self
+                    .inner
+                    .connect(crate::Instant::now(), config.clone(), addr, "peer")
+                {
+                    Ok((_ch, _conn)) => {
+                        tracing::info!(
+                            "Hole-punch: sent QUIC Initial to {} for NAT binding (fire-and-forget fallback)",
+                            peer_address,
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Hole-punch: failed to initiate connection to {}: {:?}",
+                            peer_address,
+                            e
+                        );
+                    }
+                }
             }
         }
 
@@ -844,6 +919,8 @@ impl EndpointRef {
                 recv_state,
                 runtime,
                 stats: EndpointStats::default(),
+                default_client_config: None,
+                hole_punch_tx: None,
             }),
         }))
     }

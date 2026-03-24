@@ -12,14 +12,7 @@
 //! QUIC connections through NATs using sophisticated hole punching and
 //! coordination protocols.
 
-use std::{
-    collections::hash_map::DefaultHasher,
-    fmt,
-    hash::{Hash, Hasher},
-    net::SocketAddr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
 use crate::constrained::{ConstrainedEngine, EngineConfig, EngineEvent};
 use crate::transport::TransportRegistry;
@@ -276,10 +269,15 @@ pub struct NatTraversalEndpoint {
     event_tx: Option<mpsc::UnboundedSender<NatTraversalEvent>>,
     /// Receiver for internal event notifications
     /// Uses parking_lot::Mutex for faster, non-poisoning access
-    event_rx: ParkingMutex<mpsc::UnboundedReceiver<NatTraversalEvent>>,
+    event_rx: Arc<ParkingMutex<mpsc::UnboundedReceiver<NatTraversalEvent>>>,
     /// Notify waiters when a new ConnectionEstablished event is available.
     /// Eliminates the 10ms polling loop in accept_connection().
     incoming_notify: Arc<tokio::sync::Notify>,
+    /// Channel for accepted connection addresses — the P2pEndpoint's
+    /// incoming_connection_forwarder reads from the receiver to register
+    /// accepted connections in connected_peers.
+    accepted_addrs_tx: mpsc::UnboundedSender<SocketAddr>,
+    accepted_addrs_rx: Arc<TokioMutex<mpsc::UnboundedReceiver<SocketAddr>>>,
     /// Notify waiters when the endpoint is shutting down.
     /// Eliminates polling loops that check the AtomicBool in transport listeners.
     shutdown_notify: Arc<tokio::sync::Notify>,
@@ -324,6 +322,19 @@ pub struct NatTraversalEndpoint {
     /// P2pEndpoint polls this to receive data from constrained transports
     /// Uses TokioMutex (not ParkingMutex) because MutexGuard is held across .await
     constrained_event_rx: TokioMutex<mpsc::UnboundedReceiver<ConstrainedEventWithAddr>>,
+    /// Receiver for hole-punch addresses forwarded from the Quinn driver.
+    /// When a relayed PUNCH_ME_NOW triggers InitiateHolePunch at the Quinn level,
+    /// the address is sent through this channel so we can create a fully tracked
+    /// connection (DashMap + events + handlers) instead of fire-and-forget.
+    hole_punch_rx: TokioMutex<mpsc::UnboundedReceiver<SocketAddr>>,
+    /// Channel for handshakes completing in the background. Spawned handshake
+    /// tasks send completed connections here, and accept_connection_direct
+    /// receives them. Persistent across calls so no connections are lost.
+    handshake_tx: mpsc::Sender<Result<(SocketAddr, InnerConnection), String>>,
+    handshake_rx: TokioMutex<mpsc::Receiver<Result<(SocketAddr, InnerConnection), String>>>,
+    /// Tracks when each connection was first observed as closed.
+    /// Used to enforce a grace period before removing dead connections.
+    closed_at: dashmap::DashMap<SocketAddr, std::time::Instant>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -1326,6 +1337,17 @@ impl NatTraversalEndpoint {
         // Create channel for forwarding constrained engine events to P2pEndpoint
         let (constrained_event_tx, constrained_event_rx) = mpsc::unbounded_channel();
 
+        let (accepted_addrs_tx, accepted_addrs_rx) = mpsc::unbounded_channel();
+
+        // Channel for hole-punch addresses from Quinn driver → NatTraversalEndpoint
+        let (hole_punch_tx, hole_punch_rx) = mpsc::unbounded_channel();
+        // Configure the inner endpoint to forward hole-punch addresses through the channel
+        // instead of doing fire-and-forget connections at the Quinn level.
+        inner_endpoint.set_hole_punch_tx(hole_punch_tx);
+
+        // Channel for background handshake completion (persistent across accept calls)
+        let (hs_tx, hs_rx) = mpsc::channel(32);
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -1335,8 +1357,10 @@ impl NatTraversalEndpoint {
             event_callback,
             shutdown: Arc::new(AtomicBool::new(false)),
             event_tx: Some(event_tx.clone()),
-            event_rx: ParkingMutex::new(event_rx),
+            event_rx: Arc::new(ParkingMutex::new(event_rx)),
             incoming_notify: Arc::new(tokio::sync::Notify::new()),
+            accepted_addrs_tx: accepted_addrs_tx.clone(),
+            accepted_addrs_rx: Arc::new(TokioMutex::new(accepted_addrs_rx)),
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
             connections: Arc::new(dashmap::DashMap::new()),
             timeout_config: config.timeouts.clone(),
@@ -1351,6 +1375,10 @@ impl NatTraversalEndpoint {
             constrained_engine,
             constrained_event_tx: constrained_event_tx.clone(),
             constrained_event_rx: TokioMutex::new(constrained_event_rx),
+            hole_punch_rx: TokioMutex::new(hole_punch_rx),
+            handshake_tx: hs_tx,
+            handshake_rx: TokioMutex::new(hs_rx),
+            closed_at: dashmap::DashMap::new(),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1506,31 +1534,13 @@ impl NatTraversalEndpoint {
             }
         }
 
-        // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
-        {
-            let endpoint_clone = inner_endpoint.clone();
-            let shutdown_clone = endpoint.shutdown.clone();
-            let event_tx_clone = event_tx.clone();
-            let connections_clone = endpoint.connections.clone();
-            let emitted_events_clone = emitted_established_events.clone();
-            let relay_server_clone = endpoint.relay_server.clone();
-            let incoming_notify_clone = endpoint.incoming_notify.clone();
-
-            tokio::spawn(async move {
-                Self::accept_connections(
-                    endpoint_clone,
-                    shutdown_clone,
-                    event_tx_clone,
-                    connections_clone,
-                    emitted_events_clone,
-                    relay_server_clone,
-                    incoming_notify_clone,
-                )
-                .await;
-            });
-
-            info!("Started accepting connections (symmetric P2P node)");
-        }
+        // Spawn the unified accept loop. This background task handles Quinn
+        // accept + handshakes in parallel and feeds completed connections to
+        // accept_connection_direct() via a channel. Unlike the old
+        // accept_connections task, it doesn't register connections in
+        // P2pEndpoint — that's done by the caller of accept_connection_direct.
+        endpoint.spawn_accept_loop();
+        info!("Accept loop spawned (unified path, parallel handshakes)");
 
         // Start background discovery polling task
         let discovery_manager_clone = endpoint.discovery_manager.clone();
@@ -1724,6 +1734,17 @@ impl NatTraversalEndpoint {
         // Create channel for forwarding constrained engine events to P2pEndpoint
         let (constrained_event_tx, constrained_event_rx) = mpsc::unbounded_channel();
 
+        let (accepted_addrs_tx, accepted_addrs_rx) = mpsc::unbounded_channel();
+
+        // Channel for hole-punch addresses from Quinn driver → NatTraversalEndpoint
+        let (hole_punch_tx, hole_punch_rx) = mpsc::unbounded_channel();
+        // Configure the inner endpoint to forward hole-punch addresses through the channel
+        // instead of doing fire-and-forget connections at the Quinn level.
+        inner_endpoint.set_hole_punch_tx(hole_punch_tx);
+
+        // Channel for background handshake completion (persistent across accept calls)
+        let (hs_tx, hs_rx) = mpsc::channel(32);
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -1733,8 +1754,10 @@ impl NatTraversalEndpoint {
             event_callback,
             shutdown: Arc::new(AtomicBool::new(false)),
             event_tx: Some(event_tx.clone()),
-            event_rx: ParkingMutex::new(event_rx),
+            event_rx: Arc::new(ParkingMutex::new(event_rx)),
             incoming_notify: Arc::new(tokio::sync::Notify::new()),
+            accepted_addrs_tx: accepted_addrs_tx.clone(),
+            accepted_addrs_rx: Arc::new(TokioMutex::new(accepted_addrs_rx)),
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
             connections: Arc::new(dashmap::DashMap::new()),
             timeout_config: config.timeouts.clone(),
@@ -1749,6 +1772,10 @@ impl NatTraversalEndpoint {
             constrained_engine,
             constrained_event_tx: constrained_event_tx.clone(),
             constrained_event_rx: TokioMutex::new(constrained_event_rx),
+            hole_punch_rx: TokioMutex::new(hole_punch_rx),
+            handshake_tx: hs_tx,
+            handshake_rx: TokioMutex::new(hs_rx),
+            closed_at: dashmap::DashMap::new(),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1904,31 +1931,13 @@ impl NatTraversalEndpoint {
             }
         }
 
-        // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
-        {
-            let endpoint_clone = inner_endpoint.clone();
-            let shutdown_clone = endpoint.shutdown.clone();
-            let event_tx_clone = event_tx.clone();
-            let connections_clone = endpoint.connections.clone();
-            let emitted_events_clone = emitted_established_events.clone();
-            let relay_server_clone = endpoint.relay_server.clone();
-            let incoming_notify_clone = endpoint.incoming_notify.clone();
-
-            tokio::spawn(async move {
-                Self::accept_connections(
-                    endpoint_clone,
-                    shutdown_clone,
-                    event_tx_clone,
-                    connections_clone,
-                    emitted_events_clone,
-                    relay_server_clone,
-                    incoming_notify_clone,
-                )
-                .await;
-            });
-
-            info!("Started accepting connections (symmetric P2P node)");
-        }
+        // Spawn the unified accept loop. This background task handles Quinn
+        // accept + handshakes in parallel and feeds completed connections to
+        // accept_connection_direct() via a channel. Unlike the old
+        // accept_connections task, it doesn't register connections in
+        // P2pEndpoint — that's done by the caller of accept_connection_direct.
+        endpoint.spawn_accept_loop();
+        info!("Accept loop spawned (unified path, parallel handshakes)");
 
         // Start background discovery polling task
         let discovery_manager_clone = endpoint.discovery_manager.clone();
@@ -2083,13 +2092,17 @@ impl NatTraversalEndpoint {
             target_addr, coordinator
         );
 
-        // Create new session
+        // Create new session — start in Coordination phase directly.
+        // Discovery is for finding our own external address, which we
+        // already know. For remote targets behind NAT, there are no
+        // local candidates to discover. The Coordination phase sends
+        // PUNCH_ME_NOW to the coordinator to initiate hole-punching.
         let session = NatTraversalSession {
             target_addr,
             coordinator,
             attempt: 1,
             started_at: std::time::Instant::now(),
-            phase: TraversalPhase::Discovery,
+            phase: TraversalPhase::Coordination,
             candidates: Vec::new(),
             session_state: SessionState {
                 state: ConnectionState::Connecting,
@@ -2132,21 +2145,10 @@ impl NatTraversalEndpoint {
     }
 
     /// Generate a deterministic 32-byte identifier from a SocketAddr for wire
-    /// protocol frames (PUNCH_ME_NOW, ADDRESS_DISCOVERY). This is a legacy
-    /// format used in coordination messages, not a session key.
+    /// protocol frames (PUNCH_ME_NOW, ADDRESS_DISCOVERY). Delegates to the
+    /// shared implementation in `crate::shared::wire_id_from_addr`.
     fn wire_id_from_addr(addr: SocketAddr) -> [u8; 32] {
-        let mut hasher = DefaultHasher::new();
-        addr.hash(&mut hasher);
-
-        let hash = hasher.finish();
-        let mut bytes = [0u8; 32];
-        bytes[0..8].copy_from_slice(&hash.to_be_bytes());
-        // Repeat hash for remaining bytes to make it deterministic
-        bytes[8..16].copy_from_slice(&hash.to_le_bytes());
-        bytes[16..24].copy_from_slice(&hash.to_be_bytes());
-        bytes[24..32].copy_from_slice(&hash.to_le_bytes());
-
-        bytes
+        crate::shared::wire_id_from_addr(addr)
     }
 
     /// Poll all active sessions and update their states
@@ -2738,6 +2740,7 @@ impl NatTraversalEndpoint {
         let emitted_events_clone = self.emitted_established_events.clone();
         let relay_server_clone = self.relay_server.clone();
         let incoming_notify_clone = self.incoming_notify.clone();
+        let accepted_addrs_tx_clone = self.accepted_addrs_tx.clone();
 
         tokio::spawn(async move {
             Self::accept_connections(
@@ -2748,6 +2751,7 @@ impl NatTraversalEndpoint {
                 emitted_events_clone,
                 relay_server_clone,
                 incoming_notify_clone,
+                accepted_addrs_tx_clone,
             )
             .await;
         });
@@ -2764,6 +2768,7 @@ impl NatTraversalEndpoint {
         emitted_events: Arc<dashmap::DashSet<SocketAddr>>,
         relay_server: Option<Arc<MasqueRelayServer>>,
         incoming_notify: Arc<tokio::sync::Notify>,
+        accepted_addrs_tx: mpsc::UnboundedSender<SocketAddr>,
     ) {
         while !shutdown.load(Ordering::Relaxed) {
             match endpoint.accept().await {
@@ -2773,6 +2778,7 @@ impl NatTraversalEndpoint {
                     let emitted_events = emitted_events.clone();
                     let relay_server = relay_server.clone();
                     let incoming_notify = incoming_notify.clone();
+                    let accepted_addrs_tx = accepted_addrs_tx.clone();
                     tokio::spawn(async move {
                         match connecting.await {
                             Ok(connection) => {
@@ -2783,9 +2789,23 @@ impl NatTraversalEndpoint {
                                 let public_key =
                                     Self::extract_public_key_from_connection(&connection);
 
-                                // Store the connection keyed by remote address
-                                // DashMap provides fine-grained locking internally - no blocking
+                                // Store the connection keyed by remote address.
+                                // Always overwrite — the latest connection from the
+                                // accept handler is most likely alive, replacing any
+                                // dead duplicate from simultaneous-open.
                                 connections.insert(remote_address, connection.clone());
+
+                                // Notify the P2pEndpoint's forwarder about the new connection
+                                match accepted_addrs_tx.send(remote_address) {
+                                    Ok(()) => info!(
+                                        "accept_connections: sent {} to forwarder channel",
+                                        remote_address
+                                    ),
+                                    Err(e) => error!(
+                                        "accept_connections: forwarder channel send FAILED for {}: {}",
+                                        remote_address, e
+                                    ),
+                                }
 
                                 // Only emit ConnectionEstablished if we haven't already for this address
                                 // DashSet::insert returns true if the value was newly inserted
@@ -3490,6 +3510,131 @@ impl NatTraversalEndpoint {
         }
     }
 
+    /// Accept the next connection (incoming or hole-punched).
+    ///
+    /// Returns connections from a background accept loop that handles Quinn
+    /// accept, handshake completion, and outgoing hole-punch connections.
+    /// This method never holds locks across await points — it simply reads
+    /// from the handshake channel.
+    pub async fn accept_connection_direct(
+        &self,
+    ) -> Result<(SocketAddr, InnerConnection), NatTraversalError> {
+        let mut rx = self.handshake_rx.lock().await;
+        loop {
+            if self.shutdown.load(Ordering::Relaxed) {
+                return Err(NatTraversalError::NetworkError(
+                    "Endpoint shutting down".to_string(),
+                ));
+            }
+
+            match rx.recv().await {
+                Some(Ok((addr, conn))) => return Ok((addr, conn)),
+                Some(Err(_)) => continue,
+                None => {
+                    return Err(NatTraversalError::NetworkError(
+                        "Accept channel closed".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Spawn the background accept loop that feeds `accept_connection_direct`.
+    ///
+    /// This task owns the Quinn accept and processes handshakes in parallel.
+    /// Outgoing hole-punch connections are detected via `incoming_notify` and
+    /// looked up directly in the connections DashMap, avoiding competing
+    /// consumers on the `event_rx` channel (which is drained by `poll()`).
+    /// All completed connections are sent through `handshake_tx`.
+    fn spawn_accept_loop(&self) {
+        let endpoint = match self.inner_endpoint.clone() {
+            Some(ep) => ep,
+            None => return,
+        };
+        let tx = self.handshake_tx.clone();
+        let connections = self.connections.clone();
+        let emitted = self.emitted_established_events.clone();
+        let relay_server = self.relay_server.clone();
+        let event_tx_opt = self.event_tx.clone();
+        let shutdown = self.shutdown.clone();
+        let incoming_notify = self.incoming_notify.clone();
+
+        tokio::spawn(async move {
+            loop {
+                if shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+
+                // Race Quinn accept against hole-punch notify.
+                // When incoming_notify fires, a new outgoing hole-punch
+                // connection was inserted into the DashMap. We forward any
+                // newly-emitted connections to the handshake channel.
+                let connecting = tokio::select! {
+                    Some(c) = endpoint.accept() => c,
+                    _ = incoming_notify.notified() => {
+                        // Hole-punch completed — check DashMap for new
+                        // outgoing connections and forward them.
+                        let mut outgoing_conns = Vec::new();
+                        for entry in connections.iter() {
+                            let addr = *entry.key();
+                            if emitted.insert(addr) {
+                                // First time seeing this address — forward it.
+                                outgoing_conns.push((addr, entry.value().clone()));
+                            }
+                        }
+                        for (addr, conn) in outgoing_conns {
+                            let _ = tx.send(Ok((addr, conn))).await;
+                        }
+                        continue;
+                    }
+                };
+
+                // Spawn handshake in background so we immediately loop back
+                // to accept the next incoming connection.
+                let tx2 = tx.clone();
+                let connections2 = connections.clone();
+                let emitted2 = emitted.clone();
+                let relay_server2 = relay_server.clone();
+                let event_tx2 = event_tx_opt.clone();
+                tokio::spawn(async move {
+                    let connection = match connecting.await {
+                        Ok(conn) => conn,
+                        Err(e) => {
+                            debug!("Accept handshake failed: {}", e);
+                            let _ = tx2.send(Err(e.to_string())).await;
+                            return;
+                        }
+                    };
+
+                    let remote_address = connection.remote_address();
+                    info!("Accepted connection from {} (unified path)", remote_address);
+
+                    connections2.insert(remote_address, connection.clone());
+                    emitted2.insert(remote_address);
+
+                    if let Some(ref server) = relay_server2 {
+                        let conn_clone = connection.clone();
+                        let server_clone = Arc::clone(server);
+                        tokio::spawn(async move {
+                            Self::handle_relay_requests(conn_clone, server_clone).await;
+                        });
+                    }
+
+                    if let Some(ref etx) = event_tx2 {
+                        let etx = etx.clone();
+                        let addr = remote_address;
+                        let conn = connection.clone();
+                        tokio::spawn(async move {
+                            Self::handle_connection(addr, conn, etx).await;
+                        });
+                    }
+
+                    let _ = tx2.send(Ok((remote_address, connection))).await;
+                });
+            }
+        });
+    }
+
     /// Returns a reference to the connection notification handle.
     ///
     /// This `Notify` is triggered whenever a `ConnectionEstablished` event
@@ -3501,20 +3646,21 @@ impl NatTraversalEndpoint {
 
     /// Check if we have a live connection to the given address.
     ///
-    /// If the connection exists but is dead (closed/draining), removes it
+    /// If the connection exists but is dead (has a `close_reason`), removes it
     /// from the connection table and returns `false`. This enables automatic
     /// cleanup of phantom connections during deduplication checks.
     pub fn is_connected(&self, addr: &SocketAddr) -> bool {
-        if let Some(conn) = self.connections.get(addr) {
-            if conn.is_alive() {
-                return true;
+        if let Some(entry) = self.connections.get(addr) {
+            if entry.value().close_reason().is_some() {
+                // Connection is dead — remove it and report not connected.
+                drop(entry); // release the DashMap ref before removing
+                self.connections.remove(addr);
+                return false;
             }
-            // Connection is dead -- drop the DashMap ref before removing
-            drop(conn);
-            // Clean up dead connection
-            let _ = self.remove_connection(addr);
+            true
+        } else {
+            false
         }
-        false
     }
 
     /// Get an active connection by remote address
@@ -3527,6 +3673,21 @@ impl NatTraversalEndpoint {
             .connections
             .get(addr)
             .map(|entry| entry.value().clone()))
+    }
+
+    /// Get the receiver for accepted connection addresses.
+    /// The P2pEndpoint's incoming_connection_forwarder uses this to register
+    /// accepted connections in connected_peers.
+    pub fn accepted_addrs_rx(&self) -> Arc<TokioMutex<mpsc::UnboundedReceiver<SocketAddr>>> {
+        Arc::clone(&self.accepted_addrs_rx)
+    }
+
+    /// Iterate over all connections in the DashMap.
+    pub fn connections_iter(
+        &self,
+    ) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, SocketAddr, InnerConnection>>
+    {
+        self.connections.iter()
     }
 
     /// Add or update a connection for a remote address
@@ -3543,6 +3704,32 @@ impl NatTraversalEndpoint {
             "add_connection: now have {} connections",
             self.connections.len()
         );
+
+        // Register connected peer as a potential coordinator for NAT traversal.
+        // In the symmetric P2P architecture (v0.13.0+), any connected node can
+        // coordinate hole-punching for us.
+        {
+            let mut nodes = self.bootstrap_nodes.write();
+            if !nodes.iter().any(|n| n.address == addr) {
+                nodes.push(BootstrapNode {
+                    address: addr,
+                    last_seen: std::time::Instant::now(),
+                    can_coordinate: true,
+                    rtt: None,
+                    coordination_count: 0,
+                });
+                info!(
+                    "add_connection: registered {} as NAT traversal coordinator ({} total)",
+                    addr,
+                    nodes.len()
+                );
+            }
+        }
+
+        // Notify waiters that a new connection is available.
+        // This wakes up try_hole_punch loops waiting for the target connection.
+        self.incoming_notify.notify_waiters();
+
         Ok(())
     }
 
@@ -4656,8 +4843,15 @@ impl NatTraversalEndpoint {
         }
     }
 
-    /// Detect closed connections and emit ConnectionLost events
+    /// Detect closed connections, emit ConnectionLost events, and reap stale
+    /// entries after a 5-second grace period.
+    ///
+    /// The grace period prevents removing connections that are briefly closed
+    /// during simultaneous-open deduplication but then replaced by a live one.
     fn poll_closed_connections(&self, events: &mut Vec<NatTraversalEvent>) {
+        let now = std::time::Instant::now();
+        let grace_period = std::time::Duration::from_secs(5);
+
         let closed_connections: Vec<_> = self
             .connections
             .iter()
@@ -4670,7 +4864,24 @@ impl NatTraversalEndpoint {
             .collect();
 
         for (addr, reason) in closed_connections {
-            self.connections.remove(&addr);
+            // Record the time we first observed this connection as closed.
+            let first_seen_closed = *self.closed_at.entry(addr).or_insert(now);
+
+            if now.duration_since(first_seen_closed) >= grace_period {
+                // Grace period elapsed — remove the dead connection.
+                self.connections.remove(&addr);
+                self.closed_at.remove(&addr);
+                debug!(
+                    "Connection to {} closed: {}, removed after grace period",
+                    addr, reason
+                );
+            } else {
+                debug!(
+                    "Connection to {} closed: {}, keeping for grace period",
+                    addr, reason
+                );
+            }
+
             self.emit_event(
                 events,
                 NatTraversalEvent::ConnectionLost {
@@ -5338,6 +5549,69 @@ impl NatTraversalEndpoint {
         }
     }
 
+    /// Send the coordination request (PUNCH_ME_NOW) if the session is ready.
+    ///
+    /// This is a targeted alternative to poll() that only sends the coordination
+    /// request without iterating all sessions or connections, avoiding the
+    /// DashMap deadlock risk in poll().
+    pub fn send_coordination_request_if_ready(
+        &self,
+        target: SocketAddr,
+        coordinator: SocketAddr,
+    ) -> Result<(), NatTraversalError> {
+        // Check if we have an active session that needs coordination
+        if let Some(mut session) = self.active_sessions.get_mut(&target) {
+            if matches!(session.phase, TraversalPhase::Coordination) {
+                session.phase = TraversalPhase::Synchronization;
+                drop(session); // Release DashMap lock before sending
+                self.send_coordination_request(target, coordinator)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Drain pending hole-punch addresses forwarded from the Quinn driver and
+    /// create fully tracked connections for each.
+    ///
+    /// This is called from the session driver task to process addresses that were
+    /// forwarded from the Quinn-level `InitiateHolePunch` event handler. Unlike
+    /// the previous fire-and-forget approach, these connections are stored in the
+    /// DashMap, emit events, and have handlers spawned — so the node can actually
+    /// receive and respond to data on them.
+    pub async fn process_pending_hole_punches(&self) {
+        let mut rx = self.hole_punch_rx.lock().await;
+        while let Ok(peer_address) = rx.try_recv() {
+            info!(
+                "Processing hole-punch address from Quinn driver: {}",
+                peer_address
+            );
+            if let Err(e) = self.attempt_hole_punch_connection(peer_address) {
+                warn!(
+                    "Failed to initiate tracked hole-punch connection to {}: {}",
+                    peer_address, e
+                );
+            }
+        }
+    }
+
+    /// Attempt a QUIC connection to a peer address for hole-punching.
+    ///
+    /// Sends QUIC Initial packets to the target address, creating a NAT binding
+    /// from our socket. Called when we receive a relayed PUNCH_ME_NOW from a
+    /// coordinator, indicating a remote peer wants to reach us.
+    pub fn attempt_hole_punch_connection(
+        &self,
+        peer_address: SocketAddr,
+    ) -> Result<(), NatTraversalError> {
+        let candidate = CandidateAddress {
+            address: peer_address,
+            priority: 100,
+            source: CandidateSource::Peer,
+            state: CandidateState::New,
+        };
+        self.attempt_connection_to_candidate(peer_address, &candidate)
+    }
+
     /// Check if any hole punch succeeded
     fn check_punch_results(&self, addr: &SocketAddr) -> Option<SocketAddr> {
         // Check if we have an established connection to this address
@@ -5603,7 +5877,11 @@ impl NatTraversalEndpoint {
                 Ok(())
             }
 
-            crate::shared::EndpointEventInner::RelayPunchMeNow(_target_peer_id, punch_frame) => {
+            crate::shared::EndpointEventInner::RelayPunchMeNow(
+                _target_peer_id,
+                punch_frame,
+                _sender_addr,
+            ) => {
                 // RFC-compliant address-based relay: find peer by address
                 let target_address = punch_frame.address;
                 let normalized_target = normalize_socket_addr(target_address);

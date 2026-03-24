@@ -4802,10 +4802,13 @@ impl Connection {
             punch_me_now.round, punch_me_now.paired_with_sequence_number, punch_me_now.address
         );
 
-        // v0.13.0: All nodes can coordinate - try coordination first
+        // v0.13.0: All nodes can coordinate - try coordination first.
+        // Only enter coordinator path if target_peer_id is present, meaning
+        // the sender wants us to relay to a target. When target_peer_id is None,
+        // this is a relayed frame and we are the target — fall through to the
+        // regular peer path below.
         if let Some(nat_state) = &self.nat_traversal {
-            // All nodes have bootstrap_coordinator now (v0.13.0)
-            if nat_state.bootstrap_coordinator.is_some() {
+            if nat_state.bootstrap_coordinator.is_some() && punch_me_now.target_peer_id.is_some() {
                 // Process coordination request
                 let from_peer_id = self.derive_peer_id_from_connection();
 
@@ -4832,6 +4835,7 @@ impl Connection {
                                 crate::shared::EndpointEventInner::RelayPunchMeNow(
                                     target_peer_id,
                                     coordination_frame,
+                                    self.path.remote, // sender's address for diagnostics
                                 ),
                             );
                         }
@@ -4851,6 +4855,10 @@ impl Connection {
         }
 
         // We're a regular peer receiving coordination from bootstrap
+        info!(
+            "Received PUNCH_ME_NOW coordination: round={}, address={}, from={}",
+            punch_me_now.round, punch_me_now.address, self.path.remote
+        );
         let nat_state = self.nat_traversal.as_mut().ok_or_else(|| {
             TransportError::PROTOCOL_VIOLATION("PunchMeNow frame without NAT traversal negotiation")
         })?;
@@ -4862,29 +4870,22 @@ impl Connection {
                 TransportError::PROTOCOL_VIOLATION("Failed to handle peer punch request")
             })?
         {
-            trace!("Coordination synchronized for round {}", punch_me_now.round);
+            info!(
+                "Coordination synchronized for round {}, starting hole-punch to {}",
+                punch_me_now.round, punch_me_now.address
+            );
 
-            // Create punch targets based on the received information
-            // The peer's address tells us where they'll be listening
-            let _local_addr = self
-                .local_ip
-                .map(|ip| SocketAddr::new(ip, 0))
-                .unwrap_or_else(|| {
-                    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
+            // Emit an endpoint event to send NAT binding packets to the
+            // peer's address. This creates a bidirectional NAT binding so
+            // the peer's incoming QUIC connection can reach us.
+            self.endpoint_events
+                .push_back(crate::shared::EndpointEventInner::InitiateHolePunch {
+                    peer_address: punch_me_now.address,
                 });
-
-            let target = nat_traversal::PunchTarget {
-                remote_addr: punch_me_now.address,
-                remote_sequence: punch_me_now.paired_with_sequence_number,
-                challenge: self.rng.r#gen(),
-            };
-
-            // Start coordination with this target
-            let _ = nat_state.start_coordination_round(vec![target], now);
         } else {
-            debug!(
-                "Failed to synchronize coordination for round {}",
-                punch_me_now.round
+            info!(
+                "Failed to synchronize coordination for round {} (peer: {})",
+                punch_me_now.round, self.path.remote
             );
         }
 
