@@ -5047,7 +5047,8 @@ impl NatTraversalEndpoint {
                                 session.phase = TraversalPhase::Synchronization;
                             }
                             coordination_requests.push((target_addr, coordinator));
-                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr) {
+                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr)
+                        {
                             self.handle_phase_failure(
                                 &mut session,
                                 now,
@@ -5064,12 +5065,17 @@ impl NatTraversalEndpoint {
                                     &mut events,
                                     NatTraversalEvent::HolePunchingStarted {
                                         remote_address: target_addr,
-                                        targets: session.candidates.iter().map(|c| c.address).collect(),
+                                        targets: session
+                                            .candidates
+                                            .iter()
+                                            .map(|c| c.address)
+                                            .collect(),
                                     },
                                 );
                                 hole_punch_requests.push((target_addr, session.candidates.clone()));
                             }
-                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr) {
+                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr)
+                        {
                             self.handle_phase_failure(
                                 &mut session,
                                 now,
@@ -5094,7 +5100,8 @@ impl NatTraversalEndpoint {
                                 },
                             );
                             validation_requests.push((target_addr, successful_path));
-                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr) {
+                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr)
+                        {
                             self.handle_phase_failure(
                                 &mut session,
                                 now,
@@ -5127,7 +5134,8 @@ impl NatTraversalEndpoint {
                                     target_addr, elapsed
                                 );
                             }
-                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr) {
+                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr)
+                        {
                             self.handle_phase_failure(
                                 &mut session,
                                 now,
@@ -5157,7 +5165,10 @@ impl NatTraversalEndpoint {
         // This is done AFTER releasing active_sessions shards to avoid
         // holding DashMap write guards while acquiring discovery_manager.
         for (target_addr, discovery_session_id) in discovery_needed {
-            let discovered_candidates = self.discovery_manager.lock().get_candidates(discovery_session_id);
+            let discovered_candidates = self
+                .discovery_manager
+                .lock()
+                .get_candidates(discovery_session_id);
 
             if let Some(mut session) = self.active_sessions.get_mut(&target_addr) {
                 session.candidates = discovered_candidates.clone();
@@ -5992,7 +6003,9 @@ impl NatTraversalEndpoint {
                 // First try direct SocketAddr lookup (try both plain and mapped forms
                 // for dual-stack compatibility where bindv6only=0)
                 let alt_target = crate::shared::dual_stack_alternate(&target_address);
-                let connection_found = if let Some(entry) = self.connections.get(&target_address)
+                let connection_found = if let Some(entry) = self
+                    .connections
+                    .get(&target_address)
                     .or_else(|| alt_target.as_ref().and_then(|a| self.connections.get(a)))
                 {
                     Some(entry.value().clone())
