@@ -2092,45 +2092,17 @@ impl NatTraversalEndpoint {
             target_addr, coordinator
         );
 
-        // Create new session — start in Coordination phase directly.
-        // Discovery is for finding our own external address, which we
-        // already know. For remote targets behind NAT, there are no
-        // local candidates to discover. The Coordination phase sends
-        // PUNCH_ME_NOW to the coordinator to initiate hole-punching.
-        let session = NatTraversalSession {
-            target_addr,
-            coordinator,
-            attempt: 1,
-            started_at: std::time::Instant::now(),
-            phase: TraversalPhase::Coordination,
-            candidates: Vec::new(),
-            session_state: SessionState {
-                state: ConnectionState::Connecting,
-                last_transition: std::time::Instant::now(),
-
-                connection: None,
-                active_attempts: Vec::new(),
-                metrics: ConnectionMetrics::default(),
-            },
-        };
-
-        // Store session keyed by target address
-        // DashMap provides lock-free .insert()
-        self.active_sessions.insert(target_addr, session);
-
-        let discovery_session_id = DiscoverySessionId::Remote(target_addr);
-
-        // Start candidate discovery - parking_lot::RwLock doesn't poison
-        let bootstrap_nodes_vec = self.bootstrap_nodes.read().clone();
-
-        {
-            // parking_lot::Mutex doesn't poison
-            let mut discovery = self.discovery_manager.lock();
-
-            discovery
-                .start_discovery(discovery_session_id, bootstrap_nodes_vec)
-                .map_err(|e| NatTraversalError::CandidateDiscoveryFailed(e.to_string()))?;
-        }
+        // Send the coordination request (PUNCH_ME_NOW) immediately rather than
+        // creating a session and waiting for the poll() state machine's
+        // coordination_timeout to expire (default 10s).
+        //
+        // We intentionally do NOT create a session or start discovery here.
+        // The try_hole_punch() caller has its own poll loop that waits for
+        // the incoming connection. Creating a session would cause the poll()
+        // state machine to continue progressing through phases (Synchronization,
+        // Punching, Validation) which can create duplicate connections that
+        // interfere with the established hole-punched connection.
+        self.send_coordination_request(target_addr, coordinator)?;
 
         // Emit event
         if let Some(ref callback) = self.event_callback {
@@ -2140,7 +2112,6 @@ impl NatTraversalEndpoint {
             });
         }
 
-        // NAT traversal will proceed via poll() calls and state machine updates
         Ok(())
     }
 
@@ -3609,6 +3580,26 @@ impl NatTraversalEndpoint {
                     let remote_address = connection.remote_address();
                     info!("Accepted connection from {} (unified path)", remote_address);
 
+                    // Only insert if no existing LIVE connection to this address.
+                    // Unconditionally overwriting would replace a working connection
+                    // with a duplicate that may die shortly, leaving the DashMap
+                    // pointing at a dead connection while the original's reader
+                    // task still runs.
+                    // Check both raw and normalized forms (IPv4-mapped IPv6).
+                    let normalized_remote = crate::shared::normalize_socket_addr(remote_address);
+                    let has_live = |addr: &std::net::SocketAddr| -> bool {
+                        connections2
+                            .get(addr)
+                            .map_or(false, |e| e.value().close_reason().is_none())
+                    };
+                    if has_live(&remote_address) || has_live(&normalized_remote) {
+                        info!(
+                            "accept_loop: {} already has a live connection, keeping existing",
+                            remote_address
+                        );
+                        connection.close(0u32.into(), b"duplicate");
+                        return; // exit this handshake task
+                    }
                     connections2.insert(remote_address, connection.clone());
 
                     // Only forward to handshake_tx if this is the first time
@@ -4791,8 +4782,12 @@ impl NatTraversalEndpoint {
         target_addr: SocketAddr,
         candidate: &CandidateAddress,
     ) -> Result<(), NatTraversalError> {
-        // Check if connection already exists - another candidate may have succeeded
-        if self.has_existing_connection(&target_addr) {
+        // Check if connection already exists - another candidate may have succeeded.
+        // Check both raw and normalized forms to catch IPv4-mapped IPv6 mismatches.
+        let normalized_target = normalize_socket_addr(target_addr);
+        if self.has_existing_connection(&target_addr)
+            || self.has_existing_connection(&normalized_target)
+        {
             debug!(
                 "Connection already exists for {}, skipping candidate {}",
                 target_addr, candidate.address
@@ -5700,6 +5695,23 @@ impl NatTraversalEndpoint {
     pub async fn process_pending_hole_punches(&self) {
         let mut rx = self.hole_punch_rx.lock().await;
         while let Ok(peer_address) = rx.try_recv() {
+            // Skip if we already have a connection to this address.
+            // Check both raw and normalized forms to catch IPv4-mapped IPv6
+            // addresses (e.g., [::ffff:1.2.3.4]:10000 == 1.2.3.4:10000).
+            // Creating a duplicate connection causes the drop of the unstored
+            // connection to send CONNECTION_CLOSE, which can corrupt the
+            // original connection's state.
+            let normalized = normalize_socket_addr(peer_address);
+            if self.has_existing_connection(&peer_address)
+                || self.has_existing_connection(&normalized)
+            {
+                info!(
+                    "Skipping hole-punch to {} — already connected",
+                    peer_address
+                );
+                continue;
+            }
+
             info!(
                 "Processing hole-punch address from Quinn driver: {}",
                 peer_address
