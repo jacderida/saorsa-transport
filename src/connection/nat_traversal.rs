@@ -987,6 +987,12 @@ impl SecurityValidationState {
         claimed_addr: SocketAddr,
         observed_addr: SocketAddr,
     ) -> bool {
+        // Normalise IPv4-mapped IPv6 addresses to plain IPv4 before comparing.
+        // On dual-stack sockets (bindv6only=0), the observed_addr may be in
+        // mapped form ([::ffff:x.x.x.x]) while the claimed address is plain IPv4.
+        let claimed_addr = crate::shared::normalize_socket_addr(claimed_addr);
+        let observed_addr = crate::shared::normalize_socket_addr(observed_addr);
+
         // For P2P NAT traversal, the port will typically be different due to NAT,
         // but the IP should be consistent unless there's multi-homing or proxying
         // Check if IPs are in the same family
@@ -2679,6 +2685,22 @@ impl NatTraversalState {
             );
             return Err(NatTraversalError::SuspiciousCoordination);
         }
+        // If there's an existing coordination that's stale (not in an active
+        // negotiation phase), reset it so a new PUNCH_ME_NOW can be processed.
+        let should_reset = self.coordination.as_ref().is_some_and(|coord| {
+            !matches!(
+                coord.state,
+                CoordinationPhase::Coordinating | CoordinationPhase::Requesting
+            ) || coord.round != peer_round
+        });
+        if should_reset {
+            info!(
+                "Resetting stale coordination for new PUNCH_ME_NOW round {}",
+                peer_round
+            );
+            self.coordination = None;
+        }
+
         if let Some(coord) = &mut self.coordination {
             if coord.round == peer_round {
                 match coord.state {
@@ -2731,8 +2753,28 @@ impl NatTraversalState {
                 Ok(false)
             }
         } else {
-            debug!("Received peer coordination but no active round");
-            Ok(false)
+            // No active coordination round — this is a relayed PUNCH_ME_NOW
+            // from a coordinator, targeting us. Start a new coordination round
+            // to initiate hole-punching toward the requesting peer.
+            info!(
+                "Received peer coordination with no active round — starting new round {}",
+                peer_round
+            );
+            self.coordination = Some(CoordinationState {
+                round: peer_round,
+                punch_targets: Vec::new(),
+                round_start: now,
+                punch_start: now + Duration::from_millis(150),
+                round_duration: self.coordination_timeout,
+                state: CoordinationPhase::Preparing,
+                punch_request_sent: false,
+                peer_punch_received: true,
+                retry_count: 0,
+                max_retries: 3,
+                timeout_state: AdaptiveTimeoutState::new(),
+                last_retry_at: None,
+            });
+            Ok(true)
         }
     }
 

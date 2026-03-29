@@ -51,6 +51,17 @@ mod tracking {
             }
         }
 
+        /// Tries to acquire the lock without blocking.
+        pub(crate) fn try_lock(&self, purpose: &'static str) -> Option<MutexGuard<'_, T>> {
+            let now = Instant::now();
+            let guard = self.inner.try_lock()?;
+            Some(MutexGuard {
+                guard,
+                start_time: now,
+                purpose,
+            })
+        }
+
         /// Acquires the lock for a certain purpose
         ///
         /// The purpose will be recorded in the list of last lock owners
@@ -145,6 +156,14 @@ mod non_tracking {
             Self {
                 inner: parking_lot::Mutex::new(value),
             }
+        }
+
+        /// Tries to acquire the lock without blocking.
+        #[allow(unused_variables)]
+        pub(crate) fn try_lock(&self, purpose: &'static str) -> Option<MutexGuard<'_, T>> {
+            Some(MutexGuard {
+                guard: self.inner.try_lock()?,
+            })
         }
 
         /// Acquires the lock for a certain purpose

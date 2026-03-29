@@ -631,7 +631,10 @@ impl Connection {
     ) -> Result<(), crate::ConnectionError> {
         let conn = &mut *self.0.state.lock("send_nat_punch_coordination");
         conn.inner
-            .send_nat_punch_coordination(paired_with_sequence_number, address, round)
+            .send_nat_punch_coordination(paired_with_sequence_number, address, round)?;
+        // Wake the connection driver so it transmits the queued frame
+        conn.wake();
+        Ok(())
     }
 
     /// Queue a PUNCH_ME_NOW frame via a coordinator to reach a target peer behind NAT
@@ -646,7 +649,10 @@ impl Connection {
     ) -> Result<(), crate::ConnectionError> {
         let conn = &mut *self.0.state.lock("send_nat_punch_via_relay");
         conn.inner
-            .send_nat_punch_via_relay(target_peer_id, our_address, round)
+            .send_nat_punch_via_relay(target_peer_id, our_address, round)?;
+        // Wake the connection driver so it transmits the queued frame
+        conn.wake();
+        Ok(())
     }
 
     /// The side of the connection (client or server)
@@ -654,12 +660,14 @@ impl Connection {
         self.0.state.lock("side").inner.side()
     }
 
-    /// The peer's UDP address
+    /// The peer's UDP address at connection creation time.
     ///
-    /// If `ServerConfig::migration` is `true`, clients may change addresses at will, e.g. when
-    /// switching to a cellular internet connection.
+    /// Note: this returns the address captured when the connection was first
+    /// established. If `ServerConfig::migration` is `true`, the peer may have
+    /// migrated to a different address since then. This value does not update
+    /// after migration.
     pub fn remote_address(&self) -> SocketAddr {
-        self.0.state.lock("remote_address").inner.remote_address()
+        self.0.initial_remote_addr
     }
 
     /// The external/reflexive address observed by the remote peer
@@ -672,12 +680,17 @@ impl Connection {
     /// - Address discovery is not enabled
     /// - No OBSERVED_ADDRESS frame has been received yet
     /// - The connection hasn't completed the handshake
+    /// - The internal lock could not be acquired without blocking (lock
+    ///   contention). In this case `None` does **not** mean that no observed
+    ///   address exists — the caller should retry on the next poll cycle.
     pub fn observed_address(&self) -> Option<SocketAddr> {
-        self.0
-            .state
-            .lock("observed_address")
-            .inner
-            .observed_address()
+        // Use try_lock to avoid blocking tokio workers. poll_discovery
+        // calls this every second on all connections; blocking here
+        // competes with ConnectionDriver::poll() for the ParkingMutex.
+        match self.0.state.try_lock("observed_address") {
+            Some(guard) => guard.inner.observed_address(),
+            None => None,
+        }
     }
 
     /// The local IP address which was used when the peer established
@@ -1116,7 +1129,9 @@ impl ConnectionRef {
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
+        let remote_addr = conn.remote_address();
         Self(Arc::new(ConnectionInner {
+            initial_remote_addr: remote_addr,
             state: Mutex::new(State {
                 inner: conn,
                 driver: None,
@@ -1184,6 +1199,7 @@ impl std::ops::Deref for ConnectionRef {
 pub(crate) struct ConnectionInner {
     pub(crate) state: Mutex<State>,
     pub(crate) shared: Shared,
+    pub(crate) initial_remote_addr: SocketAddr,
 }
 
 #[derive(Debug, Default)]

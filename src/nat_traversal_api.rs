@@ -12,14 +12,7 @@
 //! QUIC connections through NATs using sophisticated hole punching and
 //! coordination protocols.
 
-use std::{
-    collections::hash_map::DefaultHasher,
-    fmt,
-    hash::{Hash, Hasher},
-    net::SocketAddr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
 use crate::constrained::{ConstrainedEngine, EngineConfig, EngineEvent};
 use crate::transport::TransportRegistry;
@@ -66,7 +59,7 @@ fn extract_ml_dsa_from_spki(spki: &[u8]) -> Option<crate::crypto::pqc::types::Ml
 }
 
 // Import shared normalize_socket_addr utility
-use crate::shared::normalize_socket_addr;
+use crate::shared::{dual_stack_alternate, normalize_socket_addr};
 
 /// Broadcast an ADD_ADDRESS frame to all connected peers.
 ///
@@ -276,10 +269,15 @@ pub struct NatTraversalEndpoint {
     event_tx: Option<mpsc::UnboundedSender<NatTraversalEvent>>,
     /// Receiver for internal event notifications
     /// Uses parking_lot::Mutex for faster, non-poisoning access
-    event_rx: ParkingMutex<mpsc::UnboundedReceiver<NatTraversalEvent>>,
+    event_rx: Arc<ParkingMutex<mpsc::UnboundedReceiver<NatTraversalEvent>>>,
     /// Notify waiters when a new ConnectionEstablished event is available.
     /// Eliminates the 10ms polling loop in accept_connection().
     incoming_notify: Arc<tokio::sync::Notify>,
+    /// Channel for accepted connection addresses — the P2pEndpoint's
+    /// incoming_connection_forwarder reads from the receiver to register
+    /// accepted connections in connected_peers.
+    accepted_addrs_tx: mpsc::UnboundedSender<SocketAddr>,
+    accepted_addrs_rx: Arc<TokioMutex<mpsc::UnboundedReceiver<SocketAddr>>>,
     /// Notify waiters when the endpoint is shutting down.
     /// Eliminates polling loops that check the AtomicBool in transport listeners.
     shutdown_notify: Arc<tokio::sync::Notify>,
@@ -324,6 +322,19 @@ pub struct NatTraversalEndpoint {
     /// P2pEndpoint polls this to receive data from constrained transports
     /// Uses TokioMutex (not ParkingMutex) because MutexGuard is held across .await
     constrained_event_rx: TokioMutex<mpsc::UnboundedReceiver<ConstrainedEventWithAddr>>,
+    /// Receiver for hole-punch addresses forwarded from the Quinn driver.
+    /// When a relayed PUNCH_ME_NOW triggers InitiateHolePunch at the Quinn level,
+    /// the address is sent through this channel so we can create a fully tracked
+    /// connection (DashMap + events + handlers) instead of fire-and-forget.
+    hole_punch_rx: TokioMutex<mpsc::UnboundedReceiver<SocketAddr>>,
+    /// Channel for handshakes completing in the background. Spawned handshake
+    /// tasks send completed connections here, and accept_connection_direct
+    /// receives them. Persistent across calls so no connections are lost.
+    handshake_tx: mpsc::Sender<Result<(SocketAddr, InnerConnection), String>>,
+    handshake_rx: TokioMutex<mpsc::Receiver<Result<(SocketAddr, InnerConnection), String>>>,
+    /// Tracks when each connection was first observed as closed.
+    /// Used to enforce a grace period before removing dead connections.
+    closed_at: dashmap::DashMap<SocketAddr, std::time::Instant>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -1326,6 +1337,17 @@ impl NatTraversalEndpoint {
         // Create channel for forwarding constrained engine events to P2pEndpoint
         let (constrained_event_tx, constrained_event_rx) = mpsc::unbounded_channel();
 
+        let (accepted_addrs_tx, accepted_addrs_rx) = mpsc::unbounded_channel();
+
+        // Channel for hole-punch addresses from Quinn driver → NatTraversalEndpoint
+        let (hole_punch_tx, hole_punch_rx) = mpsc::unbounded_channel();
+        // Configure the inner endpoint to forward hole-punch addresses through the channel
+        // instead of doing fire-and-forget connections at the Quinn level.
+        inner_endpoint.set_hole_punch_tx(hole_punch_tx);
+
+        // Channel for background handshake completion (persistent across accept calls)
+        let (hs_tx, hs_rx) = mpsc::channel(32);
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -1335,8 +1357,10 @@ impl NatTraversalEndpoint {
             event_callback,
             shutdown: Arc::new(AtomicBool::new(false)),
             event_tx: Some(event_tx.clone()),
-            event_rx: ParkingMutex::new(event_rx),
+            event_rx: Arc::new(ParkingMutex::new(event_rx)),
             incoming_notify: Arc::new(tokio::sync::Notify::new()),
+            accepted_addrs_tx: accepted_addrs_tx.clone(),
+            accepted_addrs_rx: Arc::new(TokioMutex::new(accepted_addrs_rx)),
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
             connections: Arc::new(dashmap::DashMap::new()),
             timeout_config: config.timeouts.clone(),
@@ -1351,6 +1375,10 @@ impl NatTraversalEndpoint {
             constrained_engine,
             constrained_event_tx: constrained_event_tx.clone(),
             constrained_event_rx: TokioMutex::new(constrained_event_rx),
+            hole_punch_rx: TokioMutex::new(hole_punch_rx),
+            handshake_tx: hs_tx,
+            handshake_rx: TokioMutex::new(hs_rx),
+            closed_at: dashmap::DashMap::new(),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1506,31 +1534,13 @@ impl NatTraversalEndpoint {
             }
         }
 
-        // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
-        {
-            let endpoint_clone = inner_endpoint.clone();
-            let shutdown_clone = endpoint.shutdown.clone();
-            let event_tx_clone = event_tx.clone();
-            let connections_clone = endpoint.connections.clone();
-            let emitted_events_clone = emitted_established_events.clone();
-            let relay_server_clone = endpoint.relay_server.clone();
-            let incoming_notify_clone = endpoint.incoming_notify.clone();
-
-            tokio::spawn(async move {
-                Self::accept_connections(
-                    endpoint_clone,
-                    shutdown_clone,
-                    event_tx_clone,
-                    connections_clone,
-                    emitted_events_clone,
-                    relay_server_clone,
-                    incoming_notify_clone,
-                )
-                .await;
-            });
-
-            info!("Started accepting connections (symmetric P2P node)");
-        }
+        // Spawn the unified accept loop. This background task handles Quinn
+        // accept + handshakes in parallel and feeds completed connections to
+        // accept_connection_direct() via a channel. Unlike the old
+        // accept_connections task, it doesn't register connections in
+        // P2pEndpoint — that's done by the caller of accept_connection_direct.
+        endpoint.spawn_accept_loop();
+        info!("Accept loop spawned (unified path, parallel handshakes)");
 
         // Start background discovery polling task
         let discovery_manager_clone = endpoint.discovery_manager.clone();
@@ -1724,6 +1734,17 @@ impl NatTraversalEndpoint {
         // Create channel for forwarding constrained engine events to P2pEndpoint
         let (constrained_event_tx, constrained_event_rx) = mpsc::unbounded_channel();
 
+        let (accepted_addrs_tx, accepted_addrs_rx) = mpsc::unbounded_channel();
+
+        // Channel for hole-punch addresses from Quinn driver → NatTraversalEndpoint
+        let (hole_punch_tx, hole_punch_rx) = mpsc::unbounded_channel();
+        // Configure the inner endpoint to forward hole-punch addresses through the channel
+        // instead of doing fire-and-forget connections at the Quinn level.
+        inner_endpoint.set_hole_punch_tx(hole_punch_tx);
+
+        // Channel for background handshake completion (persistent across accept calls)
+        let (hs_tx, hs_rx) = mpsc::channel(32);
+
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
             config: config.clone(),
@@ -1733,8 +1754,10 @@ impl NatTraversalEndpoint {
             event_callback,
             shutdown: Arc::new(AtomicBool::new(false)),
             event_tx: Some(event_tx.clone()),
-            event_rx: ParkingMutex::new(event_rx),
+            event_rx: Arc::new(ParkingMutex::new(event_rx)),
             incoming_notify: Arc::new(tokio::sync::Notify::new()),
+            accepted_addrs_tx: accepted_addrs_tx.clone(),
+            accepted_addrs_rx: Arc::new(TokioMutex::new(accepted_addrs_rx)),
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
             connections: Arc::new(dashmap::DashMap::new()),
             timeout_config: config.timeouts.clone(),
@@ -1749,6 +1772,10 @@ impl NatTraversalEndpoint {
             constrained_engine,
             constrained_event_tx: constrained_event_tx.clone(),
             constrained_event_rx: TokioMutex::new(constrained_event_rx),
+            hole_punch_rx: TokioMutex::new(hole_punch_rx),
+            handshake_tx: hs_tx,
+            handshake_rx: TokioMutex::new(hs_rx),
+            closed_at: dashmap::DashMap::new(),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1904,31 +1931,13 @@ impl NatTraversalEndpoint {
             }
         }
 
-        // v0.13.0+: All nodes are symmetric P2P nodes - always start accepting connections
-        {
-            let endpoint_clone = inner_endpoint.clone();
-            let shutdown_clone = endpoint.shutdown.clone();
-            let event_tx_clone = event_tx.clone();
-            let connections_clone = endpoint.connections.clone();
-            let emitted_events_clone = emitted_established_events.clone();
-            let relay_server_clone = endpoint.relay_server.clone();
-            let incoming_notify_clone = endpoint.incoming_notify.clone();
-
-            tokio::spawn(async move {
-                Self::accept_connections(
-                    endpoint_clone,
-                    shutdown_clone,
-                    event_tx_clone,
-                    connections_clone,
-                    emitted_events_clone,
-                    relay_server_clone,
-                    incoming_notify_clone,
-                )
-                .await;
-            });
-
-            info!("Started accepting connections (symmetric P2P node)");
-        }
+        // Spawn the unified accept loop. This background task handles Quinn
+        // accept + handshakes in parallel and feeds completed connections to
+        // accept_connection_direct() via a channel. Unlike the old
+        // accept_connections task, it doesn't register connections in
+        // P2pEndpoint — that's done by the caller of accept_connection_direct.
+        endpoint.spawn_accept_loop();
+        info!("Accept loop spawned (unified path, parallel handshakes)");
 
         // Start background discovery polling task
         let discovery_manager_clone = endpoint.discovery_manager.clone();
@@ -2083,41 +2092,17 @@ impl NatTraversalEndpoint {
             target_addr, coordinator
         );
 
-        // Create new session
-        let session = NatTraversalSession {
-            target_addr,
-            coordinator,
-            attempt: 1,
-            started_at: std::time::Instant::now(),
-            phase: TraversalPhase::Discovery,
-            candidates: Vec::new(),
-            session_state: SessionState {
-                state: ConnectionState::Connecting,
-                last_transition: std::time::Instant::now(),
-
-                connection: None,
-                active_attempts: Vec::new(),
-                metrics: ConnectionMetrics::default(),
-            },
-        };
-
-        // Store session keyed by target address
-        // DashMap provides lock-free .insert()
-        self.active_sessions.insert(target_addr, session);
-
-        let discovery_session_id = DiscoverySessionId::Remote(target_addr);
-
-        // Start candidate discovery - parking_lot::RwLock doesn't poison
-        let bootstrap_nodes_vec = self.bootstrap_nodes.read().clone();
-
-        {
-            // parking_lot::Mutex doesn't poison
-            let mut discovery = self.discovery_manager.lock();
-
-            discovery
-                .start_discovery(discovery_session_id, bootstrap_nodes_vec)
-                .map_err(|e| NatTraversalError::CandidateDiscoveryFailed(e.to_string()))?;
-        }
+        // Send the coordination request (PUNCH_ME_NOW) immediately rather than
+        // creating a session and waiting for the poll() state machine's
+        // coordination_timeout to expire (default 10s).
+        //
+        // We intentionally do NOT create a session or start discovery here.
+        // The try_hole_punch() caller has its own poll loop that waits for
+        // the incoming connection. Creating a session would cause the poll()
+        // state machine to continue progressing through phases (Synchronization,
+        // Punching, Validation) which can create duplicate connections that
+        // interfere with the established hole-punched connection.
+        self.send_coordination_request(target_addr, coordinator)?;
 
         // Emit event
         if let Some(ref callback) = self.event_callback {
@@ -2127,26 +2112,14 @@ impl NatTraversalEndpoint {
             });
         }
 
-        // NAT traversal will proceed via poll() calls and state machine updates
         Ok(())
     }
 
     /// Generate a deterministic 32-byte identifier from a SocketAddr for wire
-    /// protocol frames (PUNCH_ME_NOW, ADDRESS_DISCOVERY). This is a legacy
-    /// format used in coordination messages, not a session key.
+    /// protocol frames (PUNCH_ME_NOW, ADDRESS_DISCOVERY). Delegates to the
+    /// shared implementation in `crate::shared::wire_id_from_addr`.
     fn wire_id_from_addr(addr: SocketAddr) -> [u8; 32] {
-        let mut hasher = DefaultHasher::new();
-        addr.hash(&mut hasher);
-
-        let hash = hasher.finish();
-        let mut bytes = [0u8; 32];
-        bytes[0..8].copy_from_slice(&hash.to_be_bytes());
-        // Repeat hash for remaining bytes to make it deterministic
-        bytes[8..16].copy_from_slice(&hash.to_le_bytes());
-        bytes[16..24].copy_from_slice(&hash.to_be_bytes());
-        bytes[24..32].copy_from_slice(&hash.to_le_bytes());
-
-        bytes
+        crate::shared::wire_id_from_addr(addr)
     }
 
     /// Poll all active sessions and update their states
@@ -2738,6 +2711,7 @@ impl NatTraversalEndpoint {
         let emitted_events_clone = self.emitted_established_events.clone();
         let relay_server_clone = self.relay_server.clone();
         let incoming_notify_clone = self.incoming_notify.clone();
+        let accepted_addrs_tx_clone = self.accepted_addrs_tx.clone();
 
         tokio::spawn(async move {
             Self::accept_connections(
@@ -2748,6 +2722,7 @@ impl NatTraversalEndpoint {
                 emitted_events_clone,
                 relay_server_clone,
                 incoming_notify_clone,
+                accepted_addrs_tx_clone,
             )
             .await;
         });
@@ -2764,6 +2739,7 @@ impl NatTraversalEndpoint {
         emitted_events: Arc<dashmap::DashSet<SocketAddr>>,
         relay_server: Option<Arc<MasqueRelayServer>>,
         incoming_notify: Arc<tokio::sync::Notify>,
+        accepted_addrs_tx: mpsc::UnboundedSender<SocketAddr>,
     ) {
         while !shutdown.load(Ordering::Relaxed) {
             match endpoint.accept().await {
@@ -2773,6 +2749,7 @@ impl NatTraversalEndpoint {
                     let emitted_events = emitted_events.clone();
                     let relay_server = relay_server.clone();
                     let incoming_notify = incoming_notify.clone();
+                    let accepted_addrs_tx = accepted_addrs_tx.clone();
                     tokio::spawn(async move {
                         match connecting.await {
                             Ok(connection) => {
@@ -2783,9 +2760,23 @@ impl NatTraversalEndpoint {
                                 let public_key =
                                     Self::extract_public_key_from_connection(&connection);
 
-                                // Store the connection keyed by remote address
-                                // DashMap provides fine-grained locking internally - no blocking
+                                // Store the connection keyed by remote address.
+                                // Always overwrite — the latest connection from the
+                                // accept handler is most likely alive, replacing any
+                                // dead duplicate from simultaneous-open.
                                 connections.insert(remote_address, connection.clone());
+
+                                // Notify the P2pEndpoint's forwarder about the new connection
+                                match accepted_addrs_tx.send(remote_address) {
+                                    Ok(()) => info!(
+                                        "accept_connections: sent {} to forwarder channel",
+                                        remote_address
+                                    ),
+                                    Err(e) => error!(
+                                        "accept_connections: forwarder channel send FAILED for {}: {}",
+                                        remote_address, e
+                                    ),
+                                }
 
                                 // Only emit ConnectionEstablished if we haven't already for this address
                                 // DashSet::insert returns true if the value was newly inserted
@@ -3490,6 +3481,168 @@ impl NatTraversalEndpoint {
         }
     }
 
+    /// Accept the next connection (incoming or hole-punched).
+    ///
+    /// Returns connections from a background accept loop that handles Quinn
+    /// accept, handshake completion, and outgoing hole-punch connections.
+    /// This method never holds locks across await points — it simply reads
+    /// from the handshake channel.
+    pub async fn accept_connection_direct(
+        &self,
+    ) -> Result<(SocketAddr, InnerConnection), NatTraversalError> {
+        let mut rx = self.handshake_rx.lock().await;
+        loop {
+            if self.shutdown.load(Ordering::Relaxed) {
+                return Err(NatTraversalError::NetworkError(
+                    "Endpoint shutting down".to_string(),
+                ));
+            }
+
+            match rx.recv().await {
+                Some(Ok((addr, conn))) => return Ok((addr, conn)),
+                Some(Err(_)) => continue,
+                None => {
+                    return Err(NatTraversalError::NetworkError(
+                        "Accept channel closed".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Spawn the background accept loop that feeds `accept_connection_direct`.
+    ///
+    /// This task owns the Quinn accept and processes handshakes in parallel.
+    /// Outgoing hole-punch connections are detected via `incoming_notify` and
+    /// looked up directly in the connections DashMap, avoiding competing
+    /// consumers on the `event_rx` channel (which is drained by `poll()`).
+    /// All completed connections are sent through `handshake_tx`.
+    fn spawn_accept_loop(&self) {
+        let endpoint = match self.inner_endpoint.clone() {
+            Some(ep) => ep,
+            None => return,
+        };
+        let tx = self.handshake_tx.clone();
+        let connections = self.connections.clone();
+        let emitted = self.emitted_established_events.clone();
+        let relay_server = self.relay_server.clone();
+        let event_tx_opt = self.event_tx.clone();
+        let shutdown = self.shutdown.clone();
+        let incoming_notify = self.incoming_notify.clone();
+
+        tokio::spawn(async move {
+            loop {
+                if shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+
+                // Race Quinn accept against hole-punch notify.
+                // When incoming_notify fires, a new outgoing hole-punch
+                // connection was inserted into the DashMap. We forward any
+                // newly-emitted connections to the handshake channel.
+                let connecting = tokio::select! {
+                    result = endpoint.accept() => match result {
+                        Some(c) => c,
+                        None => {
+                            debug!("Quinn endpoint closed, accept loop exiting");
+                            return;
+                        }
+                    },
+                    _ = incoming_notify.notified() => {
+                        // Hole-punch completed — check DashMap for new
+                        // outgoing connections and forward them.
+                        let mut outgoing_conns = Vec::new();
+                        for entry in connections.iter() {
+                            let addr = *entry.key();
+                            if emitted.insert(addr) {
+                                // First time seeing this address — forward it.
+                                outgoing_conns.push((addr, entry.value().clone()));
+                            }
+                        }
+                        for (addr, conn) in outgoing_conns {
+                            let _ = tx.send(Ok((addr, conn))).await;
+                        }
+                        continue;
+                    }
+                };
+
+                // Spawn handshake in background so we immediately loop back
+                // to accept the next incoming connection.
+                let tx2 = tx.clone();
+                let connections2 = connections.clone();
+                let emitted2 = emitted.clone();
+                let relay_server2 = relay_server.clone();
+                let event_tx2 = event_tx_opt.clone();
+                tokio::spawn(async move {
+                    let connection = match connecting.await {
+                        Ok(conn) => conn,
+                        Err(e) => {
+                            debug!("Accept handshake failed: {}", e);
+                            let _ = tx2.send(Err(e.to_string())).await;
+                            return;
+                        }
+                    };
+
+                    let remote_address = connection.remote_address();
+                    info!("Accepted connection from {} (unified path)", remote_address);
+
+                    // Only insert if no existing LIVE connection to this address.
+                    // Unconditionally overwriting would replace a working connection
+                    // with a duplicate that may die shortly, leaving the DashMap
+                    // pointing at a dead connection while the original's reader
+                    // task still runs.
+                    // Check both raw and normalized forms (IPv4-mapped IPv6).
+                    let normalized_remote = crate::shared::normalize_socket_addr(remote_address);
+                    let has_live = |addr: &std::net::SocketAddr| -> bool {
+                        connections2
+                            .get(addr)
+                            .is_some_and(|e| e.value().close_reason().is_none())
+                    };
+                    if has_live(&remote_address) || has_live(&normalized_remote) {
+                        info!(
+                            "accept_loop: {} already has a live connection, keeping existing",
+                            remote_address
+                        );
+                        connection.close(0u32.into(), b"duplicate");
+                        return; // exit this handshake task
+                    }
+                    connections2.insert(remote_address, connection.clone());
+
+                    // Only forward to handshake_tx if this is the first time
+                    // we've seen this address. Without this guard, a
+                    // simultaneous-open (both sides connect at the same time)
+                    // sends two entries to handshake_tx, causing duplicate
+                    // reader tasks for the same connection address.
+                    if emitted2.insert(remote_address) {
+                        if let Some(ref server) = relay_server2 {
+                            let conn_clone = connection.clone();
+                            let server_clone = Arc::clone(server);
+                            tokio::spawn(async move {
+                                Self::handle_relay_requests(conn_clone, server_clone).await;
+                            });
+                        }
+
+                        if let Some(ref etx) = event_tx2 {
+                            let etx = etx.clone();
+                            let addr = remote_address;
+                            let conn = connection.clone();
+                            tokio::spawn(async move {
+                                Self::handle_connection(addr, conn, etx).await;
+                            });
+                        }
+
+                        let _ = tx2.send(Ok((remote_address, connection))).await;
+                    } else {
+                        debug!(
+                            "Duplicate connection from {} already emitted, skipping",
+                            remote_address
+                        );
+                    }
+                });
+            }
+        });
+    }
+
     /// Returns a reference to the connection notification handle.
     ///
     /// This `Notify` is triggered whenever a `ConnectionEstablished` event
@@ -3501,20 +3654,30 @@ impl NatTraversalEndpoint {
 
     /// Check if we have a live connection to the given address.
     ///
-    /// If the connection exists but is dead (closed/draining), removes it
+    /// If the connection exists but is dead (has a `close_reason`), removes it
     /// from the connection table and returns `false`. This enables automatic
     /// cleanup of phantom connections during deduplication checks.
     pub fn is_connected(&self, addr: &SocketAddr) -> bool {
-        if let Some(conn) = self.connections.get(addr) {
-            if conn.is_alive() {
-                return true;
+        if let Some(entry) = self.connections.get(addr) {
+            if let Some(reason) = entry.value().close_reason() {
+                // Connection is dead — remove it and report not connected.
+                info!(
+                    "is_connected: {} has close_reason={}, removing from DashMap",
+                    addr, reason
+                );
+                drop(entry); // release the DashMap ref before removing
+                self.connections.remove(addr);
+                return false;
             }
-            // Connection is dead -- drop the DashMap ref before removing
-            drop(conn);
-            // Clean up dead connection
-            let _ = self.remove_connection(addr);
+            true
+        } else {
+            false
         }
-        false
+    }
+
+    /// Number of tracked connections (for diagnostics).
+    pub fn connection_count(&self) -> usize {
+        self.connections.len()
     }
 
     /// Get an active connection by remote address
@@ -3529,6 +3692,21 @@ impl NatTraversalEndpoint {
             .map(|entry| entry.value().clone()))
     }
 
+    /// Get the receiver for accepted connection addresses.
+    /// The P2pEndpoint's incoming_connection_forwarder uses this to register
+    /// accepted connections in connected_peers.
+    pub fn accepted_addrs_rx(&self) -> Arc<TokioMutex<mpsc::UnboundedReceiver<SocketAddr>>> {
+        Arc::clone(&self.accepted_addrs_rx)
+    }
+
+    /// Iterate over all connections in the DashMap.
+    pub fn connections_iter(
+        &self,
+    ) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, SocketAddr, InnerConnection>>
+    {
+        self.connections.iter()
+    }
+
     /// Add or update a connection for a remote address
     pub fn add_connection(
         &self,
@@ -3537,12 +3715,57 @@ impl NatTraversalEndpoint {
     ) -> Result<(), NatTraversalError> {
         let observed = connection.observed_address();
         info!("add_connection: {} observed_address={:?}", addr, observed);
-        // DashMap provides lock-free .insert()
-        self.connections.insert(addr, connection);
+        // Only insert if no existing LIVE connection. This prevents
+        // an outgoing hole-punch connection (which may die quickly)
+        // from overwriting an incoming connection that the reader task
+        // is actively using. The reader task has a clone of the
+        // connection object and continues to receive data even if the
+        // DashMap entry is replaced — but the send path looks up the
+        // DashMap, so we must keep the live connection there.
+        if let Some(existing) = self.connections.get(&addr) {
+            if existing.value().close_reason().is_none() {
+                info!(
+                    "add_connection: {} already has a live connection, skipping overwrite",
+                    addr
+                );
+                drop(existing);
+            } else {
+                drop(existing);
+                self.connections.insert(addr, connection);
+            }
+        } else {
+            self.connections.insert(addr, connection);
+        }
         info!(
             "add_connection: now have {} connections",
             self.connections.len()
         );
+
+        // Register connected peer as a potential coordinator for NAT traversal.
+        // In the symmetric P2P architecture (v0.13.0+), any connected node can
+        // coordinate hole-punching for us.
+        {
+            let mut nodes = self.bootstrap_nodes.write();
+            if !nodes.iter().any(|n| n.address == addr) {
+                nodes.push(BootstrapNode {
+                    address: addr,
+                    last_seen: std::time::Instant::now(),
+                    can_coordinate: true,
+                    rtt: None,
+                    coordination_count: 0,
+                });
+                info!(
+                    "add_connection: registered {} as NAT traversal coordinator ({} total)",
+                    addr,
+                    nodes.len()
+                );
+            }
+        }
+
+        // Notify waiters that a new connection is available.
+        // This wakes up try_hole_punch loops waiting for the target connection.
+        self.incoming_notify.notify_waiters();
+
         Ok(())
     }
 
@@ -3595,7 +3818,21 @@ impl NatTraversalEndpoint {
         // DashSet provides lock-free .remove()
         self.emitted_established_events.remove(addr);
 
-        // DashMap provides lock-free .remove() that returns Option<(K, V)>
+        // Only remove if the connection is actually dead. Multiple reader
+        // tasks can share the same address (incoming + outgoing hole-punch).
+        // If one reader exits but the connection is still live (the other
+        // reader is using it), don't remove it from the DashMap — the send
+        // path needs it.
+        if let Some(entry) = self.connections.get(addr) {
+            if entry.value().close_reason().is_none() {
+                info!(
+                    "remove_connection: {} still has a live connection, keeping in DashMap",
+                    addr
+                );
+                drop(entry);
+                return Ok(None);
+            }
+        }
         Ok(self.connections.remove(addr).map(|(_, v)| v))
     }
 
@@ -4551,8 +4788,12 @@ impl NatTraversalEndpoint {
         target_addr: SocketAddr,
         candidate: &CandidateAddress,
     ) -> Result<(), NatTraversalError> {
-        // Check if connection already exists - another candidate may have succeeded
-        if self.has_existing_connection(&target_addr) {
+        // Check if connection already exists - another candidate may have succeeded.
+        // Check both raw and normalized forms to catch IPv4-mapped IPv6 mismatches.
+        let normalized_target = normalize_socket_addr(target_addr);
+        if self.has_existing_connection(&target_addr)
+            || self.has_existing_connection(&normalized_target)
+        {
             debug!(
                 "Connection already exists for {}, skipping candidate {}",
                 target_addr, candidate.address
@@ -4586,6 +4827,7 @@ impl NatTraversalEndpoint {
                         let event_tx = event_tx.clone();
                         let connections = self.connections.clone();
                         let incoming_notify = self.incoming_notify.clone();
+                        let accepted_addrs_tx = self.accepted_addrs_tx.clone();
                         let address = candidate.address;
 
                         tokio::spawn(async move {
@@ -4608,9 +4850,30 @@ impl NatTraversalEndpoint {
                                     let public_key =
                                         Self::extract_public_key_from_connection(&connection);
 
-                                    // Store the connection
-                                    // DashMap provides lock-free .insert()
-                                    connections.insert(remote, connection.clone());
+                                    // Store the connection, but don't overwrite an existing
+                                    // live connection. The reader task may have already
+                                    // registered the incoming connection from the same peer.
+                                    if let Some(existing) = connections.get(&remote) {
+                                        if existing.value().close_reason().is_none() {
+                                            info!(
+                                                "attempt_hole_punch: {} already has live connection, skipping insert",
+                                                remote
+                                            );
+                                            drop(existing);
+                                        } else {
+                                            drop(existing);
+                                            connections.insert(remote, connection.clone());
+                                        }
+                                    } else {
+                                        connections.insert(remote, connection.clone());
+                                    }
+
+                                    // Notify the P2pEndpoint forwarder so the connection is
+                                    // registered in connected_peers and the send path can
+                                    // find it. Without this, hole-punch connections are only
+                                    // in the NatTraversalEndpoint's DashMap and send() fails
+                                    // with "Connection closed unexpectedly".
+                                    let _ = accepted_addrs_tx.send(remote);
 
                                     // Send connection established event (we initiated hole punch = Client side)
                                     let _ =
@@ -4656,8 +4919,15 @@ impl NatTraversalEndpoint {
         }
     }
 
-    /// Detect closed connections and emit ConnectionLost events
+    /// Detect closed connections, emit ConnectionLost events, and reap stale
+    /// entries after a 5-second grace period.
+    ///
+    /// The grace period prevents removing connections that are briefly closed
+    /// during simultaneous-open deduplication but then replaced by a live one.
     fn poll_closed_connections(&self, events: &mut Vec<NatTraversalEvent>) {
+        let now = std::time::Instant::now();
+        let grace_period = std::time::Duration::from_secs(5);
+
         let closed_connections: Vec<_> = self
             .connections
             .iter()
@@ -4670,14 +4940,40 @@ impl NatTraversalEndpoint {
             .collect();
 
         for (addr, reason) in closed_connections {
-            self.connections.remove(&addr);
-            self.emit_event(
-                events,
-                NatTraversalEvent::ConnectionLost {
-                    remote_address: addr,
-                    reason: reason.to_string(),
-                },
-            );
+            // Record the time we first observed this connection as closed.
+            // `or_insert` returns the existing value if present, so `is_first_seen`
+            // is only true on the very first poll cycle that detects the closure.
+            let entry = self.closed_at.entry(addr).or_insert(now);
+            let is_first_seen = *entry == now;
+            let first_seen_closed = *entry;
+            drop(entry); // Release shard lock before further DashMap operations
+
+            if now.duration_since(first_seen_closed) >= grace_period {
+                // Grace period elapsed — remove the dead connection.
+                self.connections.remove(&addr);
+                self.closed_at.remove(&addr);
+                debug!(
+                    "Connection to {} closed: {}, removed after grace period",
+                    addr, reason
+                );
+            } else {
+                debug!(
+                    "Connection to {} closed: {}, keeping for grace period",
+                    addr, reason
+                );
+            }
+
+            // Only emit ConnectionLost on first detection to avoid ~10 duplicate
+            // events during the 5-second grace period (poll runs every 500ms).
+            if is_first_seen {
+                self.emit_event(
+                    events,
+                    NatTraversalEvent::ConnectionLost {
+                        remote_address: addr,
+                        reason: reason.to_string(),
+                    },
+                );
+            }
         }
     }
 
@@ -4720,81 +5016,62 @@ impl NatTraversalEndpoint {
         let mut hole_punch_requests: Vec<(SocketAddr, Vec<CandidateAddress>)> = Vec::new();
         let mut validation_requests: Vec<(SocketAddr, SocketAddr)> = Vec::new();
 
-        // Phase 1: Collect work and update session states (brief DashMap access)
-        for mut entry in self.active_sessions.iter_mut() {
-            let target_addr = *entry.key();
-            let session = entry.value_mut();
-            let elapsed = now.duration_since(session.started_at);
+        // Phase 1: Collect work and update session states.
+        //
+        // CRITICAL: We must NOT use active_sessions.iter_mut() here.
+        // DashMap iter_mut() holds WRITE guards on ALL shards for the
+        // entire iteration, blocking any concurrent access to
+        // active_sessions (e.g., initiate_nat_traversal's contains_key).
+        // Instead, we snapshot the keys and process each session
+        // individually via get_mut(), which locks only ONE shard at a time.
+        let mut discovery_needed: Vec<(SocketAddr, DiscoverySessionId)> = Vec::new();
 
-            // Get timeout for current phase
-            let timeout = self.get_phase_timeout(session.phase);
+        let session_keys: Vec<SocketAddr> = self
+            .active_sessions
+            .iter()
+            .map(|entry| *entry.key())
+            .collect();
+
+        for target_addr in session_keys {
+            // Read phase and timing info, then RELEASE the shard immediately.
+            // This prevents holding any DashMap shard while other code paths
+            // (initiate_nat_traversal, check_punch_results, select_coordinator)
+            // access the DashMap concurrently.
+            let session_snapshot = {
+                let Some(entry) = self.active_sessions.get(&target_addr) else {
+                    continue; // Session was removed concurrently
+                };
+                let session = entry.value();
+                (
+                    session.phase,
+                    now.duration_since(session.started_at),
+                    session.attempt,
+                    session.candidates.clone(),
+                )
+            }; // shard lock released here
+
+            let (phase, elapsed, _attempt, candidates) = session_snapshot;
+            let timeout = self.get_phase_timeout(phase);
 
             // Check if we've exceeded the timeout
             if elapsed > timeout {
-                match session.phase {
+                match phase {
                     TraversalPhase::Discovery => {
+                        // DEFER: discovery_manager access to Phase 1b
                         let discovery_session_id = DiscoverySessionId::Remote(target_addr);
-                        // Get candidates from discovery manager (safe - different lock)
-                        let discovered_candidates = self
-                            .discovery_manager
-                            .lock()
-                            .get_candidates(discovery_session_id);
-
-                        // Update session candidates
-                        session.candidates = discovered_candidates.clone();
-
-                        // Check if we have discovered any candidates
-                        if !session.candidates.is_empty() {
-                            // Advance to coordination phase
-                            session.phase = TraversalPhase::Coordination;
-                            self.emit_event(
-                                &mut events,
-                                NatTraversalEvent::PhaseTransition {
-                                    remote_address: target_addr,
-                                    from_phase: TraversalPhase::Discovery,
-                                    to_phase: TraversalPhase::Coordination,
-                                },
-                            );
-                            info!(
-                                "{} advanced from Discovery to Coordination with {} candidates",
-                                target_addr,
-                                session.candidates.len()
-                            );
-                        } else if session.attempt < self.config.max_concurrent_attempts as u32 {
-                            // Retry discovery with exponential backoff
-                            session.attempt += 1;
-                            session.started_at = now;
-                            let backoff_duration = self.calculate_backoff(session.attempt);
-                            warn!(
-                                "Discovery timeout for {}, retrying (attempt {}), backoff: {:?}",
-                                target_addr, session.attempt, backoff_duration
-                            );
-                        } else {
-                            // Max attempts reached, fail
-                            session.phase = TraversalPhase::Failed;
-                            self.emit_event(
-                                &mut events,
-                                NatTraversalEvent::TraversalFailed {
-                                    remote_address: target_addr,
-                                    error: NatTraversalError::NoCandidatesFound,
-                                    fallback_available: true,
-                                },
-                            );
-                            error!(
-                                "NAT traversal failed for {}: no candidates found after {} attempts",
-                                target_addr, session.attempt
-                            );
-                        }
+                        discovery_needed.push((target_addr, discovery_session_id));
                     }
                     TraversalPhase::Coordination => {
-                        // DEFER: coordination request (accesses connections DashMap)
+                        // All checks done WITHOUT holding DashMap shard.
                         if let Some(coordinator) = self.select_coordinator() {
-                            // Update phase now, execute request later
-                            session.phase = TraversalPhase::Synchronization;
+                            if let Some(mut session) = self.active_sessions.get_mut(&target_addr) {
+                                session.phase = TraversalPhase::Synchronization;
+                            }
                             coordination_requests.push((target_addr, coordinator));
-                        } else {
+                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr)
+                        {
                             self.handle_phase_failure(
-                                session,
+                                &mut session,
                                 now,
                                 &mut events,
                                 NatTraversalError::NoBootstrapNodes,
@@ -4802,21 +5079,26 @@ impl NatTraversalEndpoint {
                         }
                     }
                     TraversalPhase::Synchronization => {
-                        // Check if target is synchronized
                         if self.is_addr_synchronized(&target_addr) {
-                            session.phase = TraversalPhase::Punching;
-                            self.emit_event(
-                                &mut events,
-                                NatTraversalEvent::HolePunchingStarted {
-                                    remote_address: target_addr,
-                                    targets: session.candidates.iter().map(|c| c.address).collect(),
-                                },
-                            );
-                            // DEFER: hole punching (may access connections)
-                            hole_punch_requests.push((target_addr, session.candidates.clone()));
-                        } else {
+                            if let Some(mut session) = self.active_sessions.get_mut(&target_addr) {
+                                session.phase = TraversalPhase::Punching;
+                                self.emit_event(
+                                    &mut events,
+                                    NatTraversalEvent::HolePunchingStarted {
+                                        remote_address: target_addr,
+                                        targets: session
+                                            .candidates
+                                            .iter()
+                                            .map(|c| c.address)
+                                            .collect(),
+                                    },
+                                );
+                                hole_punch_requests.push((target_addr, session.candidates.clone()));
+                            }
+                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr)
+                        {
                             self.handle_phase_failure(
-                                session,
+                                &mut session,
                                 now,
                                 &mut events,
                                 NatTraversalError::ProtocolError(
@@ -4826,21 +5108,23 @@ impl NatTraversalEndpoint {
                         }
                     }
                     TraversalPhase::Punching => {
-                        // Check if any punch succeeded
-                        if let Some(successful_path) = self.check_punch_results(&target_addr) {
-                            session.phase = TraversalPhase::Validation;
+                        let successful_path = self.check_punch_results(&target_addr);
+                        if let Some(successful_path) = successful_path {
+                            if let Some(mut session) = self.active_sessions.get_mut(&target_addr) {
+                                session.phase = TraversalPhase::Validation;
+                            }
                             self.emit_event(
                                 &mut events,
                                 NatTraversalEvent::PathValidated {
                                     remote_address: target_addr,
-                                    rtt: Duration::from_millis(50), // TODO: Get actual RTT
+                                    rtt: Duration::from_millis(50),
                                 },
                             );
-                            // DEFER: path validation (may access connections)
                             validation_requests.push((target_addr, successful_path));
-                        } else {
+                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr)
+                        {
                             self.handle_phase_failure(
-                                session,
+                                &mut session,
                                 now,
                                 &mut events,
                                 NatTraversalError::PunchingFailed(
@@ -4850,28 +5134,31 @@ impl NatTraversalEndpoint {
                         }
                     }
                     TraversalPhase::Validation => {
-                        // Check if path is validated
-                        if self.is_path_validated(&target_addr) {
-                            session.phase = TraversalPhase::Connected;
-                            self.emit_event(
-                                &mut events,
-                                NatTraversalEvent::TraversalSucceeded {
-                                    remote_address: target_addr,
-                                    final_address: session
-                                        .candidates
-                                        .first()
-                                        .map(|c| c.address)
-                                        .unwrap_or_else(create_random_port_bind_addr),
-                                    total_time: elapsed,
-                                },
-                            );
-                            info!(
-                                "NAT traversal succeeded for {} in {:?}",
-                                target_addr, elapsed
-                            );
-                        } else {
+                        let validated = self.is_path_validated(&target_addr);
+                        if validated {
+                            if let Some(mut session) = self.active_sessions.get_mut(&target_addr) {
+                                session.phase = TraversalPhase::Connected;
+                                let final_addr = candidates
+                                    .first()
+                                    .map(|c| c.address)
+                                    .unwrap_or_else(create_random_port_bind_addr);
+                                self.emit_event(
+                                    &mut events,
+                                    NatTraversalEvent::TraversalSucceeded {
+                                        remote_address: target_addr,
+                                        final_address: final_addr,
+                                        total_time: elapsed,
+                                    },
+                                );
+                                info!(
+                                    "NAT traversal succeeded for {} in {:?}",
+                                    target_addr, elapsed
+                                );
+                            }
+                        } else if let Some(mut session) = self.active_sessions.get_mut(&target_addr)
+                        {
                             self.handle_phase_failure(
-                                session,
+                                &mut session,
                                 now,
                                 &mut events,
                                 NatTraversalError::ValidationFailed(
@@ -4894,6 +5181,59 @@ impl NatTraversalEndpoint {
             }
         }
         // Phase 1 complete - all DashMap entries are now released
+
+        // Phase 1b: Fetch discovery candidates and update sessions.
+        // This is done AFTER releasing active_sessions shards to avoid
+        // holding DashMap write guards while acquiring discovery_manager.
+        for (target_addr, discovery_session_id) in discovery_needed {
+            let discovered_candidates = self
+                .discovery_manager
+                .lock()
+                .get_candidates(discovery_session_id);
+
+            if let Some(mut session) = self.active_sessions.get_mut(&target_addr) {
+                session.candidates = discovered_candidates.clone();
+
+                if !session.candidates.is_empty() {
+                    session.phase = TraversalPhase::Coordination;
+                    self.emit_event(
+                        &mut events,
+                        NatTraversalEvent::PhaseTransition {
+                            remote_address: target_addr,
+                            from_phase: TraversalPhase::Discovery,
+                            to_phase: TraversalPhase::Coordination,
+                        },
+                    );
+                    info!(
+                        "{} advanced from Discovery to Coordination with {} candidates",
+                        target_addr,
+                        session.candidates.len()
+                    );
+                } else if session.attempt < self.config.max_concurrent_attempts as u32 {
+                    session.attempt += 1;
+                    session.started_at = now;
+                    let backoff_duration = self.calculate_backoff(session.attempt);
+                    warn!(
+                        "Discovery timeout for {}, retrying (attempt {}), backoff: {:?}",
+                        target_addr, session.attempt, backoff_duration
+                    );
+                } else {
+                    session.phase = TraversalPhase::Failed;
+                    self.emit_event(
+                        &mut events,
+                        NatTraversalEvent::TraversalFailed {
+                            remote_address: target_addr,
+                            error: NatTraversalError::NoCandidatesFound,
+                            fallback_available: true,
+                        },
+                    );
+                    error!(
+                        "NAT traversal failed for {}: no candidates found after {} attempts",
+                        target_addr, session.attempt
+                    );
+                }
+            }
+        }
 
         // Phase 2: Execute deferred work (no DashMap entries held)
 
@@ -5111,36 +5451,36 @@ impl NatTraversalEndpoint {
             our_external_address
         );
 
-        // Find the connection to the coordinator
-        // DashMap provides lock-free mutable iteration
-        // Normalize addresses to handle IPv4-mapped IPv6 (e.g., [::ffff:1.2.3.4]:9000 == 1.2.3.4:9000)
+        // Find the connection to the coordinator via direct lookup instead of
+        // iterating all shards. Try the normalized address first, then the
+        // dual-stack alternate (IPv4 ↔ IPv4-mapped IPv6).
         let normalized_coordinator = normalize_socket_addr(coordinator);
-        for mut entry in self.connections.iter_mut() {
-            let conn = entry.value_mut();
-            let normalized_remote = normalize_socket_addr(conn.remote_address());
-            if normalized_remote == normalized_coordinator {
-                // Found connection to coordinator - send PUNCH_ME_NOW with wire ID bytes
-                info!(
-                    "Sending PUNCH_ME_NOW via coordinator {} (normalized: {}) to target {}",
-                    coordinator, normalized_coordinator, target_addr
-                );
+        let coord_conn = self.connections.get(&normalized_coordinator).or_else(|| {
+            dual_stack_alternate(&normalized_coordinator).and_then(|alt| self.connections.get(&alt))
+        });
 
-                // Use round 1 for initial coordination
-                match conn.send_nat_punch_via_relay(target_wire_id, our_external_address, 1) {
-                    Ok(()) => {
-                        info!(
-                            "Successfully queued PUNCH_ME_NOW for relay to {}",
-                            target_addr
-                        );
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        warn!("Failed to queue PUNCH_ME_NOW frame: {:?}", e);
-                        return Err(NatTraversalError::CoordinationFailed(format!(
-                            "Failed to send PUNCH_ME_NOW: {:?}",
-                            e
-                        )));
-                    }
+        if let Some(entry) = coord_conn {
+            let conn = entry.value();
+            info!(
+                "Sending PUNCH_ME_NOW via coordinator {} (normalized: {}) to target {}",
+                coordinator, normalized_coordinator, target_addr
+            );
+
+            // Use round 1 for initial coordination
+            match conn.send_nat_punch_via_relay(target_wire_id, our_external_address, 1) {
+                Ok(()) => {
+                    info!(
+                        "Successfully queued PUNCH_ME_NOW for relay to {}",
+                        target_addr
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Failed to queue PUNCH_ME_NOW frame: {:?}", e);
+                    return Err(NatTraversalError::CoordinationFailed(format!(
+                        "Failed to send PUNCH_ME_NOW: {:?}",
+                        e
+                    )));
                 }
             }
         }
@@ -5336,6 +5676,86 @@ impl NatTraversalEndpoint {
 
             Ok(())
         }
+    }
+
+    /// Send the coordination request (PUNCH_ME_NOW) if the session is ready.
+    ///
+    /// This is a targeted alternative to poll() that only sends the coordination
+    /// request without iterating all sessions or connections, avoiding the
+    /// DashMap deadlock risk in poll().
+    pub fn send_coordination_request_if_ready(
+        &self,
+        target: SocketAddr,
+        coordinator: SocketAddr,
+    ) -> Result<(), NatTraversalError> {
+        // Check if we have an active session that needs coordination
+        if let Some(mut session) = self.active_sessions.get_mut(&target) {
+            if matches!(session.phase, TraversalPhase::Coordination) {
+                session.phase = TraversalPhase::Synchronization;
+                drop(session); // Release DashMap lock before sending
+                self.send_coordination_request(target, coordinator)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Drain pending hole-punch addresses forwarded from the Quinn driver and
+    /// create fully tracked connections for each.
+    ///
+    /// This is called from the session driver task to process addresses that were
+    /// forwarded from the Quinn-level `InitiateHolePunch` event handler. Unlike
+    /// the previous fire-and-forget approach, these connections are stored in the
+    /// DashMap, emit events, and have handlers spawned — so the node can actually
+    /// receive and respond to data on them.
+    pub async fn process_pending_hole_punches(&self) {
+        let mut rx = self.hole_punch_rx.lock().await;
+        while let Ok(peer_address) = rx.try_recv() {
+            // Skip if we already have a connection to this address.
+            // Check both raw and normalized forms to catch IPv4-mapped IPv6
+            // addresses (e.g., [::ffff:1.2.3.4]:10000 == 1.2.3.4:10000).
+            // Creating a duplicate connection causes the drop of the unstored
+            // connection to send CONNECTION_CLOSE, which can corrupt the
+            // original connection's state.
+            let normalized = normalize_socket_addr(peer_address);
+            if self.has_existing_connection(&peer_address)
+                || self.has_existing_connection(&normalized)
+            {
+                info!(
+                    "Skipping hole-punch to {} — already connected",
+                    peer_address
+                );
+                continue;
+            }
+
+            info!(
+                "Processing hole-punch address from Quinn driver: {}",
+                peer_address
+            );
+            if let Err(e) = self.attempt_hole_punch_connection(peer_address) {
+                warn!(
+                    "Failed to initiate tracked hole-punch connection to {}: {}",
+                    peer_address, e
+                );
+            }
+        }
+    }
+
+    /// Attempt a QUIC connection to a peer address for hole-punching.
+    ///
+    /// Sends QUIC Initial packets to the target address, creating a NAT binding
+    /// from our socket. Called when we receive a relayed PUNCH_ME_NOW from a
+    /// coordinator, indicating a remote peer wants to reach us.
+    pub fn attempt_hole_punch_connection(
+        &self,
+        peer_address: SocketAddr,
+    ) -> Result<(), NatTraversalError> {
+        let candidate = CandidateAddress {
+            address: peer_address,
+            priority: 100,
+            source: CandidateSource::Peer,
+            state: CandidateState::New,
+        };
+        self.attempt_connection_to_candidate(peer_address, &candidate)
     }
 
     /// Check if any hole punch succeeded
@@ -5603,7 +6023,11 @@ impl NatTraversalEndpoint {
                 Ok(())
             }
 
-            crate::shared::EndpointEventInner::RelayPunchMeNow(_target_peer_id, punch_frame) => {
+            crate::shared::EndpointEventInner::RelayPunchMeNow(
+                _target_peer_id,
+                punch_frame,
+                _sender_addr,
+            ) => {
                 // RFC-compliant address-based relay: find peer by address
                 let target_address = punch_frame.address;
                 let normalized_target = normalize_socket_addr(target_address);
@@ -5614,8 +6038,14 @@ impl NatTraversalEndpoint {
                 );
 
                 // DashMap provides lock-free access
-                // First try direct SocketAddr lookup
-                let connection_found = if let Some(entry) = self.connections.get(&target_address) {
+                // First try direct SocketAddr lookup (try both plain and mapped forms
+                // for dual-stack compatibility where bindv6only=0)
+                let alt_target = dual_stack_alternate(&target_address);
+                let connection_found = if let Some(entry) = self
+                    .connections
+                    .get(&target_address)
+                    .or_else(|| alt_target.as_ref().and_then(|a| self.connections.get(a)))
+                {
                     Some(entry.value().clone())
                 } else {
                     // RFC approach: find connection by address match

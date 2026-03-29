@@ -284,6 +284,17 @@ impl PunchMeNow {
                 buf.put_u16(addr.port());
             }
         }
+
+        // Encode target_peer_id for relay coordination (extension to RFC format)
+        match &self.target_peer_id {
+            Some(peer_id) => {
+                buf.put_u8(1);
+                buf.put_slice(peer_id);
+            }
+            None => {
+                buf.put_u8(0);
+            }
+        }
         Ok(())
     }
 
@@ -354,7 +365,28 @@ impl PunchMeNow {
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(octets), port))
         };
 
-        Ok(Self::new(round, paired_with_sequence_number, address))
+        // Decode optional target_peer_id (relay coordination extension)
+        let target_peer_id = if r.remaining() >= 1 {
+            let has_peer_id = r.get::<u8>()?;
+            match has_peer_id {
+                1 => {
+                    if r.remaining() < 32 {
+                        return Err(UnexpectedEnd);
+                    }
+                    let mut peer_id = [0u8; 32];
+                    r.copy_to_slice(&mut peer_id);
+                    Some(peer_id)
+                }
+                0 => None,
+                _ => return Err(UnexpectedEnd),
+            }
+        } else {
+            None
+        };
+
+        let mut frame = Self::new(round, paired_with_sequence_number, address);
+        frame.target_peer_id = target_peer_id;
+        Ok(frame)
     }
 
     /// Try to decode, detecting format automatically

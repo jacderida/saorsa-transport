@@ -667,17 +667,30 @@ impl LinkTransport for P2pLinkTransport {
         _proto: ProtocolId,
     ) -> BoxFuture<'_, LinkResult<Self::Conn>> {
         Box::pin(async move {
-            // Connect through P2pEndpoint
-            let _peer_conn = self
+            // Use connect_with_fallback for NAT traversal support:
+            // direct connect → hole-punching → relay fallback
+            let target_ipv4 = if addr.is_ipv4() { Some(addr) } else { None };
+            let target_ipv6 = if addr.is_ipv6() { Some(addr) } else { None };
+
+            let (peer_conn, method) = self
                 .endpoint
-                .connect(addr)
+                .connect_with_fallback(target_ipv4, target_ipv6, None)
                 .await
                 .map_err(|e| LinkError::ConnectionFailed(e.to_string()))?;
 
-            // Get the underlying QUIC connection by address
+            // The actual connected address may differ from the requested addr
+            // (e.g. when connected via relay or hole-punch)
+            let connected_addr = peer_conn.remote_addr.as_socket_addr().unwrap_or(addr);
+
+            info!(
+                "dial_addr: connected to {} (requested {}) via {:?}",
+                connected_addr, addr, method
+            );
+
+            // Get the underlying QUIC connection by the actual connected address
             let conn = self
                 .endpoint
-                .get_quic_connection(&addr)
+                .get_quic_connection(&connected_addr)
                 .await
                 .map_err(|e| LinkError::ConnectionFailed(e.to_string()))?
                 .ok_or_else(|| LinkError::ConnectionFailed("Connection not found".to_string()))?;
@@ -688,7 +701,7 @@ impl LinkTransport for P2pLinkTransport {
                 .and_then(|id| id.downcast::<Vec<u8>>().ok())
                 .map(|boxed| *boxed);
 
-            Ok(P2pLinkConn::new(conn, public_key, addr))
+            Ok(P2pLinkConn::new(conn, public_key, connected_addr))
         })
     }
 
