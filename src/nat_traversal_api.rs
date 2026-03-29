@@ -59,7 +59,7 @@ fn extract_ml_dsa_from_spki(spki: &[u8]) -> Option<crate::crypto::pqc::types::Ml
 }
 
 // Import shared normalize_socket_addr utility
-use crate::shared::normalize_socket_addr;
+use crate::shared::{dual_stack_alternate, normalize_socket_addr};
 
 /// Broadcast an ADD_ADDRESS frame to all connected peers.
 ///
@@ -5436,36 +5436,36 @@ impl NatTraversalEndpoint {
             our_external_address
         );
 
-        // Find the connection to the coordinator
-        // DashMap provides lock-free mutable iteration
-        // Normalize addresses to handle IPv4-mapped IPv6 (e.g., [::ffff:1.2.3.4]:9000 == 1.2.3.4:9000)
+        // Find the connection to the coordinator via direct lookup instead of
+        // iterating all shards. Try the normalized address first, then the
+        // dual-stack alternate (IPv4 ↔ IPv4-mapped IPv6).
         let normalized_coordinator = normalize_socket_addr(coordinator);
-        for mut entry in self.connections.iter_mut() {
-            let conn = entry.value_mut();
-            let normalized_remote = normalize_socket_addr(conn.remote_address());
-            if normalized_remote == normalized_coordinator {
-                // Found connection to coordinator - send PUNCH_ME_NOW with wire ID bytes
-                info!(
-                    "Sending PUNCH_ME_NOW via coordinator {} (normalized: {}) to target {}",
-                    coordinator, normalized_coordinator, target_addr
-                );
+        let coord_conn = self.connections.get(&normalized_coordinator).or_else(|| {
+            dual_stack_alternate(&normalized_coordinator).and_then(|alt| self.connections.get(&alt))
+        });
 
-                // Use round 1 for initial coordination
-                match conn.send_nat_punch_via_relay(target_wire_id, our_external_address, 1) {
-                    Ok(()) => {
-                        info!(
-                            "Successfully queued PUNCH_ME_NOW for relay to {}",
-                            target_addr
-                        );
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        warn!("Failed to queue PUNCH_ME_NOW frame: {:?}", e);
-                        return Err(NatTraversalError::CoordinationFailed(format!(
-                            "Failed to send PUNCH_ME_NOW: {:?}",
-                            e
-                        )));
-                    }
+        if let Some(entry) = coord_conn {
+            let conn = entry.value();
+            info!(
+                "Sending PUNCH_ME_NOW via coordinator {} (normalized: {}) to target {}",
+                coordinator, normalized_coordinator, target_addr
+            );
+
+            // Use round 1 for initial coordination
+            match conn.send_nat_punch_via_relay(target_wire_id, our_external_address, 1) {
+                Ok(()) => {
+                    info!(
+                        "Successfully queued PUNCH_ME_NOW for relay to {}",
+                        target_addr
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Failed to queue PUNCH_ME_NOW frame: {:?}", e);
+                    return Err(NatTraversalError::CoordinationFailed(format!(
+                        "Failed to send PUNCH_ME_NOW: {:?}",
+                        e
+                    )));
                 }
             }
         }
@@ -6025,7 +6025,7 @@ impl NatTraversalEndpoint {
                 // DashMap provides lock-free access
                 // First try direct SocketAddr lookup (try both plain and mapped forms
                 // for dual-stack compatibility where bindv6only=0)
-                let alt_target = crate::shared::dual_stack_alternate(&target_address);
+                let alt_target = dual_stack_alternate(&target_address);
                 let connection_found = if let Some(entry) = self
                     .connections
                     .get(&target_address)
