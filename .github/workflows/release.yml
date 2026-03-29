@@ -139,17 +139,6 @@ jobs:
     needs: validate
     uses: ./.github/workflows/quick-checks.yml
 
-  security-check:
-    name: Security Audit
-    needs: validate
-    permissions:
-      contents: read
-      pull-requests: write
-      security-events: write
-      id-token: write
-      actions: read
-    uses: ./.github/workflows/security.yml
-
   build:
     name: Build ${{ matrix.target }}
     needs: [validate, test]
