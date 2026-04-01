@@ -4783,11 +4783,12 @@ impl Connection {
                 );
 
                 // Notify the endpoint so the DHT routing table can be updated
-                self.endpoint_events
-                    .push_back(crate::shared::EndpointEventInner::PeerAddressAdvertised {
+                self.endpoint_events.push_back(
+                    crate::shared::EndpointEventInner::PeerAddressAdvertised {
                         peer_addr: self.path.remote,
                         advertised_addr: normalized_addr,
-                    });
+                    },
+                );
 
                 // Trigger validation of this new candidate
                 self.trigger_candidate_validation(normalized_addr, now)?;
@@ -5244,6 +5245,12 @@ impl Connection {
 
         // Check if address discovery is enabled
         if !state.enabled {
+            return;
+        }
+
+        // Only send if the peer negotiated address discovery support.
+        // Sending to a peer that didn't negotiate causes PROTOCOL_VIOLATION.
+        if self.peer_params.address_discovery.is_none() {
             return;
         }
 

@@ -310,7 +310,8 @@ pub struct NatTraversalEndpoint {
     /// When present, allows using transport-provided sockets instead of creating new ones
     transport_registry: Option<Arc<TransportRegistry>>,
     /// Channel for receiving peer address updates (ADD_ADDRESS → DHT bridge)
-    pub(crate) peer_address_update_rx: TokioMutex<mpsc::UnboundedReceiver<(SocketAddr, SocketAddr)>>,
+    pub(crate) peer_address_update_rx:
+        TokioMutex<mpsc::UnboundedReceiver<(SocketAddr, SocketAddr)>>,
     /// Whether symmetric NAT relay setup has been attempted (one-shot)
     relay_setup_attempted: Arc<std::sync::atomic::AtomicBool>,
     /// Relay address to re-advertise to new peers (set after proactive relay setup)
@@ -1398,7 +1399,9 @@ impl NatTraversalEndpoint {
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
             relay_setup_attempted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             relay_public_addr: Arc::new(std::sync::Mutex::new(None)),
-            relay_advertised_peers: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            relay_advertised_peers: Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
             server_config: relay_server_config,
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
             constrained_engine,
@@ -1806,7 +1809,9 @@ impl NatTraversalEndpoint {
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
             relay_setup_attempted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             relay_public_addr: Arc::new(std::sync::Mutex::new(None)),
-            relay_advertised_peers: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            relay_advertised_peers: Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
             server_config: relay_server_config,
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
             constrained_engine,
@@ -2725,7 +2730,13 @@ impl NatTraversalEndpoint {
         // Create event channel
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
-        Ok((endpoint, event_tx, event_rx, local_addr, server_config_for_relay))
+        Ok((
+            endpoint,
+            event_tx,
+            event_rx,
+            local_addr,
+            server_config_for_relay,
+        ))
     }
 
     /// Start listening for incoming connections (async version)
@@ -2927,12 +2938,22 @@ impl NatTraversalEndpoint {
                                                 // Send response with length prefix (stream stays open for data)
                                                 let response_bytes = response.encode();
                                                 let len = response_bytes.len() as u32;
-                                                if let Err(e) = send_stream.write_all(&len.to_be_bytes()).await {
-                                                    warn!("Failed to send relay response length to {}: {}", addr, e);
+                                                if let Err(e) =
+                                                    send_stream.write_all(&len.to_be_bytes()).await
+                                                {
+                                                    warn!(
+                                                        "Failed to send relay response length to {}: {}",
+                                                        addr, e
+                                                    );
                                                     return;
                                                 }
-                                                if let Err(e) = send_stream.write_all(&response_bytes).await {
-                                                    warn!("Failed to send relay response to {}: {}", addr, e);
+                                                if let Err(e) =
+                                                    send_stream.write_all(&response_bytes).await
+                                                {
+                                                    warn!(
+                                                        "Failed to send relay response to {}: {}",
+                                                        addr, e
+                                                    );
                                                     return;
                                                 }
                                                 // Do NOT call finish() — stream stays open for forwarding
@@ -3435,7 +3456,13 @@ impl NatTraversalEndpoint {
     pub async fn establish_relay_session(
         &self,
         relay_addr: SocketAddr,
-    ) -> Result<(Option<SocketAddr>, Option<Arc<crate::masque::MasqueRelaySocket>>), NatTraversalError> {
+    ) -> Result<
+        (
+            Option<SocketAddr>,
+            Option<Arc<crate::masque::MasqueRelaySocket>>,
+        ),
+        NatTraversalError,
+    > {
         // Check if we already have an active session to this relay
         // DashMap provides lock-free .get() that returns Option<Ref<K, V>>
         if let Some(session) = self.relay_sessions.get(&relay_addr) {
@@ -3453,10 +3480,7 @@ impl NatTraversalEndpoint {
         // already listening for bidi streams.
         let connection = if let Some(existing) = self.connections.get(&relay_addr) {
             if existing.close_reason().is_none() {
-                info!(
-                    "Reusing existing peer connection to relay {}",
-                    relay_addr
-                );
+                info!("Reusing existing peer connection to relay {}", relay_addr);
                 existing.clone()
             } else {
                 // Existing connection is dead — fall back to creating a new one
@@ -3533,9 +3557,8 @@ impl NatTraversalEndpoint {
         );
 
         // Create the MasqueRelaySocket from the open streams
-        let relay_socket = public_address.map(|addr| {
-            crate::masque::MasqueRelaySocket::new(send_stream, recv_stream, addr)
-        });
+        let relay_socket = public_address
+            .map(|addr| crate::masque::MasqueRelaySocket::new(send_stream, recv_stream, addr));
 
         // Store the session
         let session = RelaySession {
@@ -4122,14 +4145,10 @@ impl NatTraversalEndpoint {
         // Step 1: Establish relay session with bootstrap
         let (public_addr, relay_socket) = self.establish_relay_session(bootstrap_addr).await?;
         let relay_public_addr = public_addr.ok_or_else(|| {
-            NatTraversalError::ConnectionFailed(
-                "Relay did not provide public address".to_string(),
-            )
+            NatTraversalError::ConnectionFailed("Relay did not provide public address".to_string())
         })?;
         let relay_socket = relay_socket.ok_or_else(|| {
-            NatTraversalError::ConnectionFailed(
-                "Relay did not provide socket".to_string(),
-            )
+            NatTraversalError::ConnectionFailed("Relay did not provide socket".to_string())
         })?;
 
         info!(
@@ -5674,7 +5693,10 @@ impl NatTraversalEndpoint {
                                 break;
                             }
                             Some(_) => {
-                                debug!("Relay candidate {} — connection closed, skipping", candidate);
+                                debug!(
+                                    "Relay candidate {} — connection closed, skipping",
+                                    candidate
+                                );
                             }
                             None => {
                                 debug!("Relay candidate {} — no connection, skipping", candidate);
@@ -5689,7 +5711,8 @@ impl NatTraversalEndpoint {
                                 "No active connection to any relay candidate ({} tried), will retry",
                                 relay_candidates.len()
                             );
-                            relay_setup_attempted.store(false, std::sync::atomic::Ordering::Relaxed);
+                            relay_setup_attempted
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
                             return;
                         }
                     };
@@ -5699,7 +5722,8 @@ impl NatTraversalEndpoint {
                         Ok(streams) => streams,
                         Err(e) => {
                             warn!("Failed to open relay stream to {}: {}", bootstrap, e);
-                            relay_setup_attempted.store(false, std::sync::atomic::Ordering::Relaxed);
+                            relay_setup_attempted
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
                             return;
                         }
                     };
@@ -5734,14 +5758,16 @@ impl NatTraversalEndpoint {
                         return;
                     }
 
-                    let response = match ConnectUdpResponse::decode(&mut bytes::Bytes::from(response_bytes)) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            warn!("Invalid relay response: {}", e);
-                            relay_setup_attempted.store(false, std::sync::atomic::Ordering::Relaxed);
-                            return;
-                        }
-                    };
+                    let response =
+                        match ConnectUdpResponse::decode(&mut bytes::Bytes::from(response_bytes)) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                warn!("Invalid relay response: {}", e);
+                                relay_setup_attempted
+                                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                                return;
+                            }
+                        };
 
                     if !response.is_success() {
                         warn!("Relay rejected: {:?}", response.reason);
@@ -5856,7 +5882,9 @@ impl NatTraversalEndpoint {
                     });
 
                     // Store for re-advertisement to future peers
-                    if let Ok(mut a) = relay_public_addr_store.lock() { *a = Some(relay_public_addr); }
+                    if let Ok(mut a) = relay_public_addr_store.lock() {
+                        *a = Some(relay_public_addr);
+                    }
 
                     // Advertise relay address to all connected peers
                     let mut advertised = 0;
@@ -5866,7 +5894,9 @@ impl NatTraversalEndpoint {
                         match conn.send_nat_address_advertisement(relay_public_addr, 100) {
                             Ok(_) => {
                                 advertised += 1;
-                                if let Ok(mut p) = relay_advertised_peers_store.lock() { p.insert(peer); }
+                                if let Ok(mut p) = relay_advertised_peers_store.lock() {
+                                    p.insert(peer);
+                                }
                             }
                             Err(e) => {
                                 debug!("Failed to advertise relay to {}: {}", entry.key(), e);
@@ -5887,21 +5917,39 @@ impl NatTraversalEndpoint {
             let relay_addr = self.relay_public_addr.lock().ok().and_then(|g| *g);
             if let Some(relay_addr) = relay_addr {
                 let unadvertised: Vec<SocketAddr> = {
-                    let advertised = self.relay_advertised_peers.lock().unwrap_or_else(|e| e.into_inner());
-                    self.connections.iter()
-                        .filter(|e| !advertised.contains(e.key()) && e.value().close_reason().is_none())
+                    let advertised = self
+                        .relay_advertised_peers
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    self.connections
+                        .iter()
+                        .filter(|e| {
+                            !advertised.contains(e.key()) && e.value().close_reason().is_none()
+                        })
                         .map(|e| *e.key())
                         .collect()
                 };
                 if !unadvertised.is_empty() {
-                    info!("Relay re-advertise: {} new peers to notify about {}", unadvertised.len(), relay_addr);
+                    info!(
+                        "Relay re-advertise: {} new peers to notify about {}",
+                        unadvertised.len(),
+                        relay_addr
+                    );
                 }
                 for peer_addr in unadvertised {
                     if let Some(mut entry) = self.connections.get_mut(&peer_addr) {
-                        match entry.value_mut().send_nat_address_advertisement(relay_addr, 100) {
+                        match entry
+                            .value_mut()
+                            .send_nat_address_advertisement(relay_addr, 100)
+                        {
                             Ok(_) => {
-                                info!("Re-advertised relay {} to new peer {}", relay_addr, peer_addr);
-                                if let Ok(mut a) = self.relay_advertised_peers.lock() { a.insert(peer_addr); }
+                                info!(
+                                    "Re-advertised relay {} to new peer {}",
+                                    relay_addr, peer_addr
+                                );
+                                if let Ok(mut a) = self.relay_advertised_peers.lock() {
+                                    a.insert(peer_addr);
+                                }
                             }
                             Err(_) => {}
                         }

@@ -40,13 +40,13 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
 
+use crate::VarInt;
 use crate::high_level::Connection as QuicConnection;
 use crate::masque::{
     Capsule, CompressedDatagram, ConnectUdpRequest, ConnectUdpResponse, Datagram, RelaySession,
     RelaySessionConfig, RelaySessionState, UncompressedDatagram,
 };
 use crate::relay::error::{RelayError, RelayResult, SessionErrorKind};
-use crate::VarInt;
 
 /// Configuration for the MASQUE relay server
 #[derive(Debug, Clone)]
@@ -411,16 +411,12 @@ impl MasqueRelayServer {
             if self.public_address.is_ipv4() {
                 self.public_address.ip()
             } else {
-                self.secondary_address
-                    .unwrap_or(self.public_address)
-                    .ip()
+                self.secondary_address.unwrap_or(self.public_address).ip()
             }
         } else if self.public_address.is_ipv6() {
             self.public_address.ip()
         } else {
-            self.secondary_address
-                .unwrap_or(self.public_address)
-                .ip()
+            self.secondary_address.unwrap_or(self.public_address).ip()
         };
 
         // Bind a real UDP socket for this session's data plane.
@@ -432,25 +428,27 @@ impl MasqueRelayServer {
             SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)
         };
 
-        let udp_socket = UdpSocket::bind(bind_addr).await.map_err(|e| {
-            RelayError::SessionError {
-                session_id: None,
-                kind: SessionErrorKind::InvalidState {
-                    current_state: format!("UDP bind failed: {}", e),
-                    expected_state: "bound".into(),
-                },
-            }
-        })?;
+        let udp_socket =
+            UdpSocket::bind(bind_addr)
+                .await
+                .map_err(|e| RelayError::SessionError {
+                    session_id: None,
+                    kind: SessionErrorKind::InvalidState {
+                        current_state: format!("UDP bind failed: {}", e),
+                        expected_state: "bound".into(),
+                    },
+                })?;
 
-        let bound_port = udp_socket.local_addr().map_err(|e| {
-            RelayError::SessionError {
+        let bound_port = udp_socket
+            .local_addr()
+            .map_err(|e| RelayError::SessionError {
                 session_id: None,
                 kind: SessionErrorKind::InvalidState {
                     current_state: format!("Failed to get bound address: {}", e),
                     expected_state: "address available".into(),
                 },
-            }
-        })?.port();
+            })?
+            .port();
 
         let advertised_address = SocketAddr::new(public_ip, bound_port);
         let udp_socket = Arc::new(udp_socket);
@@ -882,7 +880,10 @@ impl MasqueRelayServer {
             match sessions.get(&session_id) {
                 Some(s) => s.udp_socket().cloned(),
                 None => {
-                    tracing::warn!(session_id, "Cannot start stream forwarding: session not found");
+                    tracing::warn!(
+                        session_id,
+                        "Cannot start stream forwarding: session not found"
+                    );
                     return;
                 }
             }

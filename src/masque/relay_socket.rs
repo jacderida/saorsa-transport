@@ -47,11 +47,7 @@ impl fmt::Debug for MasqueRelaySocket {
             .field("relay_public_addr", &self.relay_public_addr)
             .field(
                 "recv_queue_len",
-                &self
-                    .recv_queue
-                    .lock()
-                    .map(|q| q.len())
-                    .unwrap_or(0),
+                &self.recv_queue.lock().map(|q| q.len()).unwrap_or(0),
             )
             .finish()
     }

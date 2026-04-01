@@ -1995,9 +1995,8 @@ impl P2pEndpoint {
             relay_addr, public_addr
         );
 
-        let relay_socket = relay_socket.ok_or_else(|| {
-            EndpointError::Connection("Relay did not provide socket".to_string())
-        })?;
+        let relay_socket = relay_socket
+            .ok_or_else(|| EndpointError::Connection("Relay did not provide socket".to_string()))?;
 
         // Step 4: Create a new Quinn endpoint with the relay socket
         let existing_endpoint = self
@@ -2010,9 +2009,8 @@ impl P2pEndpoint {
             .clone()
             .ok_or_else(|| EndpointError::Config("No client config available".to_string()))?;
 
-        let runtime = crate::high_level::default_runtime().ok_or_else(|| {
-            EndpointError::Config("No async runtime available".to_string())
-        })?;
+        let runtime = crate::high_level::default_runtime()
+            .ok_or_else(|| EndpointError::Config("No async runtime available".to_string()))?;
 
         let mut relay_endpoint = crate::high_level::Endpoint::new_with_abstract_socket(
             crate::EndpointConfig::default(),
@@ -2569,10 +2567,7 @@ impl P2pEndpoint {
                                 return;
                             }
                             Err(e) => {
-                                warn!(
-                                    "Failed to set up relay via {}: {}",
-                                    bootstrap, e
-                                );
+                                warn!("Failed to set up relay via {}: {}", bootstrap, e);
                             }
                         }
                     }

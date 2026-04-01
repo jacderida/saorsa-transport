@@ -369,7 +369,8 @@ impl Endpoint {
             } => {
                 tracing::info!(
                     "Peer {} advertised new address {}",
-                    peer_addr, advertised_addr
+                    peer_addr,
+                    advertised_addr
                 );
                 self.pending_peer_address_updates
                     .push((peer_addr, advertised_addr));

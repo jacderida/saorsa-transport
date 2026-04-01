@@ -271,10 +271,7 @@ impl Endpoint {
     }
 
     /// Set channel for peer address update events (ADD_ADDRESS → DHT bridge).
-    pub fn set_peer_address_update_tx(
-        &self,
-        tx: mpsc::UnboundedSender<(SocketAddr, SocketAddr)>,
-    ) {
+    pub fn set_peer_address_update_tx(&self, tx: mpsc::UnboundedSender<(SocketAddr, SocketAddr)>) {
         if let Ok(mut state) = self.inner.0.state.lock() {
             state.peer_address_update_tx = Some(tx);
         }
