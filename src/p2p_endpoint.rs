@@ -3140,6 +3140,16 @@ impl P2pEndpoint {
                         relay_event_sent = true;
                     }
                 }
+
+                // Monitor relay health. If the relay session died (connection
+                // closed, server restarted, etc.), reset state so the next
+                // poll cycle re-establishes through a (potentially different)
+                // relay candidate. The RelayEstablished flag is also reset so
+                // upper layers re-publish the new address.
+                if relay_event_sent && !inner.is_relay_healthy() {
+                    inner.reset_relay_state();
+                    relay_event_sent = false;
+                }
             }
         });
     }

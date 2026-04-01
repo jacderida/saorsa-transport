@@ -3373,6 +3373,47 @@ impl NatTraversalEndpoint {
         self.relay_public_addr.lock().ok().and_then(|g| *g)
     }
 
+    /// Check if the proactive relay session is still alive. Returns true if
+    /// no relay was established (nothing to monitor) or the relay is healthy.
+    /// Returns false if a relay was established but the underlying QUIC
+    /// connection has closed.
+    pub fn is_relay_healthy(&self) -> bool {
+        let relay_addr = match self.relay_public_addr.lock().ok().and_then(|g| *g) {
+            Some(addr) => addr,
+            None => return true, // No relay — nothing to monitor
+        };
+
+        // Check if any relay session is still active
+        for entry in self.relay_sessions.iter() {
+            if entry.value().is_active() {
+                return true;
+            }
+        }
+
+        // All relay sessions are dead
+        warn!(
+            "Relay session for {} is dead — resetting for re-establishment",
+            relay_addr
+        );
+        false
+    }
+
+    /// Reset relay state so the next poll cycle can re-establish. Called when
+    /// the relay session is detected as dead.
+    pub fn reset_relay_state(&self) {
+        self.relay_setup_attempted
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut addr) = self.relay_public_addr.lock() {
+            *addr = None;
+        }
+        if let Ok(mut peers) = self.relay_advertised_peers.lock() {
+            peers.clear();
+        }
+        // Remove dead sessions
+        self.relay_sessions.retain(|_, session| session.is_active());
+        info!("Relay state reset — will re-establish on next poll cycle");
+    }
+
     /// Check if relay fallback is available
     pub async fn has_relay_fallback(&self) -> bool {
         match &self.relay_manager {
