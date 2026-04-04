@@ -87,6 +87,11 @@ const EVENT_CHANNEL_CAPACITY: usize = 256;
 /// event-driven reader-exit detection.
 const STALE_REAPER_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Quick direct connection attempt after a failed hole-punch round.
+/// If the target's outgoing packets created a NAT binding, a QUIC handshake
+/// through the pinhole needs only 1-2 RTTs (~600ms at 300ms worst-case RTT).
+const POST_HOLEPUNCH_DIRECT_RETRY_TIMEOUT: Duration = Duration::from_secs(1);
+
 use crate::SHUTDOWN_DRAIN_TIMEOUT;
 
 /// Extract the raw SPKI (SubjectPublicKeyInfo) bytes from a QUIC connection's
@@ -1544,7 +1549,8 @@ impl P2pEndpoint {
                             // the target's outgoing packets even though our
                             // try_hole_punch didn't detect the connection.
                             if let Ok(Ok(peer_conn)) =
-                                timeout(Duration::from_secs(3), self.connect(target)).await
+                                timeout(POST_HOLEPUNCH_DIRECT_RETRY_TIMEOUT, self.connect(target))
+                                    .await
                             {
                                 info!("✓ Post-hole-punch direct connect succeeded to {}", target);
                                 return Ok((
@@ -1578,7 +1584,8 @@ impl P2pEndpoint {
                         Err(_) => {
                             // Same: try a quick direct connect after timeout
                             if let Ok(Ok(peer_conn)) =
-                                timeout(Duration::from_secs(3), self.connect(target)).await
+                                timeout(POST_HOLEPUNCH_DIRECT_RETRY_TIMEOUT, self.connect(target))
+                                    .await
                             {
                                 info!("✓ Post-hole-punch direct connect succeeded to {}", target);
                                 return Ok((
@@ -1816,7 +1823,8 @@ impl P2pEndpoint {
         // Poll for the connection to appear. The target node will receive
         // the relayed PUNCH_ME_NOW and initiate a QUIC connection to us,
         // which gets accepted by saorsa-core's transport handler.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        // No internal deadline — the outer strategy.holepunch_timeout()
+        // cancels this future when it expires.
         let mut poll_count = 0u32;
 
         loop {
@@ -1873,20 +1881,13 @@ impl P2pEndpoint {
                 }
             }
 
-            // Wait briefly then re-check, or timeout
+            // Wait briefly then re-check; the outer timeout cancels us on expiry
             tokio::select! {
                 _ = self.inner.connection_notify().notified() => {
                     debug!("try_hole_punch: connection_notify fired for {}", target);
                 }
                 _ = self.shutdown.cancelled() => {
                     return Err(EndpointError::ShuttingDown);
-                }
-                _ = tokio::time::sleep_until(deadline) => {
-                    info!(
-                        "try_hole_punch: TIMEOUT after 15s for {} (polled {} times)",
-                        target, poll_count
-                    );
-                    return Err(EndpointError::Timeout);
                 }
                 // Wake periodically to drive session and re-check connections
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {}
