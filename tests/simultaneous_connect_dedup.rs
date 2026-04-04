@@ -10,7 +10,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use saorsa_transport::{ConnectionHealth, Node};
+use saorsa_transport::Node;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -375,10 +375,9 @@ async fn test_connect_after_failure_succeeds() {
 // Phase 1.3: Phantom Connection Detection & Recovery Tests
 // ============================================================================
 
-/// Test that two connected nodes have healthy connection status after
-/// the health check PING/PONG cycle runs.
+/// Test that two connected nodes report as connected via is_connected.
 #[tokio::test]
-async fn test_connection_health_status() {
+async fn test_connection_status() {
     let node_a = create_localhost_node().await;
     let node_b = create_localhost_node().await;
 
@@ -400,36 +399,18 @@ async fn test_connection_health_status() {
 
     let conn_addr = remote_socket_addr(&conn);
 
-    // Immediately after connect, health should be Healthy (not yet probed)
-    let health = node_a.connection_health(&conn_addr).await;
-    assert_eq!(
-        health,
-        Some(ConnectionHealth::Healthy),
-        "Newly connected peer should be Healthy"
-    );
-
-    // Wait for at least one health check cycle (30s reaper interval + margin)
-    // The reaper will send a PING, and the reader task on the remote end
-    // responds with a PONG.
-    tokio::time::sleep(Duration::from_secs(35)).await;
-
-    // After one cycle, the peer should still be Healthy (PONG received)
-    let health_after = node_a.connection_health(&conn_addr).await;
+    // Immediately after connect, node_a should see the peer as connected
     assert!(
-        matches!(
-            health_after,
-            Some(ConnectionHealth::Healthy) | Some(ConnectionHealth::Checking)
-        ),
-        "After one health cycle, peer should be Healthy or Checking, got {:?}",
-        health_after
+        node_a.is_connected(&conn_addr).await,
+        "Newly connected peer should be reported as connected"
     );
 
-    // node_a should still have exactly 1 peer (not evicted)
+    // node_a should have exactly 1 peer
     let peers = node_a.connected_peers().await;
     assert_eq!(
         peers.len(),
         1,
-        "Healthy connection should not be evicted, but got {} peers",
+        "Should have exactly 1 connected peer, but got {} peers",
         peers.len()
     );
 
@@ -437,21 +418,23 @@ async fn test_connection_health_status() {
     node_b.shutdown().await;
 }
 
-/// Test that connection_health returns None for unknown peers.
+/// Test that is_connected returns false for unknown peers.
 #[tokio::test]
-async fn test_connection_health_unknown_peer() {
+async fn test_connection_status_unknown_peer() {
     let node = create_localhost_node().await;
 
     let unknown_addr: SocketAddr = "127.0.0.1:59999".parse().unwrap();
-    let health = node.connection_health(&unknown_addr).await;
-    assert_eq!(health, None, "Unknown peer should return None");
+    assert!(
+        !node.is_connected(&unknown_addr).await,
+        "Unknown peer should not be reported as connected"
+    );
 
     node.shutdown().await;
 }
 
-/// Test that after disconnect, connection_health returns None.
+/// Test that after disconnect, is_connected returns false.
 #[tokio::test]
-async fn test_connection_health_after_disconnect() {
+async fn test_connection_status_after_disconnect() {
     let node_a = create_localhost_node().await;
     let node_b = create_localhost_node().await;
 
@@ -472,9 +455,9 @@ async fn test_connection_health_after_disconnect() {
     let conn_addr = remote_socket_addr(&conn);
 
     // Verify connected
-    assert_eq!(
-        node_a.connection_health(&conn_addr).await,
-        Some(ConnectionHealth::Healthy),
+    assert!(
+        node_a.is_connected(&conn_addr).await,
+        "Peer should be connected"
     );
 
     // Disconnect
@@ -483,12 +466,10 @@ async fn test_connection_health_after_disconnect() {
         .await
         .expect("disconnect should succeed");
 
-    // After disconnect, health should be None
-    let health = node_a.connection_health(&conn_addr).await;
-    assert_eq!(
-        health, None,
-        "Disconnected peer should return None, got {:?}",
-        health
+    // After disconnect, should no longer be connected
+    assert!(
+        !node_a.is_connected(&conn_addr).await,
+        "Disconnected peer should not be reported as connected"
     );
 
     node_a.shutdown().await;
