@@ -2320,7 +2320,16 @@ impl P2pEndpoint {
                 // Without this, finish() only buffers a FIN locally — if the
                 // connection is dead the caller would see Ok(()) despite the
                 // data never arriving.
-                let ack_timeout = self.config.timeouts.send_ack_timeout;
+                //
+                // The base timeout handles small messages and dead-connection
+                // detection. For large payloads we add time proportional to
+                // size: QUIC slow-start over a high-RTT path needs multiple
+                // round trips to ramp the congestion window, so a 4 MB chunk
+                // over a 250 ms RTT link can take 2-3 s just to transmit.
+                let base_timeout = self.config.timeouts.send_ack_timeout;
+                let size_budget =
+                    std::time::Duration::from_millis((data.len() as u64).saturating_div(1024));
+                let ack_timeout = base_timeout + size_budget;
                 match timeout(ack_timeout, send_stream.stopped()).await {
                     Ok(Ok(None)) => {}
                     Ok(Ok(Some(stop_code))) => {
