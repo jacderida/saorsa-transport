@@ -656,6 +656,27 @@ impl Connection {
         round: u32,
     ) -> Result<(), crate::ConnectionError> {
         let conn = &mut *self.0.state.lock("send_nat_punch_via_relay");
+
+        // Check connection health before queuing — a dead connection will
+        // silently swallow the frame.
+        if let Some(ref err) = conn.error {
+            tracing::warn!(
+                "send_nat_punch_via_relay: connection has error BEFORE queuing: {}",
+                err
+            );
+            return Err(err.clone());
+        }
+        if conn.inner.is_drained() {
+            tracing::warn!("send_nat_punch_via_relay: connection is drained");
+            return Err(crate::ConnectionError::LocallyClosed);
+        }
+
+        tracing::info!(
+            "send_nat_punch_via_relay: connection alive, queuing frame (target_peer={}, remote={})",
+            hex::encode(&target_peer_id[..8]),
+            conn.inner.remote_address(),
+        );
+
         conn.inner
             .send_nat_punch_via_relay(target_peer_id, our_address, round)?;
         // Wake the connection driver so it transmits the queued frame
