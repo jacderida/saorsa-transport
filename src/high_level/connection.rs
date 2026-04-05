@@ -793,6 +793,13 @@ impl Connection {
         self.0.stable_id()
     }
 
+    /// Get the low-level connection handle index. This can be compared against
+    /// the endpoint's `connection_stable_id_for_addr()` to detect when the
+    /// endpoint has replaced the connection with a newer one.
+    pub fn handle_index(&self) -> usize {
+        self.0.state.lock("handle_index").handle.0
+    }
+
     /// Returns true if this connection negotiated post-quantum settings.
     ///
     /// This reflects either explicit PQC algorithms advertised via transport

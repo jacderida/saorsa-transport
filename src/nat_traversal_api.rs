@@ -6102,20 +6102,43 @@ impl NatTraversalEndpoint {
         if let Some(entry) = coord_conn {
             let conn = entry.value();
 
-            // Verify the low-level endpoint still tracks this connection.
-            // If it doesn't, the connection is a zombie — remove it and
-            // fall through to establish a new one.
-            let is_live = if let Some(ep) = &self.inner_endpoint {
-                ep.has_active_connection(&normalized_coordinator)
+            // Verify this is the SAME connection the endpoint is driving.
+            // The DashMap may hold a stale connection while the endpoint has
+            // a newer one to the same address. Frames encoded on the stale
+            // connection are sent with old connection IDs that the coordinator
+            // no longer recognises.
+            let dashmap_handle = conn.handle_index();
+            let endpoint_handle = if let Some(ep) = &self.inner_endpoint {
+                ep.connection_stable_id_for_addr(&normalized_coordinator)
             } else {
-                true // no endpoint, assume live
+                None
             };
 
-            if !is_live {
-                warn!(
-                    "Coordinator connection {} is zombie (not in low-level endpoint), removing from DashMap",
-                    normalized_coordinator
-                );
+            let is_stale = match endpoint_handle {
+                Some(ep_handle) if ep_handle != dashmap_handle => {
+                    warn!(
+                        "Coordinator connection {} is STALE: DashMap handle={} but endpoint handle={}. Removing stale entry.",
+                        normalized_coordinator, dashmap_handle, ep_handle
+                    );
+                    true
+                }
+                None => {
+                    warn!(
+                        "Coordinator connection {} is ORPHAN: DashMap handle={} but endpoint has no connection. Removing.",
+                        normalized_coordinator, dashmap_handle
+                    );
+                    true
+                }
+                Some(ep_handle) => {
+                    info!(
+                        "Coordinator connection {} verified: handle={} matches endpoint",
+                        normalized_coordinator, ep_handle
+                    );
+                    false
+                }
+            };
+
+            if is_stale {
                 drop(entry);
                 self.connections.remove(&normalized_coordinator);
                 // Fall through to "establish new connection" below

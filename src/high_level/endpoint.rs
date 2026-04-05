@@ -428,19 +428,26 @@ impl Endpoint {
     /// to the given address. Returns `false` for zombie connections that have
     /// been removed from the endpoint but still exist in higher-level caches.
     pub fn has_active_connection(&self, addr: &SocketAddr) -> bool {
+        self.connection_stable_id_for_addr(addr).is_some()
+    }
+
+    /// Get the stable ID of the low-level endpoint's connection to the given
+    /// address. Returns `None` if no connection exists. The stable ID uniquely
+    /// identifies a specific QUIC connection and can be compared against a
+    /// cached Connection's stable_id() to detect stale references.
+    pub fn connection_stable_id_for_addr(&self, addr: &SocketAddr) -> Option<usize> {
         let Ok(state) = self.inner.state.lock() else {
-            return true; // mutex poisoned, assume live
+            return None;
         };
         let normalized = crate::shared::normalize_socket_addr(*addr);
-        if state.inner.connection_handle_for_addr(&normalized).is_some() {
-            return true;
-        }
-        if let Some(alt) = crate::shared::dual_stack_alternate(&normalized) {
-            if state.inner.connection_handle_for_addr(&alt).is_some() {
-                return true;
-            }
-        }
-        false
+        let handle = state
+            .inner
+            .connection_handle_for_addr(&normalized)
+            .or_else(|| {
+                crate::shared::dual_stack_alternate(&normalized)
+                    .and_then(|alt| state.inner.connection_handle_for_addr(&alt))
+            });
+        handle.map(|h| state.inner.connection_stable_id(h))
     }
 
     /// Get the number of connections that are currently open

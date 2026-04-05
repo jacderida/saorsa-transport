@@ -278,6 +278,12 @@ impl Endpoint {
         None
     }
 
+    /// Get a stable identifier for a connection by handle. This is the slab
+    /// index, which is stable for the lifetime of the connection.
+    pub fn connection_stable_id(&self, handle: ConnectionHandle) -> usize {
+        handle.0
+    }
+
     /// Get relay statistics for monitoring
     pub fn relay_stats(&self) -> &RelayStats {
         &self.relay_stats
