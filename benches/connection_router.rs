@@ -184,7 +184,7 @@ fn bench_constrained_connect(c: &mut Criterion) {
 
     // Benchmark constrained connection creation
     group.bench_function("ble_connect", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let result = router.connect(black_box(&ble_addr));
             black_box(result)
@@ -219,7 +219,7 @@ fn bench_stats_tracking(c: &mut Criterion) {
         b.iter(|| {
             let _ = router.select_engine_for_addr(black_box(&udp_addr));
             let _ = router.select_engine_for_addr(black_box(&ble_addr));
-            let stats = router.stats().clone();
+            let stats = router.stats().snapshot();
             black_box(stats)
         });
     });
