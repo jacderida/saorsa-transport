@@ -161,7 +161,7 @@ impl TransportCandidate {
     }
 }
 
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 // Use parking_lot for faster, non-poisoning locks that work better with async code
@@ -298,10 +298,6 @@ pub struct NatTraversalEndpoint {
     /// MASQUE relay server - every node provides relay services (symmetric P2P)
     /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets
     relay_server: Option<Arc<MasqueRelayServer>>,
-    /// Successful candidate pairs discovered via hole punching
-    /// Maps remote SocketAddr to the validated address that successfully responded
-    /// Uses DashMap for fine-grained concurrent access without blocking workers
-    successful_candidates: Arc<dashmap::DashMap<SocketAddr, SocketAddr>>,
     /// Transport candidates received from peers (multi-transport support)
     /// Maps remote SocketAddr to all known transport candidates for that peer
     /// Enables routing decisions based on transport type and capabilities
@@ -1393,7 +1389,6 @@ impl NatTraversalEndpoint {
             relay_manager,
             relay_sessions: Arc::new(dashmap::DashMap::new()),
             relay_server,
-            successful_candidates: Arc::new(dashmap::DashMap::new()),
             transport_candidates: Arc::new(dashmap::DashMap::new()),
             transport_registry,
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
@@ -1803,7 +1798,6 @@ impl NatTraversalEndpoint {
             relay_manager,
             relay_sessions: Arc::new(dashmap::DashMap::new()),
             relay_server,
-            successful_candidates: Arc::new(dashmap::DashMap::new()),
             transport_candidates: Arc::new(dashmap::DashMap::new()),
             transport_registry,
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
@@ -3242,163 +3236,20 @@ impl NatTraversalEndpoint {
         Ok(connection)
     }
 
-    /// Attempt connection with automatic fallback strategies
-    ///
-    /// Connection attempts follow this priority order:
-    /// 1. **Direct connection** - simple QUIC connect to the target address
-    /// 2. **Hole punching** - coordinated NAT traversal with candidate discovery
-    /// 3. **Relay** - last resort via MASQUE through connected peers (symmetric P2P)
-    ///
-    /// # Symmetric P2P Relay Strategy
-    /// When relay is needed:
-    /// - First try connected peers as relays (any peer can relay)
-    /// - Fall back to configured relay_nodes (for bootstrap scenarios only)
-    pub async fn connect_with_fallback(
-        &self,
-        server_name: &str,
-        remote_addr: SocketAddr,
-    ) -> Result<InnerConnection, NatTraversalError> {
-        // Step 1: Try direct connection first
-        info!("Attempting direct connection to {}", remote_addr);
-        match self.connect_to(server_name, remote_addr).await {
-            Ok(conn) => {
-                info!("Direct connection to {} succeeded", remote_addr);
-                return Ok(conn);
-            }
-            Err(e) => {
-                info!(
-                    "Direct connection to {} failed ({:?}), trying hole punching",
-                    remote_addr, e
-                );
-            }
-        }
-
-        // Step 2: Try hole punching (coordinated NAT traversal)
-        info!("Attempting hole punching for {}", remote_addr);
-        match self.attempt_hole_punching(remote_addr) {
-            Ok(()) => {
-                // Hole punching succeeded - NAT mappings are established
-                // Now try to connect again using the discovered path
-                info!(
-                    "Hole punching succeeded for {}, retrying connection",
-                    remote_addr
-                );
-
-                // Get the successful candidate pair address if available
-                let connect_addr = self
-                    .get_successful_candidate_address(remote_addr)
-                    .unwrap_or(remote_addr);
-
-                match self.connect_to(server_name, connect_addr).await {
-                    Ok(conn) => {
-                        info!("Connection via hole punching to {} succeeded", remote_addr);
-                        return Ok(conn);
-                    }
-                    Err(e) => {
-                        info!(
-                            "Connection after hole punching failed ({:?}), trying relay",
-                            e
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                info!(
-                    "Hole punching for {} failed ({:?}), trying relay",
-                    remote_addr, e
-                );
-            }
-        }
-
-        // Step 3: Relay is the last resort
-        info!(
-            "Attempting relay connection to {} (last resort)",
-            remote_addr
-        );
-
-        // Symmetric P2P: Collect connected peers to use as potential relays
-        // Any connected peer can provide relay services
-        // DashMap provides lock-free concurrent access
-        let connected_peers: Vec<SocketAddr> = self
-            .connections
-            .iter()
-            .filter(|entry| entry.value().close_reason().is_none()) // Only active connections
-            .map(|entry| entry.value().remote_address())
-            .filter(|addr| *addr != remote_addr) // Don't try to relay through the target
-            .collect();
-
-        info!(
-            "Found {} connected peers to try as relays",
-            connected_peers.len()
-        );
-
-        // Also add configured relay nodes as fallback (for bootstrapping)
-        let mut relay_candidates: Vec<SocketAddr> = connected_peers;
-        if let Some(ref manager) = self.relay_manager {
-            let configured_relays = manager.available_relays().await;
-            for relay in configured_relays {
-                if !relay_candidates.contains(&relay) {
-                    relay_candidates.push(relay);
-                }
-            }
-        }
-
-        if relay_candidates.is_empty() {
-            return Err(NatTraversalError::ConnectionFailed(
-                "No connected peers or relay nodes available".to_string(),
-            ));
-        }
-
-        // Try each relay in order
-        let mut last_error = None;
-        for relay_addr in relay_candidates {
-            info!("Attempting connection via relay: {}", relay_addr);
-
-            // Establish relay session (CONNECT-UDP Bind)
-            match self.establish_relay_session(relay_addr).await {
-                Ok(public_addr) => {
-                    info!(
-                        "Relay session established via {} with public address {:?}",
-                        relay_addr, public_addr
-                    );
-
-                    // Now attempt the connection through the relay
-                    // The relay session is stored and the connection can use datagram forwarding
-                    // For now, we attempt a direct connection to the peer using our relay public address
-                    // The peer should be able to reach us through the relay
-
-                    // Try connecting to the peer - the relay will forward our traffic
-                    match self.connect_to(server_name, remote_addr).await {
-                        Ok(conn) => {
-                            info!(
-                                "Connected to {} via relay {} (public addr: {:?})",
-                                remote_addr, relay_addr, public_addr
-                            );
-                            return Ok(conn);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Connection via relay {} failed: {:?}, trying next relay",
-                                relay_addr, e
-                            );
-                            last_error = Some(e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to establish relay session with {}: {:?}",
-                        relay_addr, e
-                    );
-                    last_error = Some(e);
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| {
-            NatTraversalError::ConnectionFailed("All relay attempts failed".to_string())
-        }))
-    }
+    // ─────────────────────────────────────────────────────────────────────
+    // Note: the historical `NatTraversalEndpoint::connect_with_fallback`
+    // method that lived here has been removed. It was an unused duplicate
+    // of `P2pEndpoint::connect_with_fallback` (in `p2p_endpoint.rs`), which
+    // is the actual production entry point reached through `LinkTransport::
+    // dial_addr` and the `saorsa-transport` example binary. The removed
+    // copy delegated to `attempt_hole_punching` (also removed below), an
+    // implementation that crafted a hand-rolled "PATH_CHALLENGE" UDP
+    // datagram on a freshly bound socket — both unworkable in practice
+    // (the bind raced Quinn for the port; the bytes were not a valid
+    // QUIC packet so the receiver dropped them) and misleading during
+    // debugging because the surrounding `#[allow(dead_code)]` markers
+    // disguised that nothing in the path could ever succeed.
+    // ─────────────────────────────────────────────────────────────────────
 
     /// Get the relay manager for advanced relay operations
     ///
@@ -4820,291 +4671,32 @@ impl NatTraversalEndpoint {
         Ok(frame)
     }
 
-    #[allow(dead_code)]
-    fn attempt_hole_punching(&self, target_addr: SocketAddr) -> Result<(), NatTraversalError> {
-        debug!("Attempting hole punching for {}", target_addr);
-
-        // Get candidate pairs for this target
-        let candidate_pairs = self.get_candidate_pairs_for_addr(target_addr)?;
-
-        if candidate_pairs.is_empty() {
-            return Err(NatTraversalError::NoCandidatesFound);
-        }
-
-        info!(
-            "Generated {} candidate pairs for hole punching with {}",
-            candidate_pairs.len(),
-            target_addr
-        );
-
-        // Attempt hole punching with each candidate pair
-
-        self.attempt_quic_hole_punching(target_addr, candidate_pairs)
-    }
-
-    /// Generate candidate pairs for hole punching based on ICE-like algorithm
-    #[allow(dead_code)]
-    fn get_candidate_pairs_for_addr(
-        &self,
-        target_addr: SocketAddr,
-    ) -> Result<Vec<CandidatePair>, NatTraversalError> {
-        let discovery_session_id = DiscoverySessionId::Remote(target_addr);
-
-        // Get discovered candidates from the discovery manager
-        // parking_lot::Mutex doesn't poison
-        let discovery_candidates = {
-            let discovery = self.discovery_manager.lock();
-            discovery.get_candidates(discovery_session_id)
-        };
-
-        if discovery_candidates.is_empty() {
-            return Err(NatTraversalError::NoCandidatesFound);
-        }
-
-        // Create candidate pairs with priorities (ICE-like pairing)
-        let mut candidate_pairs = Vec::new();
-        let local_candidates = discovery_candidates
-            .iter()
-            .filter(|c| matches!(c.source, CandidateSource::Local))
-            .collect::<Vec<_>>();
-        let remote_candidates = discovery_candidates
-            .iter()
-            .filter(|c| !matches!(c.source, CandidateSource::Local))
-            .collect::<Vec<_>>();
-
-        // Pair each local candidate with each remote candidate
-        // Skip cross-family pairs (IPv4 ↔ IPv6) as they cannot connect at the socket level
-        for local in &local_candidates {
-            for remote in &remote_candidates {
-                // Cross-family pairs will always fail - skip them
-                let local_is_v4 = local.address.ip().is_ipv4();
-                let remote_is_v4 = remote.address.ip().is_ipv4();
-                if local_is_v4 != remote_is_v4 {
-                    trace!(
-                        "Skipping cross-family candidate pair: {} ↔ {}",
-                        local.address, remote.address
-                    );
-                    continue;
-                }
-
-                let pair_priority = self.calculate_candidate_pair_priority(local, remote);
-                candidate_pairs.push(CandidatePair {
-                    local_candidate: (*local).clone(),
-                    remote_candidate: (*remote).clone(),
-                    priority: pair_priority,
-                    state: CandidatePairState::Waiting,
-                });
-            }
-        }
-
-        // Sort by priority (highest first)
-        candidate_pairs.sort_by(|a, b| b.priority.cmp(&a.priority));
-
-        // Limit to reasonable number for initial attempts
-        candidate_pairs.truncate(8);
-
-        Ok(candidate_pairs)
-    }
-
-    /// Calculate candidate pair priority using ICE algorithm
-    #[allow(dead_code)]
-    fn calculate_candidate_pair_priority(
-        &self,
-        local: &CandidateAddress,
-        remote: &CandidateAddress,
-    ) -> u64 {
-        // ICE candidate pair priority formula: min(G,D) * 2^32 + max(G,D) * 2 + (G>D ? 1 : 0)
-        // Where G is controlling agent priority, D is controlled agent priority
-
-        let local_type_preference = match local.source {
-            CandidateSource::Local => 126,
-            CandidateSource::Observed { .. } => 100,
-            CandidateSource::Predicted => 75,
-            CandidateSource::Peer => 50,
-        };
-
-        let remote_type_preference = match remote.source {
-            CandidateSource::Local => 126,
-            CandidateSource::Observed { .. } => 100,
-            CandidateSource::Predicted => 75,
-            CandidateSource::Peer => 50,
-        };
-
-        // Simplified priority calculation
-        let local_priority = (local_type_preference as u64) << 8 | local.priority as u64;
-        let remote_priority = (remote_type_preference as u64) << 8 | remote.priority as u64;
-
-        let min_priority = local_priority.min(remote_priority);
-        let max_priority = local_priority.max(remote_priority);
-
-        (min_priority << 32)
-            | (max_priority << 1)
-            | if local_priority > remote_priority {
-                1
-            } else {
-                0
-            }
-    }
-
-    /// Real QUIC-based hole punching implementation
-    #[allow(dead_code)]
-    fn attempt_quic_hole_punching(
-        &self,
-        target_addr: SocketAddr,
-        candidate_pairs: Vec<CandidatePair>,
-    ) -> Result<(), NatTraversalError> {
-        let _endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
-            NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
-        })?;
-
-        for pair in candidate_pairs {
-            debug!(
-                "Attempting hole punch with candidate pair: {} -> {}",
-                pair.local_candidate.address, pair.remote_candidate.address
-            );
-
-            // Create PATH_CHALLENGE frame data (8 random bytes)
-            let mut challenge_data = [0u8; 8];
-            for byte in &mut challenge_data {
-                *byte = rand::random();
-            }
-
-            // Create a raw UDP socket bound to the local candidate address
-            let local_socket =
-                std::net::UdpSocket::bind(pair.local_candidate.address).map_err(|e| {
-                    NatTraversalError::NetworkError(format!(
-                        "Failed to bind to local candidate: {e}"
-                    ))
-                })?;
-
-            // Craft a minimal QUIC packet with PATH_CHALLENGE frame
-            let path_challenge_packet = self.create_path_challenge_packet(challenge_data)?;
-
-            // Send the packet to the remote candidate address
-            match local_socket.send_to(&path_challenge_packet, pair.remote_candidate.address) {
-                Ok(bytes_sent) => {
-                    debug!(
-                        "Sent {} bytes for hole punch from {} to {}",
-                        bytes_sent, pair.local_candidate.address, pair.remote_candidate.address
-                    );
-
-                    // Set a short timeout for response
-                    local_socket
-                        .set_read_timeout(Some(Duration::from_millis(100)))
-                        .map_err(|e| {
-                            NatTraversalError::NetworkError(format!("Failed to set timeout: {e}"))
-                        })?;
-
-                    // Try to receive a response
-                    let mut response_buffer = [0u8; 1024];
-                    match local_socket.recv_from(&mut response_buffer) {
-                        Ok((_bytes_received, response_addr)) => {
-                            if response_addr == pair.remote_candidate.address {
-                                info!(
-                                    "Hole punch succeeded for {}: {} <-> {}",
-                                    target_addr,
-                                    pair.local_candidate.address,
-                                    pair.remote_candidate.address
-                                );
-
-                                // Store successful candidate pair for connection establishment
-                                self.store_successful_candidate_pair(target_addr, pair)?;
-                                return Ok(());
-                            } else {
-                                debug!(
-                                    "Received response from unexpected address: {}",
-                                    response_addr
-                                );
-                            }
-                        }
-                        Err(e)
-                            if e.kind() == std::io::ErrorKind::WouldBlock
-                                || e.kind() == std::io::ErrorKind::TimedOut =>
-                        {
-                            debug!("No response received for hole punch attempt");
-                        }
-                        Err(e) => {
-                            debug!("Error receiving hole punch response: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    debug!("Failed to send hole punch packet: {}", e);
-                }
-            }
-        }
-
-        // If we get here, all hole punch attempts failed
-        Err(NatTraversalError::HolePunchingFailed)
-    }
-
-    /// Create a minimal QUIC packet with PATH_CHALLENGE frame for hole punching
-    fn create_path_challenge_packet(
-        &self,
-        challenge_data: [u8; 8],
-    ) -> Result<Vec<u8>, NatTraversalError> {
-        // Create a minimal QUIC packet structure
-        // This is a simplified implementation - in production, you'd use proper QUIC packet construction
-        let mut packet = Vec::new();
-
-        // QUIC packet header (simplified)
-        packet.push(0x40); // Short header, fixed bit set
-        packet.extend_from_slice(&[0, 0, 0, 1]); // Connection ID (simplified)
-
-        // PATH_CHALLENGE frame
-        packet.push(0x1a); // PATH_CHALLENGE frame type
-        packet.extend_from_slice(&challenge_data); // 8-byte challenge data
-
-        Ok(packet)
-    }
-
-    /// Store successful candidate pair for later connection establishment
-    fn store_successful_candidate_pair(
-        &self,
-        target_addr: SocketAddr,
-        pair: CandidatePair,
-    ) -> Result<(), NatTraversalError> {
-        debug!(
-            "Storing successful candidate pair for {}: {} <-> {}",
-            target_addr, pair.local_candidate.address, pair.remote_candidate.address
-        );
-
-        // Store the successful remote address for use in connection establishment
-        // DashMap provides lock-free .insert()
-        self.successful_candidates
-            .insert(target_addr, pair.remote_candidate.address);
-        info!(
-            "Stored successful candidate for {}: {}",
-            target_addr, pair.remote_candidate.address
-        );
-
-        // Emit events to notify the application
-        if let Some(ref callback) = self.event_callback {
-            callback(NatTraversalEvent::PathValidated {
-                remote_address: target_addr,
-                rtt: Duration::from_millis(50), // Estimated RTT
-            });
-
-            callback(NatTraversalEvent::TraversalSucceeded {
-                remote_address: target_addr,
-                final_address: pair.remote_candidate.address,
-                total_time: Duration::from_secs(1), // Estimated total time
-            });
-        }
-
-        Ok(())
-    }
-
-    /// Get the successful candidate address for a target (discovered via hole punching)
-    ///
-    /// Returns the remote address that successfully responded during hole punching.
-    /// This address should be used for establishing the actual QUIC connection.
-    fn get_successful_candidate_address(&self, target_addr: SocketAddr) -> Option<SocketAddr> {
-        // DashMap provides lock-free .get() that returns Option<Ref<K, V>>
-        self.successful_candidates
-            .get(&target_addr)
-            .map(|r| *r.value())
-    }
+    // ─────────────────────────────────────────────────────────────────────
+    // Removed: the dead `attempt_hole_punching` /
+    // `attempt_quic_hole_punching` / `get_candidate_pairs_for_addr` /
+    // `calculate_candidate_pair_priority` / `create_path_challenge_packet`
+    // / `store_successful_candidate_pair` / `get_successful_candidate_address`
+    // chain. These were only ever called from the duplicate
+    // `NatTraversalEndpoint::connect_with_fallback` (also removed above)
+    // and could not have worked in production:
+    //
+    //   1. `attempt_quic_hole_punching` bound a fresh `std::net::UdpSocket`
+    //      to the local candidate address, which always fails on a real
+    //      node because Quinn already owns the port — UDP binds are
+    //      exclusive.
+    //   2. The "QUIC packet" it sent was a hand-rolled byte sequence
+    //      (`0x40 [0,0,0,1] 0x1a <8 random>`) that is not a valid
+    //      encrypted QUIC packet, so any receiving Quinn endpoint
+    //      silently dropped it.
+    //   3. The success branch then waited 100 ms on a blocking
+    //      `recv_from` for a "response" that no compliant peer would
+    //      ever send.
+    //
+    // Production hole-punch coordination lives in
+    // `crate::p2p_endpoint::P2pEndpoint::connect_with_fallback_inner`,
+    // which uses the proper coordinator-mediated PUNCH_ME_NOW flow
+    // implemented elsewhere in this file.
+    // ─────────────────────────────────────────────────────────────────────
 
     /// Attempt connection to a specific candidate address
     fn attempt_connection_to_candidate(
@@ -6058,10 +5650,13 @@ impl NatTraversalEndpoint {
         let target_wire_id = target_peer_id.unwrap_or_else(|| Self::wire_id_from_addr(target_addr));
         info!(
             "Sending PUNCH_ME_NOW coordination request for {} to coordinator {} (wire_id={}, from_peer_id={}, from_addr={})",
-            target_addr, coordinator,
+            target_addr,
+            coordinator,
             hex::encode(&target_wire_id[..8]),
-            target_peer_id.map(|p| hex::encode(&p[..8])).unwrap_or_else(|| "none".to_string()),
-            !target_peer_id.is_some(),
+            target_peer_id
+                .map(|p| hex::encode(&p[..8]))
+                .unwrap_or_else(|| "none".to_string()),
+            target_peer_id.is_none(),
         );
 
         // Get our external address - this is where the target peer should punch to
