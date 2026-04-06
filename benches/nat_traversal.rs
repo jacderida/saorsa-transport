@@ -565,6 +565,7 @@ fn bench_pair_generation(c: &mut Criterion) {
                             CandidateSource::Observed { .. } => 1,
                             CandidateSource::Peer => 2,
                             CandidateSource::Predicted => 3,
+                            CandidateSource::PortMapped => 4,
                         };
 
                         for remote in &remote_candidates {
@@ -585,6 +586,7 @@ fn bench_pair_generation(c: &mut Criterion) {
                                     CandidateSource::Observed { .. } => 1,
                                     CandidateSource::Peer => 2,
                                     CandidateSource::Predicted => 3,
+                                    CandidateSource::PortMapped => 4,
                                 };
 
                                 // Calculate priority

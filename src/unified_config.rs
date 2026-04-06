@@ -144,6 +144,12 @@ pub struct NatConfig {
     ///
     /// Default: `false`
     pub allow_loopback: bool,
+
+    /// Best-effort UPnP IGD port mapping configuration. When enabled
+    /// (default), the endpoint asks the local router to forward its UDP
+    /// port and surfaces the resulting public address as a high-priority
+    /// NAT traversal candidate. Failure is silent and non-fatal.
+    pub upnp: crate::upnp::UpnpConfig,
 }
 
 impl Default for NatConfig {
@@ -157,6 +163,7 @@ impl Default for NatConfig {
             max_concurrent_attempts: 3,
             prefer_rfc_nat_traversal: true,
             allow_loopback: false,
+            upnp: crate::upnp::UpnpConfig::default(),
         }
     }
 }
@@ -310,6 +317,7 @@ impl P2pConfig {
             transport_registry: Some(Arc::new(self.transport_registry.clone())),
             max_message_size: self.max_message_size,
             allow_loopback: self.nat.allow_loopback,
+            upnp: self.nat.upnp.clone(),
         }
     }
 

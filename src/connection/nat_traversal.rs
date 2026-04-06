@@ -95,6 +95,11 @@ pub enum CandidateSource {
     Peer,
     /// Generated prediction for symmetric NAT
     Predicted,
+    /// Public address obtained via a router-side port mapping
+    /// (e.g. UPnP IGD AddPortMapping). Treated like a server-reflexive
+    /// candidate but with higher confidence because the gateway has
+    /// explicitly committed to forwarding the port for the lease duration.
+    PortMapped,
 }
 /// Current state of a candidate address
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,6 +301,10 @@ fn classify_candidate_type(source: CandidateSource) -> CandidateType {
         CandidateSource::Observed { .. } => CandidateType::ServerReflexive,
         CandidateSource::Peer => CandidateType::PeerReflexive,
         CandidateSource::Predicted => CandidateType::ServerReflexive, // Symmetric NAT prediction
+        // Port-mapped candidates are reflexive — they describe our public
+        // address as the gateway sees it, just with a deterministic guarantee
+        // that the gateway will forward traffic for the lease duration.
+        CandidateSource::PortMapped => CandidateType::ServerReflexive,
     }
 }
 /// Determine pair type from individual candidate types

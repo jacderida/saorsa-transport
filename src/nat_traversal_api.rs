@@ -342,6 +342,14 @@ pub struct NatTraversalEndpoint {
     /// Tracks when each connection was first observed as closed.
     /// Used to enforce a grace period before removing dead connections.
     closed_at: dashmap::DashMap<SocketAddr, std::time::Instant>,
+    /// Best-effort UPnP IGD port mapping service.
+    ///
+    /// The endpoint is the sole owner of the service — the discovery
+    /// manager only holds a [`crate::upnp::UpnpStateRx`] read handle —
+    /// so [`Self::shutdown`] can `take()` the service and call
+    /// [`crate::upnp::UpnpMappingService::shutdown`] for graceful
+    /// teardown including the gateway-side `DeletePortMapping` request.
+    upnp_service: parking_lot::Mutex<Option<crate::upnp::UpnpMappingService>>,
 }
 
 /// Configuration for NAT traversal behavior
@@ -483,6 +491,18 @@ pub struct NatTraversalConfig {
     /// Default: `false`
     #[serde(default)]
     pub allow_loopback: bool,
+
+    /// Best-effort UPnP IGD port mapping configuration.
+    ///
+    /// When enabled, the endpoint asks the local Internet Gateway Device
+    /// (UPnP-capable router) to forward its UDP port. The mapping is
+    /// surfaced as a high-priority NAT traversal candidate when the
+    /// gateway cooperates, and silently degrades to a no-op when the
+    /// gateway is absent, has UPnP disabled, or refuses the request.
+    ///
+    /// Default: enabled with a one-hour lease.
+    #[serde(default)]
+    pub upnp: crate::upnp::UpnpConfig,
 }
 
 fn default_max_message_size() -> usize {
@@ -1068,6 +1088,7 @@ impl Default for NatTraversalConfig {
             transport_registry: None, // Use direct UDP binding by default
             max_message_size: crate::unified_config::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
             allow_loopback: false,
+            upnp: crate::upnp::UpnpConfig::default(),
         }
     }
 }
@@ -1265,11 +1286,25 @@ impl NatTraversalEndpoint {
         let (inner_endpoint, event_tx, event_rx, local_addr, relay_server_config) =
             Self::create_inner_endpoint(&config, token_store, registry_ref, None).await?;
 
-        // Update discovery manager with the actual bound address
+        // Spawn the best-effort UPnP service against the actual bound port
+        // before installing the read handle on the discovery manager. The
+        // service starts a background task that probes the local IGD
+        // gateway and never blocks endpoint construction — failure
+        // transitions to `Unavailable` and is invisible to the rest of
+        // the endpoint. The endpoint owns the service exclusively so
+        // shutdown can reclaim it for graceful unmap.
+        let upnp_service =
+            crate::upnp::UpnpMappingService::start(local_addr.port(), config.upnp.clone());
+        let upnp_state_rx = upnp_service.subscribe();
+
+        // Update discovery manager with the actual bound address and
+        // attach the UPnP read handle so port-mapped candidates flow
+        // through local-phase scans.
         {
             // parking_lot::Mutex doesn't poison - no need for map_err
             let mut discovery = discovery_manager.lock();
             discovery.set_bound_address(local_addr);
+            discovery.set_upnp_state_rx(upnp_state_rx);
             info!(
                 "Updated discovery manager with bound address: {}",
                 local_addr
@@ -1378,6 +1413,7 @@ impl NatTraversalEndpoint {
             handshake_tx: hs_tx,
             handshake_rx: TokioMutex::new(hs_rx),
             closed_at: dashmap::DashMap::new(),
+            upnp_service: parking_lot::Mutex::new(Some(upnp_service)),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -1674,11 +1710,25 @@ impl NatTraversalEndpoint {
         let (inner_endpoint, event_tx, event_rx, local_addr, relay_server_config) =
             Self::create_inner_endpoint(&config, token_store, registry_ref, quinn_socket).await?;
 
-        // Update discovery manager with the actual bound address
+        // Spawn the best-effort UPnP service against the actual bound port
+        // before installing the read handle on the discovery manager. The
+        // service starts a background task that probes the local IGD
+        // gateway and never blocks endpoint construction — failure
+        // transitions to `Unavailable` and is invisible to the rest of
+        // the endpoint. The endpoint owns the service exclusively so
+        // shutdown can reclaim it for graceful unmap.
+        let upnp_service =
+            crate::upnp::UpnpMappingService::start(local_addr.port(), config.upnp.clone());
+        let upnp_state_rx = upnp_service.subscribe();
+
+        // Update discovery manager with the actual bound address and
+        // attach the UPnP read handle so port-mapped candidates flow
+        // through local-phase scans.
         {
             // parking_lot::Mutex doesn't poison - no need for map_err
             let mut discovery = discovery_manager.lock();
             discovery.set_bound_address(local_addr);
+            discovery.set_upnp_state_rx(upnp_state_rx);
             info!(
                 "Updated discovery manager with bound address: {}",
                 local_addr
@@ -1787,6 +1837,7 @@ impl NatTraversalEndpoint {
             handshake_tx: hs_tx,
             handshake_rx: TokioMutex::new(hs_rx),
             closed_at: dashmap::DashMap::new(),
+            upnp_service: parking_lot::Mutex::new(Some(upnp_service)),
         };
 
         // Multi-transport listening: Spawn receive tasks for all online transports
@@ -4450,6 +4501,17 @@ impl NatTraversalEndpoint {
         self.incoming_notify.notify_waiters();
         self.shutdown_notify.notify_waiters();
 
+        // Best-effort UPnP teardown. The endpoint is the sole owner of
+        // the service (the discovery manager only holds a read-only
+        // `UpnpStateRx`), so we can move it out and call its async
+        // shutdown directly. Failures are swallowed inside the service —
+        // the lease is the ultimate safety net. The mutex guard is
+        // dropped before the await so the resulting future stays `Send`.
+        let upnp_service = self.upnp_service.lock().take();
+        if let Some(service) = upnp_service {
+            service.shutdown().await;
+        }
+
         // Close all active connections
         // DashMap: collect addresses then remove them one by one
         let addrs: Vec<SocketAddr> = self.connections.iter().map(|e| *e.key()).collect();
@@ -4654,6 +4716,13 @@ impl NatTraversalEndpoint {
     // which drives the coordinator-mediated PUNCH_ME_NOW flow whose
     // server-side helpers (`send_coordination_request_with_peer_id`, etc.)
     // are defined later in this file.
+    //
+    // The PortMapped `CandidateSource` variant introduced by the UPnP
+    // work still flows through the production pairing path unchanged:
+    // `classify_candidate_type` in `crate::connection::nat_traversal`
+    // maps `CandidateSource::PortMapped` to `CandidateType::ServerReflexive`,
+    // which is what the live ICE-style priority formula in that module
+    // consumes. No additional plumbing is required here.
 
     /// Attempt connection to a specific candidate address
     fn attempt_connection_to_candidate(

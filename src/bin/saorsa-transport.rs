@@ -170,6 +170,14 @@ struct Args {
     /// Chunk size for data generation/verification (bytes)
     #[arg(long, default_value = "65536")]
     chunk_size: usize,
+
+    /// Disable best-effort UPnP IGD port mapping. By default the endpoint
+    /// asks the local router to forward its UDP port — pass this flag to
+    /// skip the UPnP probe entirely (useful when the router is known to
+    /// be hostile or when running on infrastructure that does not need
+    /// it). NAT traversal still works without UPnP via hole punching.
+    #[arg(long)]
+    no_upnp: bool,
 }
 
 /// CLI subcommands
@@ -370,6 +378,15 @@ async fn main() -> anyhow::Result<()> {
         info!("Using PQC-optimized MTU settings");
     }
     // v0.13.0: No mode-based NAT config - all nodes are symmetric
+
+    if args.no_upnp {
+        let nat = saorsa_transport::unified_config::NatConfig {
+            upnp: saorsa_transport::upnp::UpnpConfig::disabled(),
+            ..saorsa_transport::unified_config::NatConfig::default()
+        };
+        builder = builder.nat(nat);
+        info!("UPnP IGD port mapping disabled (--no-upnp)");
+    }
 
     let config = builder.build()?;
 

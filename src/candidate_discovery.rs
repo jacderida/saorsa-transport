@@ -28,6 +28,14 @@ use crate::{
     nat_traversal_api::{BootstrapNode, CandidateAddress},
 };
 
+/// Discovery-side priority assigned to UPnP port-mapped candidates.
+///
+/// Slotted strictly above the bound-address promotion (`60_000`) so that
+/// a router-confirmed public mapping always outranks any host-side
+/// candidate during pairing. The constant lives here so the priority
+/// scale stays in one file alongside the other discovery priorities.
+const PORT_MAPPED_DISCOVERY_PRIORITY: u32 = 70_000;
+
 /// Session identifier for the candidate discovery manager.
 ///
 /// Replaces the legacy `PeerId` key. Each discovery session is either for
@@ -66,6 +74,7 @@ fn convert_to_nat_source(discovery_source: DiscoverySourceType) -> CandidateSour
         DiscoverySourceType::Local => CandidateSource::Local,
         DiscoverySourceType::ServerReflexive => CandidateSource::Observed { by_node: None },
         DiscoverySourceType::Predicted => CandidateSource::Predicted,
+        DiscoverySourceType::PortMapped => CandidateSource::PortMapped,
     }
 }
 
@@ -92,6 +101,14 @@ pub enum DiscoverySourceType {
     /// These are algorithmically predicted addresses that might work based on
     /// observed NAT traversal patterns and port prediction algorithms.
     Predicted,
+
+    /// Public address obtained from a router-side port mapping (UPnP IGD).
+    ///
+    /// The gateway has explicitly committed to forwarding the mapped port to
+    /// our local socket for the lease duration, so these candidates are
+    /// strictly more reliable than [`Self::ServerReflexive`] addresses
+    /// observed via peer reports.
+    PortMapped,
 }
 
 /// IPv6 address type classification for priority calculation.
@@ -211,6 +228,17 @@ pub struct CandidateDiscoveryManager {
     active_sessions: HashMap<DiscoverySessionId, DiscoverySession>,
     /// Cached local interface results (shared across all sessions)
     cached_local_candidates: Option<(Instant, Vec<ValidatedCandidate>)>,
+    /// Optional read-only handle to the UPnP mapping service. When set,
+    /// the current mapping is surfaced as a high-priority candidate
+    /// during the local-scanning phase. The handle is purely additive —
+    /// when absent or in [`crate::upnp::UpnpState::Unavailable`],
+    /// discovery proceeds exactly as it would in a non-UPnP build.
+    ///
+    /// This is a `UpnpStateRx` rather than `Arc<UpnpMappingService>` so
+    /// the discovery manager only borrows the state, leaving the
+    /// `NatTraversalEndpoint` as the sole owner of the service for
+    /// graceful shutdown.
+    upnp: Option<crate::upnp::UpnpStateRx>,
 }
 
 /// Configuration for candidate discovery behavior
@@ -680,7 +708,22 @@ impl CandidateDiscoveryManager {
             interface_discovery,
             active_sessions: HashMap::new(),
             cached_local_candidates: None,
+            upnp: None,
         }
+    }
+
+    /// Attach a read-only handle to the UPnP mapping service whose current
+    /// state should be surfaced as a discovery candidate during local
+    /// scanning.
+    ///
+    /// Calling this is optional and best-effort — if the handle never
+    /// reaches [`crate::upnp::UpnpState::Mapped`], discovery behaves
+    /// identically to a manager without UPnP attached.
+    ///
+    /// Internal plumbing hook for the endpoint constructor; not exposed
+    /// on the public API surface.
+    pub(crate) fn set_upnp_state_rx(&mut self, state_rx: crate::upnp::UpnpStateRx) {
+        self.upnp = Some(state_rx);
     }
 
     /// Set the actual bound address of the local endpoint
@@ -688,6 +731,58 @@ impl CandidateDiscoveryManager {
         self.config.bound_address = Some(address);
         // Clear cached local candidates to force refresh with new bound address
         self.cached_local_candidates = None;
+    }
+
+    /// Snapshot the UPnP mapping (if any) as a [`DiscoveryCandidate`].
+    ///
+    /// Returns `None` when no service is attached, when the service is
+    /// still probing, or when it has reached the sticky `Unavailable`
+    /// state. The peek is a single atomic load on the underlying watch
+    /// channel and is cheap to call from the discovery hot path.
+    fn upnp_candidate(&self) -> Option<DiscoveryCandidate> {
+        let state_rx = self.upnp.as_ref()?;
+        match state_rx.current() {
+            crate::upnp::UpnpState::Mapped { external, .. } => Some(DiscoveryCandidate {
+                address: external,
+                priority: PORT_MAPPED_DISCOVERY_PRIORITY,
+                source: DiscoverySourceType::PortMapped,
+                state: CandidateState::New,
+            }),
+            crate::upnp::UpnpState::Probing | crate::upnp::UpnpState::Unavailable => None,
+        }
+    }
+
+    /// Idempotently push the current UPnP candidate (if any) into `session`,
+    /// emitting a `LocalCandidateDiscovered` event the first time it appears.
+    ///
+    /// Safe to call repeatedly from the same `poll()` invocation — duplicate
+    /// candidates with the same external address are detected and skipped,
+    /// matching the dedup discipline used for bound-address promotion.
+    fn try_publish_upnp_candidate(
+        upnp_candidate: Option<&DiscoveryCandidate>,
+        session: &mut DiscoverySession,
+        events: &mut Vec<DiscoveryEvent>,
+    ) -> bool {
+        let Some(candidate) = upnp_candidate else {
+            return false;
+        };
+        let already_present = session
+            .discovered_candidates
+            .iter()
+            .any(|existing| existing.address == candidate.address);
+        if already_present {
+            return false;
+        }
+        session.discovered_candidates.push(candidate.clone());
+        session.statistics.local_candidates_found += 1;
+        events.push(DiscoveryEvent::LocalCandidateDiscovered {
+            candidate: candidate.to_candidate_address(),
+        });
+        debug!(
+            "Added UPnP-mapped public address {} as PortMapped candidate",
+            candidate.address
+        );
+        true
     }
 
     /// Discover local network interface candidates synchronously
@@ -816,6 +911,12 @@ impl CandidateDiscoveryManager {
                     }
                 });
 
+                // Snapshot the current UPnP mapping (if any) once per poll —
+                // we will publish it to the session below alongside the
+                // bound address. Computed before any session borrows so the
+                // borrow checker is happy.
+                let upnp_candidate = self.upnp_candidate();
+
                 if let Some(bound_addr) = bound_candidate {
                     if let Some(session) = self.active_sessions.get_mut(&session_id) {
                         let already_present = session
@@ -841,6 +942,12 @@ impl CandidateDiscoveryManager {
                                 bound_addr, session_id
                             );
                         }
+
+                        Self::try_publish_upnp_candidate(
+                            upnp_candidate.as_ref(),
+                            session,
+                            &mut all_events,
+                        );
                     }
                 }
 
@@ -893,6 +1000,23 @@ impl CandidateDiscoveryManager {
                                     bound_addr, session_id
                                 );
                             }
+                        }
+                    }
+
+                    // Surface the UPnP mapping (if any) at scan completion.
+                    // Re-snapshot here because the mapping may have become
+                    // available between the early-promotion site above and
+                    // this point. The new snapshot lives in a local because
+                    // `try_publish_upnp_candidate` cannot borrow `self`
+                    // while we hold a mutable session reference.
+                    let upnp_candidate_now = self.upnp_candidate();
+                    if let Some(session) = self.active_sessions.get_mut(&session_id) {
+                        if Self::try_publish_upnp_candidate(
+                            upnp_candidate_now.as_ref(),
+                            session,
+                            &mut all_events,
+                        ) {
+                            candidates_added += 1;
                         }
                     }
 
@@ -1008,6 +1132,7 @@ impl CandidateDiscoveryManager {
                         }
                     });
 
+                    let upnp_candidate_now = self.upnp_candidate();
                     if let Some(session) = self.active_sessions.get_mut(&session_id) {
                         if let Some(bound_addr) = bound_candidate {
                             let already_present = session
@@ -1034,6 +1159,12 @@ impl CandidateDiscoveryManager {
                                 );
                             }
                         }
+
+                        Self::try_publish_upnp_candidate(
+                            upnp_candidate_now.as_ref(),
+                            session,
+                            &mut all_events,
+                        );
 
                         let final_candidates: Vec<ValidatedCandidate> = session
                             .discovered_candidates
@@ -1632,6 +1763,7 @@ pub mod test_utils {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::upnp::{UpnpState, UpnpStateRx};
 
     fn create_test_manager() -> CandidateDiscoveryManager {
         CandidateDiscoveryManager::new(DiscoveryConfig::test_default())
@@ -2452,5 +2584,102 @@ mod tests {
             CandidateAddress::validate_address(&"[::ffff:192.168.1.1]:8080".parse().unwrap()),
             Err(CandidateValidationError::IPv4MappedAddress)
         ));
+    }
+
+    #[test]
+    fn upnp_mapped_state_surfaces_port_mapped_candidate() {
+        let mut manager = create_test_manager();
+        let session_id = test_session_id();
+
+        // Pin the UPnP state to Mapped. The address must look public to
+        // pass downstream candidate validation; 1.1.1.1 is outside every
+        // reserved range.
+        let external: SocketAddr = "1.1.1.1:42000".parse().unwrap();
+        manager.set_upnp_state_rx(UpnpStateRx::for_test(UpnpState::Mapped {
+            external,
+            lease_expires_at: Instant::now() + Duration::from_secs(3600),
+        }));
+
+        manager
+            .start_discovery(session_id, vec![])
+            .expect("start_discovery should succeed in test");
+
+        // Drive the local-scanning poll loop until the session reaches
+        // Completed or we exhaust the test budget. The poll path adds
+        // both the bound address and the UPnP candidate, then transitions
+        // the session to Completed once the local interface scan finishes.
+        let mut events = Vec::new();
+        for _ in 0..50 {
+            events.extend(manager.poll(Instant::now()));
+            let phase = manager
+                .active_sessions
+                .get(&session_id)
+                .map(|s| s.current_phase.clone());
+            if matches!(phase, Some(DiscoveryPhase::Completed { .. })) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        let session = manager
+            .active_sessions
+            .get(&session_id)
+            .expect("session should still exist after polling");
+        let port_mapped: Vec<_> = session
+            .discovered_candidates
+            .iter()
+            .filter(|c| matches!(c.source, DiscoverySourceType::PortMapped))
+            .collect();
+        assert_eq!(
+            port_mapped.len(),
+            1,
+            "exactly one PortMapped candidate should be surfaced, got {port_mapped:?}",
+        );
+        assert_eq!(port_mapped[0].address, external);
+        assert_eq!(
+            port_mapped[0].priority, PORT_MAPPED_DISCOVERY_PRIORITY,
+            "PortMapped candidate should use the documented priority slot"
+        );
+
+        let saw_event = events.iter().any(|e| {
+            matches!(
+                e,
+                DiscoveryEvent::LocalCandidateDiscovered { candidate }
+                    if candidate.address == external
+            )
+        });
+        assert!(
+            saw_event,
+            "LocalCandidateDiscovered event should be emitted for the UPnP mapping"
+        );
+    }
+
+    #[test]
+    fn upnp_unavailable_state_does_not_add_candidate() {
+        let mut manager = create_test_manager();
+        let session_id = test_session_id();
+        manager.set_upnp_state_rx(UpnpStateRx::for_test(UpnpState::Unavailable));
+
+        manager
+            .start_discovery(session_id, vec![])
+            .expect("start_discovery should succeed in test");
+
+        for _ in 0..20 {
+            manager.poll(Instant::now());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        let session = manager
+            .active_sessions
+            .get(&session_id)
+            .expect("session should still exist");
+        let any_port_mapped = session
+            .discovered_candidates
+            .iter()
+            .any(|c| matches!(c.source, DiscoverySourceType::PortMapped));
+        assert!(
+            !any_port_mapped,
+            "Unavailable UPnP state must not contribute candidates"
+        );
     }
 }

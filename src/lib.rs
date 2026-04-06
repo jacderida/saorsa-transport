@@ -197,6 +197,12 @@ mod token;
 mod token_memory_cache;
 /// Zero-cost tracing and event logging system
 pub mod tracing;
+/// Best-effort UPnP IGD port mapping for NAT traversal assistance.
+///
+/// This module is feature-gated behind `upnp` (enabled by default). When
+/// disabled, [`UpnpMappingService`] is still present but is a no-op stub
+/// that always reports [`UpnpState::Unavailable`].
+pub mod upnp;
 
 // Public modules with new structure
 /// Constrained protocol engine for low-bandwidth transports (BLE, LoRa)
