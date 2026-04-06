@@ -480,7 +480,7 @@ impl SecurityValidationState {
             max_candidates_per_window: 20, // Max 20 candidates per 60 seconds
             rate_window: Duration::from_secs(60),
             coordination_requests: VecDeque::new(),
-            max_coordination_per_window: 5, // Max 5 coordination requests per 60 seconds
+            max_coordination_per_window: 50, // Max 50 coordination requests per 60 seconds
             address_validation_cache: HashMap::new(),
             validation_cache_timeout: Duration::from_secs(300), // 5 minute cache
             allow_loopback,
