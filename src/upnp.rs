@@ -286,16 +286,7 @@ impl Drop for UpnpMappingService {
 pub(crate) fn is_plausibly_public(addr: IpAddr) -> bool {
     match addr {
         IpAddr::V4(v4) => is_plausibly_public_v4(v4),
-        IpAddr::V6(v6) => {
-            // Reject loopback, unspecified, multicast, link-local. Anything
-            // else (global unicast, ULA) is acceptable — ULAs are not
-            // routable but a misconfigured gateway returning a ULA is rare
-            // enough that we let the candidate validator catch it later.
-            !(v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || is_ipv6_link_local(v6))
-        }
+        IpAddr::V6(v6) => is_plausibly_public_v6(v6),
     }
 }
 
@@ -324,9 +315,39 @@ fn is_plausibly_public_v4(addr: Ipv4Addr) -> bool {
 }
 
 #[cfg_attr(not(feature = "upnp"), allow(dead_code))]
-fn is_ipv6_link_local(addr: std::net::Ipv6Addr) -> bool {
+fn is_plausibly_public_v6(addr: std::net::Ipv6Addr) -> bool {
+    // Reject the standard garbage: loopback, unspecified, multicast,
+    // link-local unicast, documentation. Anything else (global unicast,
+    // ULA) is acceptable — ULAs are not routable but a misconfigured
+    // gateway returning a ULA is rare enough that we let the candidate
+    // validator catch it later.
+    //
+    // Mirrors the IPv4 classifier's rejection of RFC 5737 documentation
+    // space so a misbehaving router cannot poison candidate discovery by
+    // returning an RFC 3849 `2001:db8::/32` address as its "external" IP.
+    !(addr.is_loopback()
+        || addr.is_unspecified()
+        || addr.is_multicast()
+        || addr.is_unicast_link_local()
+        || is_ipv6_documentation(addr))
+}
+
+/// First 16-bit group of the RFC 3849 IPv6 documentation prefix
+/// `2001:db8::/32`.
+const IPV6_DOCUMENTATION_PREFIX_HI: u16 = 0x2001;
+/// Second 16-bit group of the RFC 3849 IPv6 documentation prefix
+/// `2001:db8::/32`.
+const IPV6_DOCUMENTATION_PREFIX_LO: u16 = 0x0db8;
+
+/// RFC 3849 documentation prefix — `2001:db8::/32`.
+///
+/// Stdlib does not expose an `is_documentation` helper for `Ipv6Addr`, so
+/// we match the prefix manually. Kept separate to mirror the v4
+/// `Ipv4Addr::is_documentation` call path at the classifier site.
+#[cfg_attr(not(feature = "upnp"), allow(dead_code))]
+fn is_ipv6_documentation(addr: std::net::Ipv6Addr) -> bool {
     let segments = addr.segments();
-    segments[0] & 0xFFC0 == 0xFE80
+    segments[0] == IPV6_DOCUMENTATION_PREFIX_HI && segments[1] == IPV6_DOCUMENTATION_PREFIX_LO
 }
 
 // ---------------------------------------------------------------------------
@@ -532,6 +553,12 @@ mod backend {
     /// gateway by relying on the OS-default outbound socket trick: connect
     /// a UDP socket to a public address and read its local IP. The remote
     /// address is never actually contacted.
+    ///
+    /// This uses `std::net::UdpSocket` rather than `tokio::net::UdpSocket`
+    /// because both `bind` and `connect` on UDP are pure kernel route
+    /// lookups — there is no wire I/O, so the executor thread is not
+    /// actually blocked. Called once per session at the top of the
+    /// background task, before the real SSDP discovery begins.
     fn local_socket_for_mapping(local_port: u16) -> SocketAddr {
         // 192.0.2.1 (TEST-NET-1) is RFC 5737 documentation space — packets
         // are not routed but the kernel will still pick the correct
@@ -699,10 +726,42 @@ mod tests {
 
     #[test]
     fn accepts_global_unicast_ipv6_and_rejects_link_local() {
-        let global = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+        // 2606:4700:4700::1111 is Cloudflare DNS, a real global unicast
+        // address. Explicitly chosen over 2001:db8::/32 so this test
+        // exercises the happy path rather than accidentally landing in
+        // documentation space.
+        let global = Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111);
         let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
         assert!(is_plausibly_public(IpAddr::V6(global)));
         assert!(!is_plausibly_public(IpAddr::V6(link_local)));
         assert!(!is_plausibly_public(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn rejects_ipv6_documentation_range() {
+        // RFC 3849 `2001:db8::/32` is the IPv6 counterpart of the RFC
+        // 5737 documentation prefixes. A misbehaving router returning an
+        // address from this range must never be accepted as an external
+        // IP, matching the IPv4 `is_documentation()` rejection.
+        assert!(!is_plausibly_public(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0x0db8, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(!is_plausibly_public(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0x0db8, 0xdead, 0xbeef, 0, 0, 0, 0x42
+        ))));
+        // A neighbouring /32 (2001:0db9::) is not documentation space
+        // and must still be accepted.
+        assert!(is_plausibly_public(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0x0db9, 0, 0, 0, 0, 0, 1
+        ))));
+    }
+
+    #[test]
+    fn rejects_ipv6_multicast_and_unspecified() {
+        assert!(!is_plausibly_public(IpAddr::V6(Ipv6Addr::UNSPECIFIED)));
+        // ff00::/8 — multicast.
+        assert!(!is_plausibly_public(IpAddr::V6(Ipv6Addr::new(
+            0xff02, 0, 0, 0, 0, 0, 0, 1
+        ))));
     }
 }

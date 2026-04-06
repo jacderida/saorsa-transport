@@ -719,7 +719,10 @@ impl CandidateDiscoveryManager {
     /// Calling this is optional and best-effort — if the handle never
     /// reaches [`crate::upnp::UpnpState::Mapped`], discovery behaves
     /// identically to a manager without UPnP attached.
-    pub fn set_upnp_state_rx(&mut self, state_rx: crate::upnp::UpnpStateRx) {
+    ///
+    /// Internal plumbing hook for the endpoint constructor; not exposed
+    /// on the public API surface.
+    pub(crate) fn set_upnp_state_rx(&mut self, state_rx: crate::upnp::UpnpStateRx) {
         self.upnp = Some(state_rx);
     }
 
