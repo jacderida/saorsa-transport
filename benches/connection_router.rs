@@ -38,7 +38,7 @@ fn bench_engine_selection(c: &mut Criterion) {
 
     // Benchmark UDP address selection
     group.bench_function("udp_address", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let engine = router.select_engine_for_addr(black_box(&udp_transport));
             black_box(engine)
@@ -47,7 +47,7 @@ fn bench_engine_selection(c: &mut Criterion) {
 
     // Benchmark BLE address selection
     group.bench_function("ble_address", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let engine = router.select_engine_for_addr(black_box(&ble_transport));
             black_box(engine)
@@ -56,7 +56,7 @@ fn bench_engine_selection(c: &mut Criterion) {
 
     // Benchmark LoRa address selection
     group.bench_function("lora_address", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let engine = router.select_engine_for_addr(black_box(&lora_transport));
             black_box(engine)
@@ -76,7 +76,7 @@ fn bench_engine_selection_detailed(c: &mut Criterion) {
 
     // Benchmark broadband selection
     group.bench_function("broadband_detailed", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let result = router.select_engine_detailed(black_box(&broadband_caps));
             black_box(result)
@@ -85,7 +85,7 @@ fn bench_engine_selection_detailed(c: &mut Criterion) {
 
     // Benchmark BLE selection
     group.bench_function("ble_detailed", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let result = router.select_engine_detailed(black_box(&ble_caps));
             black_box(result)
@@ -94,7 +94,7 @@ fn bench_engine_selection_detailed(c: &mut Criterion) {
 
     // Benchmark LoRa selection
     group.bench_function("lora_detailed", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let result = router.select_engine_detailed(black_box(&lora_caps));
             black_box(result)
@@ -112,7 +112,7 @@ fn bench_fallback_selection(c: &mut Criterion) {
 
     // Benchmark with QUIC available
     group.bench_function("quic_available", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let result = router.select_engine_with_fallback(
                 black_box(&broadband_caps),
@@ -125,7 +125,7 @@ fn bench_fallback_selection(c: &mut Criterion) {
 
     // Benchmark with fallback needed
     group.bench_function("quic_fallback", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let result = router.select_engine_with_fallback(
                 black_box(&broadband_caps),
@@ -184,7 +184,7 @@ fn bench_constrained_connect(c: &mut Criterion) {
 
     // Benchmark constrained connection creation
     group.bench_function("ble_connect", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let result = router.connect(black_box(&ble_addr));
             black_box(result)
@@ -215,11 +215,11 @@ fn bench_stats_tracking(c: &mut Criterion) {
 
     // Benchmark selection with stats update
     group.bench_function("selection_with_stats", |b| {
-        let mut router = ConnectionRouter::new(RouterConfig::default());
+        let router = ConnectionRouter::new(RouterConfig::default());
         b.iter(|| {
             let _ = router.select_engine_for_addr(black_box(&udp_addr));
             let _ = router.select_engine_for_addr(black_box(&ble_addr));
-            let stats = router.stats().clone();
+            let stats = router.stats().snapshot();
             black_box(stats)
         });
     });

@@ -152,8 +152,10 @@ pub struct P2pEndpoint {
     /// Connection router for automatic protocol engine selection
     ///
     /// Routes connections through either QUIC (for broadband) or Constrained
-    /// engine (for BLE/LoRa) based on transport capabilities.
-    router: Arc<RwLock<ConnectionRouter>>,
+    /// engine (for BLE/LoRa) based on transport capabilities. The router is
+    /// fully interior-mutable — all methods take `&self` and stat/state
+    /// mutations are lock-free — so no `RwLock` is needed.
+    router: Arc<ConnectionRouter>,
 
     /// Mapping from TransportAddr to ConnectionId for constrained connections
     ///
@@ -736,14 +738,13 @@ impl P2pEndpoint {
             enable_metrics: true,
             max_connections: 256,
         };
-        let mut router = ConnectionRouter::with_full_config(
+        // `with_full_config` already installs the QUIC endpoint; no
+        // post-construction setter is needed.
+        let router = ConnectionRouter::with_full_config(
             router_config,
             Arc::clone(&transport_registry),
             Arc::clone(&inner_arc),
         );
-
-        // Set QUIC endpoint on the router
-        router.set_quic_endpoint(Arc::clone(&inner_arc));
 
         // Create channel for data received from background reader tasks
         let (data_tx, data_rx) = mpsc::channel(config.data_channel_capacity);
@@ -766,7 +767,7 @@ impl P2pEndpoint {
             pending_data: Arc::new(RwLock::new(BoundedPendingBuffer::default())),
             bootstrap_cache,
             transport_registry,
-            router: Arc::new(RwLock::new(router)),
+            router: Arc::new(router),
             constrained_connections: Arc::new(RwLock::new(HashMap::new())),
             constrained_peer_addrs: Arc::new(RwLock::new(HashMap::new())),
             hole_punch_target_peer_ids: Arc::new(dashmap::DashMap::new()),
@@ -1014,9 +1015,20 @@ impl P2pEndpoint {
             return Err(EndpointError::ShuttingDown);
         }
 
-        // Use the router to determine the appropriate engine
-        let mut router = self.router.write().await;
-        let engine = router.select_engine_for_addr(addr);
+        // Use the router to determine the appropriate engine.
+        //
+        // Both `select_engine_for_addr` and `connect` take `&self` on
+        // `ConnectionRouter`, so there is no locking at all on the hot
+        // path. Selection and connect are two separate calls — there is a
+        // theoretical TOCTOU window where the engine picked here could
+        // become unavailable before the connect runs. In practice the
+        // router has no API to revoke or replace an engine once installed
+        // (the QUIC endpoint is set at construction time, the constrained
+        // transport is lazy-initialised and never torn down), so the race
+        // is closed by construction. If that invariant is ever relaxed,
+        // this call site needs to handle an engine-unavailable error from
+        // `connect()` explicitly.
+        let engine = self.router.select_engine_for_addr(addr);
 
         info!("Connecting to {} via {:?} engine", addr, engine);
 
@@ -1029,12 +1041,12 @@ impl P2pEndpoint {
                         addr
                     ))
                 })?;
-                drop(router); // Release lock before async operation
                 self.connect(socket_addr).await
             }
             ProtocolEngine::Constrained => {
-                // For constrained transports, use the router's constrained connection
-                let _routed = router.connect(addr).map_err(|e| {
+                // For constrained transports, use the router's connect
+                // path. No lock needed — `connect` takes `&self`.
+                let _routed = self.router.connect(addr).map_err(|e| {
                     EndpointError::Connection(format!("Constrained connection failed: {}", e))
                 })?;
 
@@ -1049,8 +1061,6 @@ impl P2pEndpoint {
                     last_activity: Instant::now(),
                 };
 
-                // Store peer keyed by synthetic address
-                drop(router); // Release lock before acquiring connected_peers lock
                 self.connected_peers
                     .write()
                     .await
@@ -1077,17 +1087,18 @@ impl P2pEndpoint {
 
     /// Get the connection router for advanced routing control
     ///
-    /// Returns a reference to the connection router which can be used to:
-    /// - Query engine selection for addresses
-    /// - Get routing statistics
-    /// - Configure routing behavior
-    pub async fn router(&self) -> tokio::sync::RwLockReadGuard<'_, ConnectionRouter> {
-        self.router.read().await
+    /// Returns a shared reference to the connection router which can be
+    /// used to query engine selection for addresses, read routing stats,
+    /// or drive connects/accepts directly. All router methods take
+    /// `&self`, so multiple callers can use the returned handle
+    /// concurrently.
+    pub fn router(&self) -> &Arc<ConnectionRouter> {
+        &self.router
     }
 
-    /// Get routing statistics
-    pub async fn routing_stats(&self) -> crate::connection_router::RouterStats {
-        self.router.read().await.stats().clone()
+    /// Get a point-in-time snapshot of router statistics.
+    pub fn routing_stats(&self) -> crate::connection_router::RouterStatsSnapshot {
+        self.router.stats().snapshot()
     }
 
     /// Register a constrained connection for a transport address
@@ -2264,11 +2275,16 @@ impl P2pEndpoint {
             }
         };
 
-        // Select protocol engine based on transport address
-        let engine = {
-            let mut router = self.router.write().await;
-            router.select_engine_for_addr(&transport_addr)
-        };
+        // Select protocol engine based on transport address.
+        //
+        // No lock: `select_engine_for_addr` takes `&self` on
+        // `ConnectionRouter` and bumps its stats counters via atomics, so
+        // concurrent sends can run fully in parallel. The previous
+        // implementation held an exclusive write lock on the router here,
+        // which serialised every outbound send on the endpoint through a
+        // single lock and was a dominant contention point at high node
+        // counts (1000-node testnet).
+        let engine = self.router.select_engine_for_addr(&transport_addr);
 
         match engine {
             crate::transport::ProtocolEngine::Quic => {
