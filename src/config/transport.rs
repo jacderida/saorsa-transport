@@ -66,18 +66,17 @@ pub struct TransportConfig {
     /// Allow loopback addresses as valid NAT traversal candidates
     pub(crate) allow_loopback: bool,
 
-    /// Maximum number of concurrent hole-punch relay slots this node will
-    /// service when acting as a coordinator (Tier 4 lite back-pressure).
-    /// When the active count reaches this cap, incoming `PUNCH_ME_NOW`
-    /// frames that would otherwise be relayed are silently refused so the
-    /// initiator advances to its next preferred coordinator.
-    pub(crate) coordinator_max_active_relays: usize,
-
-    /// Reclamation timeout for stale coordinator relay slots. Acts as a
-    /// safety net so a relay slot cannot leak forever if a peer crashes
-    /// mid-coordination, a NAT rebind silently drops the session, or a
-    /// follow-up signal is lost.
-    pub(crate) coordinator_relay_slot_timeout: Duration,
+    /// Shared, node-wide hole-punch coordinator back-pressure table
+    /// (Tier 4 lite). When this is `Some`, every connection that lands
+    /// at this node and acts as a coordinator gates incoming
+    /// `PUNCH_ME_NOW` relay frames against the shared table — the cap
+    /// is enforced *across* connections, not per-connection. When `None`
+    /// (low-level test fixtures, internal Quinn-style use), back-pressure
+    /// is disabled and the coordinator behaves as in pre-Tier-4 builds.
+    ///
+    /// Owned and instantiated by `P2pEndpoint::new`; injected into
+    /// `TransportConfig` before the config is frozen behind `Arc`.
+    pub(crate) relay_slot_table: Option<Arc<crate::relay_slot_table::RelaySlotTable>>,
 }
 
 impl TransportConfig {
@@ -484,18 +483,16 @@ impl TransportConfig {
         self
     }
 
-    /// Cap on simultaneous hole-punch relay slots when this node acts as a
-    /// coordinator. Higher = more concurrency capacity, lower = stricter
-    /// back-pressure shedding under storm load. Default: 32.
-    pub fn coordinator_max_active_relays(&mut self, max: usize) -> &mut Self {
-        self.coordinator_max_active_relays = max;
-        self
-    }
-
-    /// Maximum lifetime of a coordinator relay slot before it is reclaimed
-    /// by the inline garbage-collection sweep. Default: 5 seconds.
-    pub fn coordinator_relay_slot_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.coordinator_relay_slot_timeout = timeout;
+    /// Inject the node-wide hole-punch coordinator back-pressure table
+    /// (Tier 4 lite). Called from `P2pEndpoint::new` so that every QUIC
+    /// connection spawned from this transport config shares one table.
+    /// `None` disables back-pressure (used by Quinn-style low-level
+    /// fixtures that do not run a coordinator).
+    pub fn relay_slot_table(
+        &mut self,
+        table: Option<Arc<crate::relay_slot_table::RelaySlotTable>>,
+    ) -> &mut Self {
+        self.relay_slot_table = table;
         self
     }
 }
@@ -551,11 +548,12 @@ impl Default for TransportConfig {
                 ml_dsa_65: false,
             }),
             allow_loopback: false,
-            // Tier 4 (lite) coordinator back-pressure defaults. See
-            // `coordinator_max_active_relays`/`coordinator_relay_slot_timeout`
-            // setters for the rationale behind these numbers.
-            coordinator_max_active_relays: 32,
-            coordinator_relay_slot_timeout: Duration::from_secs(5),
+            // No back-pressure table by default — `P2pEndpoint::new`
+            // injects one before connections are spawned. Quinn-style
+            // fixtures that bypass `P2pEndpoint` opt out of coordinator
+            // back-pressure entirely, which matches the pre-Tier-4
+            // behaviour they were originally written against.
+            relay_slot_table: None,
         }
     }
 }
@@ -592,8 +590,7 @@ impl fmt::Debug for TransportConfig {
             address_discovery_config,
             pqc_algorithms,
             allow_loopback,
-            coordinator_max_active_relays,
-            coordinator_relay_slot_timeout,
+            relay_slot_table,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -626,14 +623,7 @@ impl fmt::Debug for TransportConfig {
             .field("address_discovery_config", address_discovery_config)
             .field("pqc_algorithms", pqc_algorithms)
             .field("allow_loopback", allow_loopback)
-            .field(
-                "coordinator_max_active_relays",
-                coordinator_max_active_relays,
-            )
-            .field(
-                "coordinator_relay_slot_timeout",
-                coordinator_relay_slot_timeout,
-            )
+            .field("relay_slot_table", relay_slot_table)
             .finish_non_exhaustive()
     }
 }

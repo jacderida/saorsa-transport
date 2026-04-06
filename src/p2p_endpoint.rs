@@ -1257,6 +1257,23 @@ impl P2pEndpoint {
     /// hole-punch timeout to give it time to complete the punch.
     ///
     /// Empty `coordinators` removes any preferred coordinators for `target`.
+    ///
+    /// ## Interaction with `StrategyConfig::max_holepunch_rounds`
+    ///
+    /// Each rotation step in the connect loop calls
+    /// `ConnectionStrategy::increment_round`, so the strategy's per-round
+    /// counter and the rotation index advance together. With the default
+    /// `max_holepunch_rounds = 2`, supplying `K ≥ 2` preferred coordinators
+    /// gives each coordinator (including the final one) exactly one
+    /// attempt — the rotation fully replaces the legacy retry loop and the
+    /// worst-case dial time is `(K-1) * 1.5s + 8s`.
+    ///
+    /// If a caller has explicitly raised `max_holepunch_rounds` (e.g.
+    /// `with_max_holepunch_rounds(5)`) **and** also supplies a preferred
+    /// list, the *final* coordinator inherits the leftover round budget
+    /// — it will be retried `max_rounds - K + 1` times at the full
+    /// hole-punch timeout. This is usually fine but worth knowing if you
+    /// were expecting the rotation to be the only retry mechanism.
     pub async fn set_hole_punch_preferred_coordinators(
         &self,
         target: SocketAddr,
@@ -1381,11 +1398,13 @@ impl P2pEndpoint {
         // Drop any pre-existing copies of the preferred entries from the
         // tail so we don't end up with duplicates after the front-insert.
         coordinator_candidates.retain(|a| !preferred.contains(a));
-        // Insert in reverse so `preferred[0]` ends up at index 0,
-        // `preferred[1]` at index 1, etc.
-        for preferred_addr in preferred.iter().rev() {
-            coordinator_candidates.insert(0, *preferred_addr);
-        }
+        // Build the merged list in one allocation rather than calling
+        // `Vec::insert(0, ..)` in a loop (which shifts the entire tail
+        // on every iteration — O(N·M) instead of O(N+M)).
+        let mut merged = Vec::with_capacity(preferred.len() + coordinator_candidates.len());
+        merged.extend_from_slice(preferred);
+        merged.append(coordinator_candidates);
+        *coordinator_candidates = merged;
     }
 
     /// Inner implementation of connect_with_fallback (separated for dedup wrapper).
@@ -1702,6 +1721,25 @@ impl P2pEndpoint {
                     } else {
                         strategy.holepunch_timeout()
                     };
+
+                    // Invariant: while rotating, the strategy's current
+                    // coordinator must equal `coordinator_candidates[idx]`.
+                    // This is maintained by `set_coordinator()` on every
+                    // rotation step; the assert catches any future
+                    // regression where a caller sets the strategy's
+                    // coordinator out of band without updating the
+                    // candidate list.
+                    debug_assert!(
+                        !is_rotating
+                            || coordinator_candidates
+                                .get(current_preferred_coordinator_idx)
+                                .copied()
+                                == Some(coordinator),
+                        "rotation index out of sync with strategy coordinator: idx={}, coord={}, candidates={:?}",
+                        current_preferred_coordinator_idx,
+                        coordinator,
+                        coordinator_candidates,
+                    );
 
                     info!(
                         "Trying hole-punch to {} via {} (round {}, attempt timeout {:?}, rotating={})",

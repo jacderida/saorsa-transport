@@ -56,7 +56,7 @@ mod nat_traversal_api_tests {
             max_message_size: saorsa_transport::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
             allow_loopback: false,
             coordinator_max_active_relays: 32,
-            coordinator_relay_slot_timeout: Duration::from_secs(5),
+            coordinator_relay_slot_idle_timeout: Duration::from_secs(5),
             upnp: Default::default(),
         };
 
@@ -195,7 +195,7 @@ mod functional_tests {
             max_message_size: saorsa_transport::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
             allow_loopback: false,
             coordinator_max_active_relays: 32,
-            coordinator_relay_slot_timeout: Duration::from_secs(5),
+            coordinator_relay_slot_idle_timeout: Duration::from_secs(5),
             upnp: Default::default(),
         };
 
@@ -224,7 +224,7 @@ mod functional_tests {
             max_message_size: saorsa_transport::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
             allow_loopback: false,
             coordinator_max_active_relays: 32,
-            coordinator_relay_slot_timeout: Duration::from_secs(5),
+            coordinator_relay_slot_idle_timeout: Duration::from_secs(5),
             upnp: Default::default(),
         };
 
@@ -419,7 +419,7 @@ mod performance_tests {
                 max_message_size: saorsa_transport::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
                 allow_loopback: false,
                 coordinator_max_active_relays: 32,
-                coordinator_relay_slot_timeout: Duration::from_secs(5),
+                coordinator_relay_slot_idle_timeout: Duration::from_secs(5),
                 upnp: Default::default(),
             };
 
@@ -492,7 +492,7 @@ mod relay_functionality_tests {
             max_message_size: saorsa_transport::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
             allow_loopback: false,
             coordinator_max_active_relays: 32,
-            coordinator_relay_slot_timeout: Duration::from_secs(5),
+            coordinator_relay_slot_idle_timeout: Duration::from_secs(5),
             upnp: Default::default(),
         };
 

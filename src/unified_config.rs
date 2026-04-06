@@ -145,6 +145,29 @@ pub struct NatConfig {
     /// Default: `false`
     pub allow_loopback: bool,
 
+    /// Cap on simultaneous in-flight hole-punch coordinator sessions
+    /// **across the entire node** (Tier 4 lite back-pressure). When the
+    /// shared `RelaySlotTable` is at capacity, additional `PUNCH_ME_NOW`
+    /// relay frames are silently refused so the initiator's per-attempt
+    /// timeout (Tier 2 rotation) can advance to its next preferred
+    /// coordinator. See
+    /// [`crate::nat_traversal_api::NatTraversalConfig::coordinator_max_active_relays`]
+    /// for the full rationale.
+    ///
+    /// Default: 32.
+    pub coordinator_max_active_relays: usize,
+
+    /// Idle-release timeout for an in-flight coordinator relay session.
+    /// A slot lasts from the first `PUNCH_ME_NOW` until either the
+    /// owning connection closes (immediate release) or this many
+    /// seconds with no further rounds for the same
+    /// `(initiator_addr, target_peer_id)` pair. See
+    /// [`crate::nat_traversal_api::NatTraversalConfig::coordinator_relay_slot_idle_timeout`]
+    /// for the full rationale.
+    ///
+    /// Default: 5 seconds.
+    pub coordinator_relay_slot_idle_timeout: Duration,
+
     /// Best-effort UPnP IGD port mapping configuration. When enabled
     /// (default), the endpoint asks the local router to forward its UDP
     /// port and surfaces the resulting public address as a high-priority
@@ -163,6 +186,10 @@ impl Default for NatConfig {
             max_concurrent_attempts: 3,
             prefer_rfc_nat_traversal: true,
             allow_loopback: false,
+            coordinator_max_active_relays:
+                crate::nat_traversal_api::NatTraversalConfig::DEFAULT_COORDINATOR_MAX_ACTIVE_RELAYS,
+            coordinator_relay_slot_idle_timeout:
+                crate::nat_traversal_api::NatTraversalConfig::DEFAULT_COORDINATOR_RELAY_SLOT_IDLE_TIMEOUT,
             upnp: crate::upnp::UpnpConfig::default(),
         }
     }
@@ -317,10 +344,8 @@ impl P2pConfig {
             transport_registry: Some(Arc::new(self.transport_registry.clone())),
             max_message_size: self.max_message_size,
             allow_loopback: self.nat.allow_loopback,
-            coordinator_max_active_relays:
-                crate::nat_traversal_api::NatTraversalConfig::DEFAULT_COORDINATOR_MAX_ACTIVE_RELAYS,
-            coordinator_relay_slot_timeout:
-                crate::nat_traversal_api::NatTraversalConfig::DEFAULT_COORDINATOR_RELAY_SLOT_TIMEOUT,
+            coordinator_max_active_relays: self.nat.coordinator_max_active_relays,
+            coordinator_relay_slot_idle_timeout: self.nat.coordinator_relay_slot_idle_timeout,
             upnp: self.nat.upnp.clone(),
         }
     }

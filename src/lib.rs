@@ -259,6 +259,9 @@ pub mod metrics;
 /// TURN-style relay protocol for NAT traversal fallback
 pub mod relay;
 
+/// Node-wide hole-punch coordinator back-pressure (Tier 4 lite).
+pub mod relay_slot_table;
+
 /// MASQUE CONNECT-UDP Bind protocol for fully connectable P2P nodes
 pub mod masque;
 

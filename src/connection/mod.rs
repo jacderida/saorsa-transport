@@ -4535,8 +4535,7 @@ impl Connection {
             max_candidates,
             coordination_timeout,
             self.config.allow_loopback,
-            self.config.coordinator_max_active_relays,
-            self.config.coordinator_relay_slot_timeout,
+            self.config.relay_slot_table.clone(),
         ));
 
         trace!("NAT traversal initialized for symmetric P2P node");
@@ -4735,8 +4734,7 @@ impl Connection {
             8,
             Duration::from_secs(10),
             self.config.allow_loopback,
-            self.config.coordinator_max_active_relays,
-            self.config.coordinator_relay_slot_timeout,
+            self.config.relay_slot_table.clone(),
         ));
     }
 
@@ -4870,7 +4868,13 @@ impl Connection {
                         return Ok(());
                     }
                     Ok(None) => {
-                        trace!("Coordination completed or no action needed");
+                        // Reaching this branch with `target_peer_id.is_some()`
+                        // (the only branch that calls this) means the
+                        // shared back-pressure table refused the relay.
+                        // The table itself logs and counts the refusal —
+                        // we drop silently so the initiator falls back
+                        // to the per-attempt timeout (Tier 2 rotation).
+                        trace!("PUNCH_ME_NOW relay refused by node-wide back-pressure");
                         return Ok(());
                     }
                     Err(e) => {

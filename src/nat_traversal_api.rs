@@ -492,44 +492,51 @@ pub struct NatTraversalConfig {
     #[serde(default)]
     pub allow_loopback: bool,
 
-    /// Maximum number of concurrent hole-punch relay slots this node will
-    /// service as a coordinator.
+    /// Cap on simultaneous in-flight hole-punch coordinator sessions
+    /// **across the entire node** (Tier 4 lite back-pressure).
     ///
-    /// When the active relay count reaches this cap, incoming `PUNCH_ME_NOW`
-    /// frames that would otherwise be relayed are *silently refused*: the
-    /// coordinator drops the relay without notifying the initiator. The
-    /// initiator's per-attempt timeout (Tier 2 rotation) drives it to
-    /// advance to the next preferred coordinator in its list.
+    /// When the shared `RelaySlotTable` is full, additional `PUNCH_ME_NOW`
+    /// relay frames are *silently refused*: the coordinator drops them
+    /// without notifying the initiator, and the initiator's per-attempt
+    /// timeout (Tier 2 rotation) advances to the next preferred
+    /// coordinator in its list.
+    ///
+    /// A "session" is one `(initiator_addr, target_peer_id)` pair. The
+    /// same pair re-sending across rounds re-arms one slot rather than
+    /// allocating new ones. Slots are released either by the explicit
+    /// connection-close path (when the initiator's connection drops, the
+    /// `BootstrapCoordinator::Drop` releases every slot it owned) or by
+    /// the [`Self::coordinator_relay_slot_idle_timeout`] safety net for
+    /// peers that vanish without an orderly close.
     ///
     /// Defaults to [`NatTraversalConfig::DEFAULT_COORDINATOR_MAX_ACTIVE_RELAYS`]
-    /// (32). Picked as roughly 32% of saorsa-core's 100-connection cap so
-    /// the coordinator still has headroom for its own peer traffic, while
-    /// being low enough that a cold-start storm is shed and pushed onto
-    /// alternates.
-    ///
-    /// Each "active relay" represents one in-flight initiator→target
-    /// coordination, indexed by `(initiator_peer_id, target_peer_id)`. The
-    /// counter is decremented when the relay completes or after
-    /// [`Self::coordinator_relay_slot_timeout`] elapses (whichever first).
+    /// (32). Sized to keep a coordinator's worst-case in-flight
+    /// coordination work bounded under a cold-start storm of peers all
+    /// converging on the same bootstrap, while still leaving headroom
+    /// for steady-state per-peer traffic.
     #[serde(default = "default_coordinator_max_active_relays")]
     pub coordinator_max_active_relays: usize,
 
-    /// Maximum lifetime of a coordinator relay slot before it is reclaimed
-    /// by the inline garbage-collection sweep.
+    /// Idle-release timeout for an in-flight coordinator relay session.
     ///
-    /// A successful hole-punch typically completes in 1-3 seconds; this
-    /// timeout exists purely as a safety net so that a relay slot cannot
-    /// leak forever if a peer crashes mid-coordination, a NAT rebind
-    /// silently drops the session, or a follow-up signal is lost. Without
-    /// it the active-relay counter would drift upward over time and the
-    /// coordinator would eventually refuse legitimate traffic.
+    /// A slot lasts from the first `PUNCH_ME_NOW` arrival until either
+    /// (a) the connection that owns it closes — in which case
+    /// `BootstrapCoordinator::Drop` releases all of that connection's
+    /// slots immediately, or (b) no new round arrives for the same
+    /// `(initiator_addr, target_peer_id)` pair within this idle window —
+    /// the *safety net* for peers that crash, get NAT-rebound, or stop
+    /// rotating without an orderly close. The coordinator cannot
+    /// directly observe whether the punch ultimately succeeded (the
+    /// punch traffic flows initiator↔target, bypassing the coordinator),
+    /// so the idle timeout is the only signal available for "vanished"
+    /// sessions.
     ///
-    /// Defaults to [`NatTraversalConfig::DEFAULT_COORDINATOR_RELAY_SLOT_TIMEOUT`]
+    /// Defaults to [`NatTraversalConfig::DEFAULT_COORDINATOR_RELAY_SLOT_IDLE_TIMEOUT`]
     /// (5 seconds): comfortably above the worst-case successful punch
-    /// latency on high-RTT links, but short enough to keep ghost slots
-    /// from impacting steady-state burst capacity.
-    #[serde(default = "default_coordinator_relay_slot_timeout")]
-    pub coordinator_relay_slot_timeout: Duration,
+    /// latency on high-RTT links, short enough to keep capacity from
+    /// being held by ghost sessions.
+    #[serde(default = "default_coordinator_relay_slot_idle_timeout")]
+    pub coordinator_relay_slot_idle_timeout: Duration,
 
     /// Best-effort UPnP IGD port mapping configuration.
     ///
@@ -552,18 +559,19 @@ fn default_coordinator_max_active_relays() -> usize {
     NatTraversalConfig::DEFAULT_COORDINATOR_MAX_ACTIVE_RELAYS
 }
 
-fn default_coordinator_relay_slot_timeout() -> Duration {
-    NatTraversalConfig::DEFAULT_COORDINATOR_RELAY_SLOT_TIMEOUT
+fn default_coordinator_relay_slot_idle_timeout() -> Duration {
+    NatTraversalConfig::DEFAULT_COORDINATOR_RELAY_SLOT_IDLE_TIMEOUT
 }
 
 impl NatTraversalConfig {
-    /// Default cap on simultaneous coordinator relay slots.
+    /// Default cap on simultaneous coordinator relay sessions.
     /// See [`Self::coordinator_max_active_relays`] for rationale.
     pub const DEFAULT_COORDINATOR_MAX_ACTIVE_RELAYS: usize = 32;
 
-    /// Default reclamation timeout for stale coordinator relay slots.
-    /// See [`Self::coordinator_relay_slot_timeout`] for rationale.
-    pub const DEFAULT_COORDINATOR_RELAY_SLOT_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Default idle-release timeout for in-flight coordinator relay
+    /// sessions. See [`Self::coordinator_relay_slot_idle_timeout`] for
+    /// rationale.
+    pub const DEFAULT_COORDINATOR_RELAY_SLOT_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 }
 
 /// Convert `max_message_size` to a QUIC `VarInt` for stream/send window configuration.
@@ -1146,7 +1154,7 @@ impl Default for NatTraversalConfig {
             max_message_size: crate::unified_config::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE,
             allow_loopback: false,
             coordinator_max_active_relays: Self::DEFAULT_COORDINATOR_MAX_ACTIVE_RELAYS,
-            coordinator_relay_slot_timeout: Self::DEFAULT_COORDINATOR_RELAY_SLOT_TIMEOUT,
+            coordinator_relay_slot_idle_timeout: Self::DEFAULT_COORDINATOR_RELAY_SLOT_IDLE_TIMEOUT,
             upnp: crate::upnp::UpnpConfig::default(),
         }
     }
@@ -1201,14 +1209,14 @@ impl ConfigValidator for NatTraversalConfig {
         validate_range(
             self.coordinator_max_active_relays,
             1,
-            256,
+            1024,
             "coordinator_max_active_relays",
         )?;
         validate_duration(
-            self.coordinator_relay_slot_timeout,
+            self.coordinator_relay_slot_idle_timeout,
             Duration::from_millis(100),
             Duration::from_secs(60),
-            "coordinator_relay_slot_timeout",
+            "coordinator_relay_slot_idle_timeout",
         )?;
 
         Ok(())
@@ -2623,6 +2631,18 @@ impl NatTraversalEndpoint {
     > {
         use std::sync::Arc;
 
+        // Tier 4 (lite) coordinator back-pressure: every connection
+        // spawned by this endpoint shares ONE node-wide
+        // `RelaySlotTable`. Both the server-side `TransportConfig` and
+        // the client-side `TransportConfig` get a clone of the same
+        // `Arc`, so a relay arriving on a server-accepted connection
+        // and a relay arriving on a client-initiated connection both
+        // count against the same cap.
+        let relay_slot_table = Arc::new(crate::relay_slot_table::RelaySlotTable::new(
+            config.coordinator_max_active_relays,
+            config.coordinator_relay_slot_idle_timeout,
+        ));
+
         // v0.13.0+: All nodes are symmetric P2P nodes - always create server config
         let server_config = {
             info!("Creating server config using Raw Public Keys (RFC 7250) for symmetric P2P node");
@@ -2686,8 +2706,7 @@ impl NatTraversalEndpoint {
             };
             transport_config.nat_traversal_config(Some(nat_config));
             transport_config.allow_loopback(config.allow_loopback);
-            transport_config.coordinator_max_active_relays(config.coordinator_max_active_relays);
-            transport_config.coordinator_relay_slot_timeout(config.coordinator_relay_slot_timeout);
+            transport_config.relay_slot_table(Some(Arc::clone(&relay_slot_table)));
 
             server_config.transport_config(Arc::new(transport_config));
 
@@ -2759,8 +2778,7 @@ impl NatTraversalEndpoint {
             };
             transport_config.nat_traversal_config(Some(nat_config));
             transport_config.allow_loopback(config.allow_loopback);
-            transport_config.coordinator_max_active_relays(config.coordinator_max_active_relays);
-            transport_config.coordinator_relay_slot_timeout(config.coordinator_relay_slot_timeout);
+            transport_config.relay_slot_table(Some(Arc::clone(&relay_slot_table)));
 
             client_config.transport_config(Arc::new(transport_config));
 

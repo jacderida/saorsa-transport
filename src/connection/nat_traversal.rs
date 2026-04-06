@@ -8,6 +8,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
     time::Duration,
 };
 
@@ -1821,24 +1822,23 @@ impl NatTraversalState {
     /// v0.13.0: Role parameter removed - all nodes are symmetric P2P nodes.
     /// Every node can initiate, accept, and coordinate NAT traversal.
     ///
-    /// `coordinator_max_active_relays` and `coordinator_relay_slot_timeout`
-    /// configure Tier 4 (lite) coordinator-side back-pressure: when this
-    /// node acts as a hole-punch coordinator, it will silently refuse new
-    /// `PUNCH_ME_NOW` relays once `coordinator_max_active_relays` slots are
-    /// in flight, and reclaim stale slots that exceed the timeout.
+    /// `relay_slot_table` is the shared, node-wide back-pressure table
+    /// (Tier 4 lite). When `Some`, the bootstrap coordinator embedded in
+    /// this state gates incoming `PUNCH_ME_NOW` relay frames against the
+    /// shared table — the cap is enforced across *all* connections at
+    /// this node, not per-connection. Pass `None` in low-level fixtures
+    /// that do not run a coordinator.
     pub(super) fn new(
         max_candidates: u32,
         coordination_timeout: Duration,
         allow_loopback: bool,
-        coordinator_max_active_relays: usize,
-        coordinator_relay_slot_timeout: Duration,
+        relay_slot_table: Option<Arc<crate::relay_slot_table::RelaySlotTable>>,
     ) -> Self {
         // v0.13.0: All nodes can coordinate - always create coordinator
         let bootstrap_coordinator = Some(BootstrapCoordinator::new(
             BootstrapConfig::default(),
             allow_loopback,
-            coordinator_max_active_relays,
-            coordinator_relay_slot_timeout,
+            relay_slot_table,
         ));
 
         Self {
@@ -3566,22 +3566,33 @@ pub(crate) struct BootstrapCoordinator {
     security_validator: SecurityValidationState,
     /// Statistics for bootstrap operations
     stats: BootstrapStats,
-    /// Active hole-punch relay slots indexed by `(initiator_peer_id,
-    /// target_peer_id)`. Each entry records the wall-clock arrival time of
-    /// the `PUNCH_ME_NOW` frame that opened the slot. Slots are reclaimed
-    /// either implicitly (when a follow-up frame from the same pair lands)
-    /// or by the inline garbage-collection sweep run on every incoming
-    /// frame: any slot older than `coordinator_relay_slot_timeout` is
-    /// evicted before the back-pressure check, which keeps the active
-    /// count from leaking on ghost sessions where the initiator crashed
-    /// or the target became unreachable mid-coordination.
-    relay_slots: HashMap<(PeerId, PeerId), Instant>,
-    /// Cap on simultaneous relay slots (Tier 4 lite back-pressure).
-    /// Plumbed from [`crate::config::TransportConfig::coordinator_max_active_relays`].
-    relay_slot_capacity: usize,
-    /// Reclamation timeout for stale relay slots. Plumbed from
-    /// [`crate::config::TransportConfig::coordinator_relay_slot_timeout`].
-    relay_slot_timeout: Duration,
+    /// Shared, node-wide back-pressure table (Tier 4 lite). When `Some`,
+    /// every incoming `PUNCH_ME_NOW` relay frame must acquire a slot in
+    /// this table before being relayed; the cap is enforced *across all*
+    /// connections at this node, not per-connection.
+    ///
+    /// On `Drop` (i.e. when the connection that hosts this coordinator
+    /// closes) all slots whose initiator address matches the connection's
+    /// remote address are released — the explicit-completion path that
+    /// reclaims capacity ahead of the idle-timeout safety net.
+    relay_slot_table: Option<Arc<crate::relay_slot_table::RelaySlotTable>>,
+    /// Remote address of the connection that owns this coordinator.
+    /// Captured the first time we relay a frame; used as the slot key's
+    /// initiator-side identifier and as the argument to
+    /// `release_for_initiator` in [`Drop`]. `None` until the first
+    /// `PUNCH_ME_NOW` arrives.
+    relay_initiator_addr: Option<SocketAddr>,
+}
+
+impl Drop for BootstrapCoordinator {
+    fn drop(&mut self) {
+        // Explicitly release every slot we opened so the shared table
+        // doesn't have to wait out the idle timeout for a connection
+        // that has just closed.
+        if let (Some(table), Some(addr)) = (&self.relay_slot_table, self.relay_initiator_addr) {
+            table.release_for_initiator(addr);
+        }
+    }
 }
 // Removed legacy CoordinationSessionId type
 /// Peer identifier for bootstrap coordination
@@ -3667,25 +3678,21 @@ pub(crate) struct BootstrapStats {
     successful_coordinations: u64,
     /// Security rejections
     security_rejections: u64,
-    /// Refusals due to active-relay back-pressure (Tier 4 lite). Tracks the
-    /// number of `PUNCH_ME_NOW` frames silently dropped because the
-    /// coordinator was at `relay_slot_capacity` when they arrived.
-    backpressure_refusals: u64,
 }
 // Removed session state machine enums and recovery actions
 impl BootstrapCoordinator {
     /// Create a new bootstrap coordinator.
     ///
-    /// `relay_slot_capacity` and `relay_slot_timeout` configure the
-    /// Tier 4 (lite) back-pressure: incoming `PUNCH_ME_NOW` relay frames
-    /// are silently refused once `relay_slot_capacity` slots are in
-    /// flight, and any slot older than `relay_slot_timeout` is reclaimed
-    /// by the inline garbage-collection sweep on every incoming frame.
+    /// `relay_slot_table` is the shared, node-wide back-pressure table
+    /// (Tier 4 lite). When `Some`, incoming `PUNCH_ME_NOW` relay frames
+    /// must acquire a slot from the table before being relayed; the cap
+    /// is enforced across all connections at this node. Pass `None` in
+    /// low-level test fixtures that exercise the connection state machine
+    /// without a P2pEndpoint.
     pub(crate) fn new(
         _config: BootstrapConfig,
         allow_loopback: bool,
-        relay_slot_capacity: usize,
-        relay_slot_timeout: Duration,
+        relay_slot_table: Option<Arc<crate::relay_slot_table::RelaySlotTable>>,
     ) -> Self {
         Self {
             address_observations: HashMap::new(),
@@ -3693,21 +3700,11 @@ impl BootstrapCoordinator {
             coordination_table: HashMap::new(),
             security_validator: SecurityValidationState::new(allow_loopback),
             stats: BootstrapStats::default(),
-            relay_slots: HashMap::new(),
-            relay_slot_capacity,
-            relay_slot_timeout,
+            relay_slot_table,
+            relay_initiator_addr: None,
         }
     }
 
-    /// Reclaim relay slots whose arrival timestamp is older than the
-    /// configured `relay_slot_timeout`. Called inline at the start of
-    /// every `PUNCH_ME_NOW` frame so that ghost slots from crashed peers
-    /// or dropped sessions cannot leak the active-relay counter.
-    fn sweep_stale_relay_slots(&mut self, now: Instant) {
-        let timeout = self.relay_slot_timeout;
-        self.relay_slots
-            .retain(|_, &mut arrived_at| now.duration_since(arrived_at) < timeout);
-    }
     /// Observe a peer's address from an incoming connection
     ///
     /// This is called when a peer connects to this bootstrap node,
@@ -3844,34 +3841,34 @@ impl BootstrapCoordinator {
             })?;
 
         // Tier 4 (lite) back-pressure: only the relay branch (where the
-        // frame carries an explicit `target_peer_id`) consumes a slot. If
-        // we are at capacity for active relays, silently drop the frame —
-        // the initiator's per-attempt timeout (Tier 2 rotation) will move
-        // it on to its next preferred coordinator.
+        // frame carries an explicit `target_peer_id`) consumes a slot.
+        // The shared `RelaySlotTable` enforces the cap *across all
+        // connections* at this node — when full, the relay is silently
+        // refused and the initiator's per-attempt timeout (Tier 2
+        // rotation) drives it to its next preferred coordinator.
         //
-        // Inline garbage-collection sweep first so any stale slots from
-        // crashed peers are reclaimed before the cap check.
+        // Slots are keyed by `(initiator_addr, target_peer_id)`. The
+        // initiator address is the connection's remote socket address
+        // (constant for the lifetime of this BootstrapCoordinator), so
+        // multi-round coordination from the same peer naturally re-arms
+        // the same slot without consuming additional capacity.
         if let Some(target_peer_id) = frame.target_peer_id {
-            self.sweep_stale_relay_slots(now);
-            let slot_key = (from_peer, target_peer_id);
-            // Re-arming an existing slot for the same (initiator, target)
-            // pair does not consume an additional slot — common during
-            // multi-round coordination where the same pair re-sends.
-            let already_active = self.relay_slots.contains_key(&slot_key);
-            if !already_active && self.relay_slots.len() >= self.relay_slot_capacity {
-                self.stats.backpressure_refusals =
-                    self.stats.backpressure_refusals.saturating_add(1);
-                debug!(
-                    "PUNCH_ME_NOW relay refused: coordinator at capacity ({}/{}) — initiator {:?} → target {:?}",
-                    self.relay_slots.len(),
-                    self.relay_slot_capacity,
-                    hex::encode(&from_peer[..8]),
-                    hex::encode(&target_peer_id[..8])
-                );
+            // Cache the initiator addr the first time we see it so
+            // `Drop` can release every slot we opened, even if the
+            // connection closes mid-session.
+            if self.relay_initiator_addr.is_none() {
+                self.relay_initiator_addr = Some(source_addr);
+            }
+            if let Some(table) = &self.relay_slot_table
+                && !table.try_acquire(source_addr, target_peer_id, now)
+            {
+                // Refused. The table itself logs/counts the event;
+                // returning `Ok(None)` means "no coordination frame
+                // produced" and is dispatched at the call site as a
+                // silent drop, surfacing to the initiator only as a
+                // per-attempt timeout.
                 return Ok(None);
             }
-            // Accept: insert/refresh the slot timestamp.
-            self.relay_slots.insert(slot_key, now);
         }
 
         // Track coordination entry minimally
@@ -3986,14 +3983,23 @@ impl BootstrapCoordinator {
 mod tests {
     use super::*;
 
+    /// Build a test fixture `RelaySlotTable` so the BootstrapCoordinator
+    /// embedded in `NatTraversalState` can exercise the back-pressure
+    /// path. Production code obtains the table from `P2pEndpoint`.
+    fn make_test_relay_slot_table() -> Arc<crate::relay_slot_table::RelaySlotTable> {
+        Arc::new(crate::relay_slot_table::RelaySlotTable::new(
+            32,
+            Duration::from_secs(5),
+        ))
+    }
+
     // v0.13.0: Role parameter removed - all nodes are symmetric P2P nodes
     fn create_test_state() -> NatTraversalState {
         NatTraversalState::new(
             10,                      // max_candidates
             Duration::from_secs(30), // coordination_timeout
             true,                    // allow_loopback for tests
-            32,                      // coordinator_max_active_relays
-            Duration::from_secs(5),  // coordinator_relay_slot_timeout
+            Some(make_test_relay_slot_table()),
         )
     }
 
@@ -4376,8 +4382,7 @@ mod tests {
             100, // max_candidates (high enough to not limit)
             Duration::from_secs(30),
             true, // allow_loopback for tests
-            32,
-            Duration::from_secs(5),
+            Some(make_test_relay_slot_table()),
         );
         let now = Instant::now();
 
@@ -4412,8 +4417,7 @@ mod tests {
             100,
             Duration::from_secs(30),
             true,
-            32,
-            Duration::from_secs(5),
+            Some(make_test_relay_slot_table()),
         );
         let now = Instant::now();
 
@@ -4498,8 +4502,7 @@ mod tests {
             100,
             Duration::from_secs(30),
             true,
-            32,
-            Duration::from_secs(5),
+            Some(make_test_relay_slot_table()),
         );
         let now = Instant::now();
 
@@ -4534,22 +4537,40 @@ mod tests {
     }
 
     // ---- Tier 4 (lite): coordinator-side back-pressure ----
+    //
+    // The pure data-structure tests live next to the table itself in
+    // `crate::relay_slot_table::tests`. The tests below verify the
+    // *integration* between `BootstrapCoordinator` and the shared
+    // `RelaySlotTable`: that the relay branch consumes a slot, the
+    // non-relay (echo) branch does not, and that the coordinator
+    // releases its slots in `Drop` so a closed connection reclaims
+    // capacity ahead of the idle-timeout safety net.
 
-    /// Helper: build a `BootstrapCoordinator` with controllable cap and
-    /// timeout for back-pressure tests.
-    fn make_bp_coordinator(capacity: usize, timeout: Duration) -> BootstrapCoordinator {
-        BootstrapCoordinator::new(
+    /// Build a `BootstrapCoordinator` wired to a fresh shared
+    /// `RelaySlotTable` with the given capacity. Returns both so tests
+    /// can inspect the table directly.
+    fn make_coord_with_table(
+        capacity: usize,
+        timeout: Duration,
+    ) -> (
+        BootstrapCoordinator,
+        Arc<crate::relay_slot_table::RelaySlotTable>,
+    ) {
+        let table = Arc::new(crate::relay_slot_table::RelaySlotTable::new(
+            capacity, timeout,
+        ));
+        let coord = BootstrapCoordinator::new(
             BootstrapConfig::default(),
-            true, // allow_loopback so test addrs aren't rejected
-            capacity,
-            timeout,
-        )
+            true, // allow_loopback for test addrs
+            Some(Arc::clone(&table)),
+        );
+        (coord, table)
     }
 
-    /// Helper: build a `PunchMeNow` frame for the relay path (with target).
-    fn make_relay_frame(round: u64, target_peer_id: [u8; 32]) -> crate::frame::PunchMeNow {
+    /// `PunchMeNow` frame for the relay path (with target).
+    fn relay_frame(round: u32, target_peer_id: [u8; 32]) -> crate::frame::PunchMeNow {
         crate::frame::PunchMeNow {
-            round: VarInt::from_u64(round).unwrap_or(VarInt::from_u32(0)),
+            round: VarInt::from_u32(round),
             paired_with_sequence_number: VarInt::from_u32(0),
             address: SocketAddr::from(([127, 0, 0, 1], 9000)),
             target_peer_id: Some(target_peer_id),
@@ -4563,151 +4584,52 @@ mod tests {
     }
 
     #[test]
-    fn coordinator_accepts_relay_under_capacity() {
-        let mut coord = make_bp_coordinator(4, Duration::from_secs(5));
+    fn coordinator_relay_consumes_shared_slot() {
+        let (mut coord, table) = make_coord_with_table(4, Duration::from_secs(5));
         let now = Instant::now();
         let from = peer_id_with_byte(0x01);
         let target = peer_id_with_byte(0x02);
-        let frame = make_relay_frame(1, target);
         let source_addr = SocketAddr::from(([127, 0, 0, 1], 5000));
 
         let result = coord
-            .process_punch_me_now_frame(from, source_addr, &frame, now)
+            .process_punch_me_now_frame(from, source_addr, &relay_frame(1, target), now)
             .expect("relay under cap should not error");
 
         assert!(
             result.is_some(),
             "relay under capacity should produce a coordination frame"
         );
-        assert_eq!(coord.relay_slots.len(), 1, "one slot should be allocated");
-        assert_eq!(
-            coord.stats.backpressure_refusals, 0,
-            "no refusal stat increment expected when under cap"
-        );
+        assert_eq!(table.active_count(), 1);
+        assert_eq!(table.backpressure_refusals(), 0);
     }
 
     #[test]
-    fn coordinator_refuses_silently_at_capacity() {
-        let capacity = 2;
-        let mut coord = make_bp_coordinator(capacity, Duration::from_secs(5));
+    fn coordinator_refuses_silently_when_table_at_capacity() {
+        // Pre-fill the shared table from outside the coordinator. The
+        // coordinator's relay attempt then sees the cap and silently
+        // refuses, returning Ok(None).
+        let (mut coord, table) = make_coord_with_table(1, Duration::from_secs(5));
         let now = Instant::now();
+        let other_initiator = SocketAddr::from(([127, 0, 0, 1], 9999));
+        assert!(table.try_acquire(other_initiator, peer_id_with_byte(0xAB), now));
+        assert_eq!(table.active_count(), 1);
+
+        let from = peer_id_with_byte(0x01);
+        let target = peer_id_with_byte(0x02);
         let source_addr = SocketAddr::from(([127, 0, 0, 1], 5000));
-
-        // Fill capacity with two distinct (initiator, target) pairs.
-        for i in 0..capacity {
-            let from = peer_id_with_byte(0x10 + i as u8);
-            let target = peer_id_with_byte(0x20 + i as u8);
-            let frame = make_relay_frame(i as u64 + 1, target);
-            let result = coord
-                .process_punch_me_now_frame(from, source_addr, &frame, now)
-                .expect("under-cap relay should not error");
-            assert!(result.is_some(), "slot {} should be accepted", i);
-        }
-        assert_eq!(coord.relay_slots.len(), capacity);
-
-        // The next distinct pair must be silently refused: Ok(None).
-        let overflow_from = peer_id_with_byte(0xFE);
-        let overflow_target = peer_id_with_byte(0xFD);
-        let overflow_frame = make_relay_frame(99, overflow_target);
         let result = coord
-            .process_punch_me_now_frame(overflow_from, source_addr, &overflow_frame, now)
-            .expect("at-cap refusal must be silent (no error)");
+            .process_punch_me_now_frame(from, source_addr, &relay_frame(1, target), now)
+            .expect("refusal must be silent (Ok)");
 
         assert!(
             result.is_none(),
             "at-cap refusal must produce no coordination frame"
         );
+        assert_eq!(table.active_count(), 1, "refused frame must not insert");
         assert_eq!(
-            coord.relay_slots.len(),
-            capacity,
-            "refused frame must not consume a slot"
-        );
-        assert_eq!(
-            coord.stats.backpressure_refusals, 1,
-            "back-pressure stat must increment on refusal"
-        );
-    }
-
-    #[test]
-    fn coordinator_re_arms_existing_slot_without_consuming_capacity() {
-        let mut coord = make_bp_coordinator(2, Duration::from_secs(5));
-        let now = Instant::now();
-        let source_addr = SocketAddr::from(([127, 0, 0, 1], 5000));
-        let from = peer_id_with_byte(0x01);
-        let target = peer_id_with_byte(0x02);
-        let frame = make_relay_frame(1, target);
-
-        // Fill the first slot.
-        coord
-            .process_punch_me_now_frame(from, source_addr, &frame, now)
-            .expect("first frame ok");
-        assert_eq!(coord.relay_slots.len(), 1);
-
-        // Re-send for the same (from, target) pair: must not consume an
-        // additional slot, must still be accepted.
-        let later = now + Duration::from_millis(500);
-        let result = coord
-            .process_punch_me_now_frame(from, source_addr, &frame, later)
-            .expect("re-arm ok");
-        assert!(result.is_some(), "re-armed slot should still be relayed");
-        assert_eq!(
-            coord.relay_slots.len(),
+            table.backpressure_refusals(),
             1,
-            "re-arming the same pair must not allocate a second slot"
-        );
-        // Slot timestamp should refresh to the later instant.
-        let slot_arrived = coord
-            .relay_slots
-            .get(&(from, target))
-            .copied()
-            .expect("slot present");
-        assert_eq!(
-            slot_arrived, later,
-            "re-arm must refresh the slot timestamp"
-        );
-    }
-
-    #[test]
-    fn coordinator_sweep_reclaims_stale_slots() {
-        let timeout = Duration::from_secs(5);
-        let mut coord = make_bp_coordinator(2, timeout);
-        let now = Instant::now();
-        let source_addr = SocketAddr::from(([127, 0, 0, 1], 5000));
-
-        // Fill capacity.
-        for i in 0..2u8 {
-            let from = peer_id_with_byte(0x10 + i);
-            let target = peer_id_with_byte(0x20 + i);
-            let frame = make_relay_frame(i as u64 + 1, target);
-            coord
-                .process_punch_me_now_frame(from, source_addr, &frame, now)
-                .expect("under-cap ok");
-        }
-        assert_eq!(coord.relay_slots.len(), 2);
-
-        // Advance well past the slot timeout. The next incoming frame's
-        // inline sweep must reclaim both stale slots before applying the
-        // back-pressure check.
-        let much_later = now + timeout + Duration::from_secs(1);
-        let new_from = peer_id_with_byte(0xAA);
-        let new_target = peer_id_with_byte(0xBB);
-        let new_frame = make_relay_frame(42, new_target);
-        let result = coord
-            .process_punch_me_now_frame(new_from, source_addr, &new_frame, much_later)
-            .expect("post-sweep frame should succeed");
-
-        assert!(
-            result.is_some(),
-            "frame after sweep must be accepted (capacity reclaimed)"
-        );
-        assert_eq!(
-            coord.relay_slots.len(),
-            1,
-            "stale slots must be reclaimed; only the new one remains"
-        );
-        assert_eq!(
-            coord.stats.backpressure_refusals, 0,
-            "no refusal expected because sweep freed capacity in time"
+            "table refusal stat must increment"
         );
     }
 
@@ -4715,7 +4637,7 @@ mod tests {
     fn coordinator_non_relay_frame_does_not_consume_slot() {
         // PUNCH_ME_NOW without a target_peer_id is the response/echo path,
         // not a relay request — it must NOT consume a back-pressure slot.
-        let mut coord = make_bp_coordinator(1, Duration::from_secs(5));
+        let (mut coord, table) = make_coord_with_table(1, Duration::from_secs(5));
         let now = Instant::now();
         let source_addr = SocketAddr::from(([127, 0, 0, 1], 5000));
         let from = peer_id_with_byte(0x01);
@@ -4730,9 +4652,47 @@ mod tests {
             .process_punch_me_now_frame(from, source_addr, &frame, now)
             .expect("non-relay frame ok");
         assert_eq!(
-            coord.relay_slots.len(),
+            table.active_count(),
             0,
             "non-relay frame must not consume a slot"
+        );
+    }
+
+    #[test]
+    fn coordinator_drop_releases_owned_slots() {
+        // This is the "explicit completion" path that fixes H2 — when
+        // the connection that hosts a coordinator drops, every slot it
+        // opened must be reclaimed without waiting out the idle timeout.
+        let (mut coord, table) = make_coord_with_table(8, Duration::from_secs(5));
+        let now = Instant::now();
+        let from = peer_id_with_byte(0x01);
+        let source_addr = SocketAddr::from(([127, 0, 0, 1], 5000));
+
+        // Open three slots from this coordinator (three distinct targets).
+        for t in [0xAA, 0xBB, 0xCC] {
+            let _ = coord
+                .process_punch_me_now_frame(
+                    from,
+                    source_addr,
+                    &relay_frame(1, peer_id_with_byte(t)),
+                    now,
+                )
+                .expect("relay under cap ok");
+        }
+        // And one slot from a *different* initiator (a different
+        // BootstrapCoordinator instance would normally own this; we
+        // simulate by acquiring directly).
+        let other_initiator = SocketAddr::from(([10, 0, 0, 1], 7777));
+        assert!(table.try_acquire(other_initiator, peer_id_with_byte(0xDD), now));
+        assert_eq!(table.active_count(), 4);
+
+        // Drop the coordinator. Its three slots must be released; the
+        // other initiator's slot must remain.
+        drop(coord);
+        assert_eq!(
+            table.active_count(),
+            1,
+            "Drop must release every slot owned by this initiator address"
         );
     }
 }
