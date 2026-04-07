@@ -1424,11 +1424,11 @@ impl NatTraversalEndpoint {
             };
             // Use the local address as the public address (will be updated when external address is discovered)
             let server = MasqueRelayServer::new(relay_config, local_addr);
-            info!(
-                "Created MASQUE relay server on {} (symmetric P2P node)",
-                local_addr
-            );
-            Some(Arc::new(server))
+            info!("Created MASQUE relay server on {local_addr} (symmetric P2P node)");
+            let server = Arc::new(server);
+            // Spawn periodic cleanup so expired sessions are reaped automatically
+            let _cleanup_handle = MasqueRelayServer::spawn_cleanup_task(&server);
+            Some(server)
         };
 
         // Clone the callback for background tasks before moving into endpoint
@@ -1848,11 +1848,11 @@ impl NatTraversalEndpoint {
             };
             // Use the local address as the public address (will be updated when external address is discovered)
             let server = MasqueRelayServer::new(relay_config, local_addr);
-            info!(
-                "Created MASQUE relay server on {} (symmetric P2P node)",
-                local_addr
-            );
-            Some(Arc::new(server))
+            info!("Created MASQUE relay server on {local_addr} (symmetric P2P node)");
+            let server = Arc::new(server);
+            // Spawn periodic cleanup so expired sessions are reaped automatically
+            let _cleanup_handle = MasqueRelayServer::spawn_cleanup_task(&server);
+            Some(server)
         };
 
         // Clone the callback for background tasks before moving into endpoint
@@ -3450,16 +3450,29 @@ impl NatTraversalEndpoint {
         ),
         NatTraversalError,
     > {
-        // Check if we already have an active session to this relay
+        // Check if we already have an active session to this relay.
+        // If so, open a new bidi stream on the existing connection and perform
+        // a fresh CONNECT-UDP handshake so the caller gets a usable socket.
         // DashMap provides lock-free .get() that returns Option<Ref<K, V>>
         if let Some(session) = self.relay_sessions.get(&relay_addr) {
             if session.is_active() {
-                debug!("Reusing existing relay session to {}", relay_addr);
-                return Ok((session.public_address, None));
+                debug!("Reusing existing relay session to {relay_addr}");
+                let connection = session.connection.clone();
+                let existing_public_address = session.public_address;
+                // Drop the DashMap ref before awaiting to avoid holding it across await
+                drop(session);
+
+                return self
+                    .open_relay_stream_and_handshake(
+                        connection,
+                        relay_addr,
+                        existing_public_address,
+                    )
+                    .await;
             }
         }
 
-        info!("Establishing relay session to {}", relay_addr);
+        info!("Establishing relay session to {relay_addr}");
 
         // Prefer reusing an existing peer connection to the relay.
         // The relay server's handle_relay_requests is spawned for each ACCEPTED
@@ -3467,7 +3480,7 @@ impl NatTraversalEndpoint {
         // already listening for bidi streams.
         let connection = if let Some(existing) = self.connections.get(&relay_addr) {
             if existing.close_reason().is_none() {
-                info!("Reusing existing peer connection to relay {}", relay_addr);
+                info!("Reusing existing peer connection to relay {relay_addr}");
                 existing.clone()
             } else {
                 // Existing connection is dead — fall back to creating a new one
@@ -3479,73 +3492,9 @@ impl NatTraversalEndpoint {
             self.connect_new_to_relay(relay_addr).await?
         };
 
-        // Open a bidirectional stream for the CONNECT-UDP handshake
-        let (mut send_stream, mut recv_stream) = connection.open_bi().await.map_err(|e| {
-            NatTraversalError::ConnectionFailed(format!("Failed to open relay stream: {}", e))
-        })?;
-
-        // Send CONNECT-UDP Bind request with length prefix (stream stays open for data)
-        let request = ConnectUdpRequest::bind_any();
-        let request_bytes = request.encode();
-
-        debug!("Sending CONNECT-UDP Bind request to relay: {:?}", request);
-
-        // Length-prefixed framing: [4-byte BE length][payload]
-        let req_len = request_bytes.len() as u32;
-        send_stream
-            .write_all(&req_len.to_be_bytes())
-            .await
-            .map_err(|e| {
-                NatTraversalError::ConnectionFailed(format!("Failed to send request length: {}", e))
-            })?;
-        send_stream.write_all(&request_bytes).await.map_err(|e| {
-            NatTraversalError::ConnectionFailed(format!("Failed to send relay request: {}", e))
-        })?;
-        // Do NOT call finish() — stream stays open for data forwarding
-
-        // Read length-prefixed response
-        let mut resp_len_buf = [0u8; 4];
-        recv_stream
-            .read_exact(&mut resp_len_buf)
-            .await
-            .map_err(|e| {
-                NatTraversalError::ConnectionFailed(format!(
-                    "Failed to read relay response length: {}",
-                    e
-                ))
-            })?;
-        let resp_len = u32::from_be_bytes(resp_len_buf) as usize;
-        let mut response_bytes = vec![0u8; resp_len];
-        recv_stream
-            .read_exact(&mut response_bytes)
-            .await
-            .map_err(|e| {
-                NatTraversalError::ConnectionFailed(format!("Failed to read relay response: {}", e))
-            })?;
-
-        let response = ConnectUdpResponse::decode(&mut bytes::Bytes::from(response_bytes))
-            .map_err(|e| {
-                NatTraversalError::ProtocolError(format!("Invalid relay response: {}", e))
-            })?;
-
-        if !response.is_success() {
-            let reason = response.reason.unwrap_or_else(|| "unknown".to_string());
-            return Err(NatTraversalError::ConnectionFailed(format!(
-                "Relay rejected request: {} (status {})",
-                reason, response.status
-            )));
-        }
-
-        let public_address = response.proxy_public_address;
-
-        info!(
-            "Relay session established with public address: {:?}",
-            public_address
-        );
-
-        // Create the MasqueRelaySocket from the open streams
-        let relay_socket = public_address
-            .map(|addr| crate::masque::MasqueRelaySocket::new(send_stream, recv_stream, addr));
+        let (public_address, relay_socket) = self
+            .open_relay_stream_and_handshake(connection.clone(), relay_addr, None)
+            .await?;
 
         // Store the session
         let session = RelaySession {
@@ -3557,6 +3506,94 @@ impl NatTraversalEndpoint {
 
         // DashMap provides lock-free .insert()
         self.relay_sessions.insert(relay_addr, session);
+
+        Ok((public_address, relay_socket))
+    }
+
+    /// Open a new bidi stream on `connection`, perform the CONNECT-UDP
+    /// handshake, and return the public address together with a relay socket.
+    ///
+    /// When `existing_public_address` is `Some`, it is used as a fallback if
+    /// the relay response does not include a proxy address (session-reuse
+    /// path). When `None`, the address comes solely from the response
+    /// (new-session path).
+    async fn open_relay_stream_and_handshake(
+        &self,
+        connection: InnerConnection,
+        relay_addr: SocketAddr,
+        existing_public_address: Option<SocketAddr>,
+    ) -> Result<
+        (
+            Option<SocketAddr>,
+            Option<Arc<crate::masque::MasqueRelaySocket>>,
+        ),
+        NatTraversalError,
+    > {
+        // Open a bidirectional stream for the CONNECT-UDP handshake
+        let (mut send_stream, mut recv_stream) = connection.open_bi().await.map_err(|e| {
+            NatTraversalError::ConnectionFailed(format!("Failed to open relay stream: {e}"))
+        })?;
+
+        // Send CONNECT-UDP Bind request with length prefix (stream stays open for data)
+        let request = ConnectUdpRequest::bind_any();
+        let request_bytes = request.encode();
+
+        debug!("Sending CONNECT-UDP Bind request to relay: {request:?}");
+
+        // Length-prefixed framing: [4-byte BE length][payload]
+        let req_len = request_bytes.len() as u32;
+        send_stream
+            .write_all(&req_len.to_be_bytes())
+            .await
+            .map_err(|e| {
+                NatTraversalError::ConnectionFailed(format!("Failed to send request length: {e}"))
+            })?;
+        send_stream.write_all(&request_bytes).await.map_err(|e| {
+            NatTraversalError::ConnectionFailed(format!("Failed to send relay request: {e}"))
+        })?;
+        // Do NOT call finish() -- stream stays open for data forwarding
+
+        // Read length-prefixed response
+        let mut resp_len_buf = [0u8; 4];
+        recv_stream
+            .read_exact(&mut resp_len_buf)
+            .await
+            .map_err(|e| {
+                NatTraversalError::ConnectionFailed(format!(
+                    "Failed to read relay response length: {e}"
+                ))
+            })?;
+        let resp_len = u32::from_be_bytes(resp_len_buf) as usize;
+        let mut response_bytes = vec![0u8; resp_len];
+        recv_stream
+            .read_exact(&mut response_bytes)
+            .await
+            .map_err(|e| {
+                NatTraversalError::ConnectionFailed(format!("Failed to read relay response: {e}"))
+            })?;
+
+        let response = ConnectUdpResponse::decode(&mut bytes::Bytes::from(response_bytes))
+            .map_err(|e| {
+                NatTraversalError::ProtocolError(format!("Invalid relay response: {e}"))
+            })?;
+
+        if !response.is_success() {
+            let reason = response.reason.unwrap_or_else(|| "unknown".to_string());
+            return Err(NatTraversalError::ConnectionFailed(format!(
+                "Relay rejected request: {reason} (status {})",
+                response.status
+            )));
+        }
+
+        // Use the address from the response, falling back to the stored one
+        // when reusing an existing session.
+        let public_address = response.proxy_public_address.or(existing_public_address);
+
+        info!("Relay session established with public address: {public_address:?}");
+
+        // Create the MasqueRelaySocket from the open streams
+        let relay_socket = public_address
+            .map(|addr| crate::masque::MasqueRelaySocket::new(send_stream, recv_stream, addr));
 
         // Notify the relay manager
         if let Some(ref manager) = self.relay_manager {
@@ -6995,6 +7032,91 @@ mod tests {
         let _config = NatTraversalConfig::default();
         // Note: This will fail due to ServerConfig requirement in new() - for illustration only
         // let endpoint = NatTraversalEndpoint::new(config, None).unwrap();
+    }
+
+    #[test]
+    fn test_bootstrap_node_defaults_can_coordinate_false() {
+        let addr: SocketAddr = "1.2.3.4:5000".parse().unwrap();
+        let node = BootstrapNode::new(addr);
+        assert!(
+            !node.can_coordinate,
+            "New bootstrap nodes should default to can_coordinate=false"
+        );
+    }
+
+    /// Verify that `select_coordinator` filters by `can_coordinate` and
+    /// weights by RTT and coordination_count.
+    #[tokio::test]
+    async fn test_select_coordinator_quality_weighted() {
+        let config = NatTraversalConfig {
+            known_peers: Vec::new(),
+            bind_addr: Some("127.0.0.1:0".parse().unwrap()),
+            ..Default::default()
+        };
+
+        let endpoint = NatTraversalEndpoint::new(config, None, None)
+            .await
+            .expect("Endpoint creation should succeed");
+
+        // Initially no coordinators available (no known_peers, no connections)
+        assert!(
+            endpoint.select_coordinator().is_none(),
+            "No coordinators should be available initially"
+        );
+
+        // Add some bootstrap nodes with varying quality
+        {
+            let mut nodes = endpoint.bootstrap_nodes.write();
+            nodes.push(BootstrapNode {
+                address: "1.2.3.4:5000".parse().unwrap(),
+                last_seen: std::time::Instant::now(),
+                can_coordinate: false, // NOT eligible
+                rtt: Some(Duration::from_millis(10)),
+                coordination_count: 0,
+            });
+            nodes.push(BootstrapNode {
+                address: "5.6.7.8:6000".parse().unwrap(),
+                last_seen: std::time::Instant::now(),
+                can_coordinate: true, // eligible - low RTT
+                rtt: Some(Duration::from_millis(20)),
+                coordination_count: 0,
+            });
+            nodes.push(BootstrapNode {
+                address: "9.10.11.12:7000".parse().unwrap(),
+                last_seen: std::time::Instant::now(),
+                can_coordinate: true, // eligible - high RTT
+                rtt: Some(Duration::from_millis(500)),
+                coordination_count: 10,
+            });
+        }
+
+        // select_coordinator must never return the non-coordinator node
+        let non_coord: SocketAddr = "1.2.3.4:5000".parse().unwrap();
+        for _ in 0..100 {
+            let selected = endpoint.select_coordinator();
+            assert!(selected.is_some(), "Should find at least one coordinator");
+            assert_ne!(
+                selected.unwrap(),
+                non_coord,
+                "Should never select a node with can_coordinate=false"
+            );
+        }
+
+        // With many trials, the low-RTT node should be selected more often
+        let mut low_rtt_count = 0u32;
+        let trials = 1000;
+        let low_rtt_addr: SocketAddr = "5.6.7.8:6000".parse().unwrap();
+        for _ in 0..trials {
+            if endpoint.select_coordinator() == Some(low_rtt_addr) {
+                low_rtt_count += 1;
+            }
+        }
+        // The low-RTT node should be selected significantly more often
+        // (at least 60% of the time given the 25x RTT advantage)
+        assert!(
+            low_rtt_count > trials * 60 / 100,
+            "Low-RTT node should be preferred, got {low_rtt_count}/{trials}"
+        );
     }
 
     #[test]
