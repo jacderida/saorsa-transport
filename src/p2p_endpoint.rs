@@ -2332,28 +2332,11 @@ impl P2pEndpoint {
         Ok(peer_conn)
     }
 
-    /// Check if we're connected to a specific address
-    async fn record_direct_incoming_stats(&self, remote_addr: SocketAddr) {
-        let mut stats = self.stats.write().await;
-        stats.active_connections += 1;
-        stats.successful_connections += 1;
-        stats.direct_connections += 1;
-        stats.active_direct_incoming_connections += 1;
-        let now = Instant::now();
-
-        match socket_addr_scope(remote_addr) {
-            Some(ReachabilityScope::Loopback) => {
-                stats.last_direct_loopback_at = Some(now);
-            }
-            Some(ReachabilityScope::LocalNetwork) => {
-                stats.last_direct_local_at = Some(now);
-            }
-            Some(ReachabilityScope::Global) => {
-                stats.last_direct_global_at = Some(now);
-            }
-            None => {}
-        }
-    }
+    // NOTE: direct incoming stats (active_direct_incoming_connections and
+    // scope timestamps) are recorded exclusively in the event_callback
+    // closure when NatTraversalEvent::ConnectionEstablished is emitted by
+    // spawn_connection_handler. No separate increment here to avoid
+    // double-counting.
 
     async fn is_connected_to_addr(&self, addr: SocketAddr) -> bool {
         let transport_addr = TransportAddr::Quic(addr);
@@ -2429,7 +2412,8 @@ impl P2pEndpoint {
                     .await
                     .insert(remote_addr, peer_conn.clone());
 
-                self.record_direct_incoming_stats(remote_addr).await;
+                // Stats are recorded by the event_callback when
+                // spawn_connection_handler emits ConnectionEstablished.
 
                 // They initiated the connection to us = Server side
                 let _ = self.event_tx.send(P2pEvent::PeerConnected {

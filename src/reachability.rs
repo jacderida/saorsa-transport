@@ -172,5 +172,6 @@ mod tests {
         assert!(TraversalMethod::Direct.is_direct());
         assert!(!TraversalMethod::HolePunch.is_direct());
         assert!(!TraversalMethod::Relay.is_direct());
+        assert!(!TraversalMethod::PortPrediction.is_direct());
     }
 }

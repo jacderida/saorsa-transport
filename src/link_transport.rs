@@ -1030,7 +1030,7 @@ pub type BoxStream<'a, T> = Pin<Box<dyn futures_util::Stream<Item = T> + Send + 
 ///
 /// This trait abstracts a single QUIC connection, providing methods to
 /// open streams and send/receive datagrams. Connections are obtained via
-/// [`LinkTransport::dial`] or [`LinkTransport::accept`].
+/// [`LinkTransport::dial_addr`] or [`LinkTransport::accept`].
 ///
 /// # Stream Types
 ///

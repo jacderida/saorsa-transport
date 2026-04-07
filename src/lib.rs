@@ -203,8 +203,8 @@ pub mod tracing;
 /// Best-effort UPnP IGD port mapping for NAT traversal assistance.
 ///
 /// This module is feature-gated behind `upnp` (enabled by default). When
-/// disabled, [`UpnpMappingService`] is still present but is a no-op stub
-/// that always reports [`UpnpState::Unavailable`].
+/// disabled, [`upnp::UpnpMappingService`] is still present but is a no-op stub
+/// that always reports [`upnp::UpnpState::Unavailable`].
 pub mod upnp;
 
 // Public modules with new structure

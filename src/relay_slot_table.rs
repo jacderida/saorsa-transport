@@ -8,7 +8,7 @@
 //! Node-wide hole-punch coordinator back-pressure (Tier 4 lite).
 //!
 //! Every connection that lands at a node and acts as a hole-punch coordinator
-//! shares one [`RelaySlotTable`]. The table caps the number of in-flight
+//! shares one [`RelaySlotTable`](crate::relay_slot_table::RelaySlotTable). The table caps the number of in-flight
 //! `(initiator, target)` relay sessions across the entire node, so a storm
 //! of cold-starting peers cannot pile up unbounded coordination work on a
 //! single bootstrap. When the cap is reached, additional `PUNCH_ME_NOW`
@@ -24,12 +24,12 @@
 //! (the punch traffic flows initiator↔target, bypassing the coordinator),
 //! so slot release happens via three mechanisms:
 //!
-//! 1. **Inactivity timeout** ([`RelaySlotTable::idle_timeout`]). If no new
+//! 1. **Inactivity timeout** ([`RelaySlotTable::idle_timeout`](crate::relay_slot_table::RelaySlotTable::idle_timeout)). If no new
 //!    rounds for the same key arrive within this window the session is
 //!    considered done — either the punch succeeded (no more rounds needed)
 //!    or it definitively failed (the initiator rotated away). Default 5s.
 //!
-//! 2. **Connection close** via [`RelaySlotTable::release_for_initiator`].
+//! 2. **Connection close** via `RelaySlotTable::release_for_initiator`.
 //!    When the initiator's connection drops, every slot it owned is
 //!    reclaimed immediately rather than waiting for the inactivity timeout.
 //!    Called from `BootstrapCoordinator::Drop`.

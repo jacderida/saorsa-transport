@@ -24,7 +24,7 @@
 //!
 //! Concretely this means:
 //!
-//! 1. [`UpnpMappingService::start`] never returns an error and never blocks
+//! 1. [`UpnpMappingService::start`](crate::upnp::UpnpMappingService::start) never returns an error and never blocks
 //!    on network I/O — it spawns a background task and returns immediately.
 //! 2. All failures are swallowed and logged at `debug` level. The only
 //!    `info` log line is the success path.
@@ -34,7 +34,7 @@
 //! 4. The lease is finite (one hour by default), so a crashed process
 //!    cannot leak a permanent mapping on the gateway.
 //!
-//! Callers consume the service by polling [`UpnpMappingService::current`]
+//! Callers consume the service by polling [`UpnpMappingService::current`](crate::upnp::UpnpMappingService::current)
 //! when they want the most recent state. The poll is a lock-free atomic
 //! load on the underlying `tokio::sync::watch` channel, so it is cheap to
 //! call from the candidate discovery hot path.

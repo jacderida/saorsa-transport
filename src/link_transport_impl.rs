@@ -489,7 +489,7 @@ impl P2pLinkTransport {
                         P2pEvent::PeerConnected {
                             addr,
                             public_key,
-                            side: _,
+                            side,
                             traversal_method,
                         } => {
                             // Extract SocketAddr (currently UDP-only)
@@ -498,7 +498,12 @@ impl P2pLinkTransport {
                                 SocketAddr::from(([0, 0, 0, 0], 0))
                             });
                             let mut caps = Capabilities::new_connected(socket_addr);
-                            if traversal_method.is_direct() {
+                            // Only promote relay/coordinator when we connected to
+                            // them directly (Client side), proving they accept
+                            // inbound connections. A peer that connected to us
+                            // (Server side) only proves they can make outbound
+                            // connections, not that they are reachable by others.
+                            if traversal_method.is_direct() && side.is_client() {
                                 caps.supports_relay = true;
                                 caps.supports_coordination = true;
                                 caps.direct_reachability_scope =

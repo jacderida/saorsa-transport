@@ -868,7 +868,7 @@ impl MasqueRelayServer {
     /// of unreliable QUIC datagrams. This avoids the MTU limitation that causes
     /// "datagram too large" errors for QUIC Initial packets (1200+ bytes).
     ///
-    /// Protocol: each forwarded packet is framed as [4-byte BE length][payload].
+    /// Protocol: each forwarded packet is framed as \[4-byte BE length\]\[payload\].
     pub async fn run_stream_forwarding_loop(
         self: &Arc<Self>,
         session_id: u64,

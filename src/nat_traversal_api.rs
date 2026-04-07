@@ -479,7 +479,7 @@ pub struct NatTraversalConfig {
     /// Internally tunes the QUIC per-stream receive window so that a single
     /// message of this size can be transmitted without flow-control rejection.
     ///
-    /// Default: [`P2pConfig::DEFAULT_MAX_MESSAGE_SIZE`] (1 MiB).
+    /// Default: [`crate::P2pConfig::DEFAULT_MAX_MESSAGE_SIZE`] (1 MiB).
     #[serde(default = "default_max_message_size")]
     pub max_message_size: usize,
 
