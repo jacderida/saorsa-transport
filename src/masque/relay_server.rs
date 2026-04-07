@@ -39,6 +39,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 
 use crate::VarInt;
 use crate::high_level::Connection as QuicConnection;
@@ -1116,6 +1117,45 @@ impl MasqueRelayServer {
             .map(|(id, _)| *id)
             .collect()
     }
+
+    /// Spawn a background task that periodically cleans up expired relay sessions.
+    ///
+    /// Uses [`MasqueRelayConfig::cleanup_interval`] to determine how often the
+    /// cleanup runs. The task holds a [`std::sync::Weak`] reference to the server,
+    /// so it will stop automatically once the last [`Arc<MasqueRelayServer>`] is
+    /// dropped.
+    ///
+    /// Returns a [`JoinHandle`] that can be used to abort the task if needed.
+    pub fn spawn_cleanup_task(server: &Arc<Self>) -> JoinHandle<()> {
+        let weak = Arc::downgrade(server);
+        let interval_duration = server.config.cleanup_interval;
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(interval_duration);
+            // The first tick completes immediately; skip it so we don't
+            // run cleanup right at startup before any sessions exist.
+            interval.tick().await;
+
+            loop {
+                interval.tick().await;
+
+                let Some(server) = weak.upgrade() else {
+                    tracing::debug!("Relay server dropped, stopping cleanup task");
+                    break;
+                };
+
+                let cleaned = server.cleanup_expired_sessions().await;
+                if cleaned > 0 {
+                    let remaining = server.session_count().await;
+                    tracing::info!(
+                        cleaned,
+                        remaining,
+                        "Periodic relay session cleanup completed"
+                    );
+                }
+            }
+        })
+    }
 }
 
 /// Summary information about a session
@@ -1505,5 +1545,53 @@ mod tests {
 
         // bind_any has no target, so no bridging
         assert!(!info.is_bridging);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_task_stops_when_server_dropped() {
+        let config = MasqueRelayConfig {
+            cleanup_interval: Duration::from_millis(50),
+            ..Default::default()
+        };
+        let server = Arc::new(MasqueRelayServer::new(config, test_addr(9000)));
+        let handle = MasqueRelayServer::spawn_cleanup_task(&server);
+
+        // Let the cleanup task run at least one tick
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(!handle.is_finished());
+
+        // Drop the server; the Weak reference will fail to upgrade
+        drop(server);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(handle.is_finished());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_task_reaps_expired_sessions() {
+        let config = MasqueRelayConfig {
+            cleanup_interval: Duration::from_millis(50),
+            session_config: RelaySessionConfig {
+                session_timeout: Duration::from_millis(10),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let server = Arc::new(MasqueRelayServer::new(config, test_addr(9000)));
+        let _handle = MasqueRelayServer::spawn_cleanup_task(&server);
+
+        // Create a session
+        let request = ConnectUdpRequest::bind_any();
+        let response = server
+            .handle_connect_request(&request, client_addr(1))
+            .await
+            .unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(server.session_count().await, 1);
+
+        // Wait for the session to expire AND for the cleanup tick
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // The periodic cleanup should have reaped the expired session
+        assert_eq!(server.session_count().await, 0);
     }
 }
