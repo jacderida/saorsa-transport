@@ -2012,8 +2012,11 @@ impl P2pEndpoint {
             target, coordinator
         );
 
-        // First ensure we're connected to the coordinator
-        if !self.is_connected_to_addr(coordinator).await {
+        // First ensure we're connected to the coordinator.
+        // Check both connected_peers (app-level) and the DashMap (transport-level)
+        // to avoid creating unnecessary duplicate connections when the stale reaper
+        // has cleaned connected_peers but the DashMap still has a live connection.
+        if !self.is_connected_to_addr(coordinator).await && !self.inner.is_connected(&coordinator) {
             info!(
                 "try_hole_punch: connecting to coordinator {} first",
                 coordinator

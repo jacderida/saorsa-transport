@@ -3768,12 +3768,15 @@ impl NatTraversalEndpoint {
                     let remote_address = connection.remote_address();
                     info!("Accepted connection from {} (unified path)", remote_address);
 
-                    // Only insert if no existing LIVE connection to this address.
-                    // Unconditionally overwriting would replace a working connection
-                    // with a duplicate that may die shortly, leaving the DashMap
-                    // pointing at a dead connection while the original's reader
-                    // task still runs.
-                    // Check both raw and normalized forms (IPv4-mapped IPv6).
+                    // If an existing live connection to this address exists,
+                    // replace it with the newer one. The remote peer just
+                    // completed a fresh TLS handshake on this connection, so
+                    // this is the one they are actively using. Closing the
+                    // newer connection (the old behavior) kills the remote's
+                    // active connection and breaks identity exchange.
+                    //
+                    // This is consistent with `add_connection` which also
+                    // always overwrites with the newer connection.
                     let normalized_remote = crate::shared::normalize_socket_addr(remote_address);
                     let has_live = |addr: &std::net::SocketAddr| -> bool {
                         connections2
@@ -3782,19 +3785,26 @@ impl NatTraversalEndpoint {
                     };
                     if has_live(&remote_address) || has_live(&normalized_remote) {
                         info!(
-                            "accept_loop: {} already has a live connection, keeping existing",
+                            "accept_loop: {} replacing existing connection with newer",
                             remote_address
                         );
-                        connection.close(0u32.into(), b"duplicate");
-                        return; // exit this handshake task
+                        // Close the OLD connection, not the new one
+                        if let Some(old) = connections2.get(&remote_address) {
+                            old.value().close(0u32.into(), b"superseded");
+                        } else if let Some(old) = connections2.get(&normalized_remote) {
+                            old.value().close(0u32.into(), b"superseded");
+                        }
+                        // Allow re-emission so the new connection gets a
+                        // reader task and PeerConnected event
+                        emitted2.remove(&remote_address);
+                        emitted2.remove(&normalized_remote);
                     }
                     connections2.insert(remote_address, connection.clone());
 
                     // Only forward to handshake_tx if this is the first time
-                    // we've seen this address. Without this guard, a
-                    // simultaneous-open (both sides connect at the same time)
-                    // sends two entries to handshake_tx, causing duplicate
-                    // reader tasks for the same connection address.
+                    // (or first time since replacement) we've seen this address.
+                    // Without this guard, simultaneous-open sends two entries
+                    // to handshake_tx, causing duplicate reader tasks.
                     if emitted2.insert(remote_address) {
                         if let Some(ref server) = relay_server2 {
                             let conn_clone = connection.clone();
