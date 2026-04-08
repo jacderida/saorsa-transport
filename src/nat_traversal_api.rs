@@ -3831,14 +3831,25 @@ impl NatTraversalEndpoint {
                     };
                     if has_live(&remote_address) || has_live(&normalized_remote) {
                         info!(
-                            "accept_loop: {} replacing existing connection with newer",
+                            "accept_loop: {} replacing existing connection with newer (deferred close in 5s)",
                             remote_address
                         );
-                        // Close the OLD connection, not the new one
-                        if let Some(old) = connections2.get(&remote_address) {
-                            old.value().close(0u32.into(), b"superseded");
-                        } else if let Some(old) = connections2.get(&normalized_remote) {
-                            old.value().close(0u32.into(), b"superseded");
+                        // Close the old connection after a grace period so
+                        // in-flight DHT operations can complete. Closing
+                        // immediately causes the remote to tear down all
+                        // state (including pending queries). The 5s delay
+                        // allows responses to arrive before the connection
+                        // is torn down.
+                        let old_conn = if let Some(old) = connections2.get(&remote_address) {
+                            Some(old.value().clone())
+                        } else {
+                            connections2.get(&normalized_remote).map(|old| old.value().clone())
+                        };
+                        if let Some(old) = old_conn {
+                            tokio::spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                old.close(0u32.into(), b"superseded");
+                            });
                         }
                         // Allow re-emission so the new connection gets a
                         // reader task and PeerConnected event
