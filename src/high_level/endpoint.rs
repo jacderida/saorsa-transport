@@ -378,6 +378,21 @@ impl Endpoint {
         self.rebind_abstract(self.runtime.wrap_udp_socket(socket)?)
     }
 
+    /// Clone the current underlying socket.
+    ///
+    /// Used by the MASQUE relay to snapshot the original socket before
+    /// `rebind_abstract` replaces it — the relay connection's own QUIC
+    /// traffic must continue on the original socket to avoid a circular
+    /// dependency (the tunnel carrying itself).
+    pub fn current_socket(&self) -> io::Result<Arc<dyn AsyncUdpSocket>> {
+        let inner = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("Endpoint state mutex poisoned"))?;
+        Ok(inner.socket.clone())
+    }
+
     /// Switch to a new UDP socket
     ///
     /// Allows the endpoint's address to be updated live, affecting all active connections. Incoming

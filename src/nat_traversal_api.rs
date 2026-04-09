@@ -3396,13 +3396,8 @@ impl NatTraversalEndpoint {
     pub async fn establish_relay_session(
         &self,
         relay_addr: SocketAddr,
-    ) -> Result<
-        (
-            Option<SocketAddr>,
-            Option<Arc<crate::masque::MasqueRelaySocket>>,
-        ),
-        NatTraversalError,
-    > {
+    ) -> Result<(Option<SocketAddr>, Option<crate::masque::RawRelayStreams>), NatTraversalError>
+    {
         // Check if we already have an active session to this relay
         // DashMap provides lock-free .get() that returns Option<Ref<K, V>>
         if let Some(session) = self.relay_sessions.get(&relay_addr) {
@@ -3502,9 +3497,12 @@ impl NatTraversalEndpoint {
             public_address
         );
 
-        // Create the MasqueRelaySocket from the open streams
-        let relay_socket = public_address
-            .map(|addr| crate::masque::MasqueRelaySocket::new(send_stream, recv_stream, addr));
+        // Return the raw streams — the caller constructs the socket with
+        // the additional context it needs (e.g. relay-server bypass socket).
+        let raw_streams = public_address.map(|_| crate::masque::RawRelayStreams {
+            send_stream,
+            recv_stream,
+        });
 
         // Store the session
         let session = RelaySession {
@@ -3526,7 +3524,7 @@ impl NatTraversalEndpoint {
             }
         }
 
-        Ok((public_address, relay_socket))
+        Ok((public_address, raw_streams))
     }
 
     /// Create a fresh QUIC connection to a relay server.
@@ -4106,12 +4104,34 @@ impl NatTraversalEndpoint {
             relay_public_addr
         );
 
-        // Step 3: Rebind the Quinn endpoint to route through the relay
+        // Step 3: Rebind the Quinn endpoint to route through the relay.
+        //
+        // Snapshot the original socket BEFORE rebinding so the relay
+        // connection's own QUIC traffic can bypass the tunnel (avoiding
+        // the circular dependency where the tunnel carries itself).
         let endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
             NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
         })?;
 
-        endpoint.rebind_abstract(relay_socket).map_err(|e| {
+        let original_socket = endpoint.current_socket().map_err(|e| {
+            NatTraversalError::ConnectionFailed(format!(
+                "Failed to snapshot original socket: {}",
+                e
+            ))
+        })?;
+
+        // Wrap the relay socket with bypass support: traffic to the relay
+        // server goes through the original socket, everything else through
+        // the tunnel.
+        let bypass_socket = crate::masque::MasqueRelaySocket::new(
+            relay_socket.send_stream,
+            relay_socket.recv_stream,
+            relay_public_addr,
+            bootstrap_addr,
+            original_socket,
+        );
+
+        endpoint.rebind_abstract(bypass_socket).map_err(|e| {
             NatTraversalError::ConnectionFailed(format!(
                 "Failed to rebind endpoint to relay socket: {}",
                 e
@@ -5377,6 +5397,7 @@ impl NatTraversalEndpoint {
                 let accepted_addrs_tx = self.accepted_addrs_tx.clone();
                 let relay_advertised_peers_store = self.relay_advertised_peers.clone();
                 let server_config = self.server_config.clone();
+                let endpoint_for_socket = self.inner_endpoint.clone();
 
                 tokio::spawn(async move {
                     info!(
@@ -5510,13 +5531,27 @@ impl NatTraversalEndpoint {
                     relay_sessions.insert(bootstrap, session);
 
                     // Create a secondary Quinn endpoint on the MasqueRelaySocket.
-                    // This endpoint accepts QUIC connections arriving via the relay's
-                    // forwarding loop. We cannot rebind the main endpoint (circular
-                    // dependency — the relay connection itself would loop).
+                    // Snapshot the original socket so the relay connection's own
+                    // QUIC traffic bypasses the tunnel (avoids circular dependency).
+                    let original_socket = match &endpoint_for_socket {
+                        Some(ep) => match ep.current_socket() {
+                            Ok(s) => s,
+                            Err(e) => {
+                                warn!("Failed to snapshot original socket: {e}");
+                                return;
+                            }
+                        },
+                        None => {
+                            warn!("No endpoint for relay socket bypass");
+                            return;
+                        }
+                    };
                     let relay_socket = crate::masque::MasqueRelaySocket::new(
                         send_stream,
                         recv_stream,
                         relay_public_addr,
+                        bootstrap,
+                        original_socket,
                     );
 
                     let runtime = match crate::high_level::default_runtime() {

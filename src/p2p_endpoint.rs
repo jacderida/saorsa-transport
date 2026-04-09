@@ -1950,7 +1950,7 @@ impl P2pEndpoint {
         );
 
         // Step 1: Establish relay session (control plane handshake)
-        let (public_addr, relay_socket) = self
+        let (public_addr, raw_streams) = self
             .inner
             .establish_relay_session(relay_addr)
             .await
@@ -1961,14 +1961,29 @@ impl P2pEndpoint {
             relay_addr, public_addr
         );
 
-        let relay_socket = relay_socket
-            .ok_or_else(|| EndpointError::Connection("Relay did not provide socket".to_string()))?;
+        let raw_streams = raw_streams.ok_or_else(|| {
+            EndpointError::Connection("Relay did not provide streams".to_string())
+        })?;
 
         // Step 4: Create a new Quinn endpoint with the relay socket
         let existing_endpoint = self
             .inner
             .get_endpoint()
             .ok_or_else(|| EndpointError::Config("QUIC endpoint not available".to_string()))?;
+
+        let relay_public_addr = public_addr.ok_or_else(|| {
+            EndpointError::Connection("Relay did not provide address".to_string())
+        })?;
+        let original_socket = existing_endpoint.current_socket().map_err(|e| {
+            EndpointError::Connection(format!("Failed to get original socket: {e}"))
+        })?;
+        let relay_socket = crate::masque::MasqueRelaySocket::new(
+            raw_streams.send_stream,
+            raw_streams.recv_stream,
+            relay_public_addr,
+            relay_addr,
+            original_socket,
+        );
 
         let client_config = existing_endpoint
             .default_client_config
