@@ -2569,6 +2569,16 @@ impl P2pEndpoint {
         stats.total_bootstrap_nodes += 1;
     }
 
+    /// Check if the proactive relay session is still alive.
+    ///
+    /// Returns `true` if no relay was established (nothing to monitor) or the
+    /// relay's underlying QUIC connection is still open. Returns `false` if a
+    /// relay was established but the session has died — the caller should
+    /// rebind.
+    pub fn is_relay_healthy(&self) -> bool {
+        self.inner.is_relay_healthy()
+    }
+
     /// Enable or disable relay serving on this node's MASQUE relay server.
     ///
     /// Delegates to [`NatTraversalEndpoint::set_relay_serving_enabled`].
