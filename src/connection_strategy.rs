@@ -167,6 +167,8 @@ pub struct StrategyConfig {
     pub max_holepunch_rounds: u32,
     /// Whether to attempt IPv6 connections
     pub ipv6_enabled: bool,
+    /// Whether to attempt hole-punch NAT traversal
+    pub holepunch_enabled: bool,
     /// Whether to attempt relay connections as final fallback
     pub relay_enabled: bool,
     /// Optional coordinator address for hole-punching
@@ -184,6 +186,7 @@ impl Default for StrategyConfig {
             relay_timeout: Duration::from_secs(10),
             max_holepunch_rounds: 2,
             ipv6_enabled: true,
+            holepunch_enabled: true,
             relay_enabled: true,
             coordinator: None,
             relay_addrs: Vec::new(),
@@ -195,6 +198,19 @@ impl StrategyConfig {
     /// Create a new strategy config with default values
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a strategy config that only allows direct connections.
+    ///
+    /// Both hole-punching and relay fallback are disabled. Use this when
+    /// all published addresses are known to be publicly reachable (e.g.
+    /// ADR-014 pre-classified addresses).
+    pub fn direct_only() -> Self {
+        Self {
+            holepunch_enabled: false,
+            relay_enabled: false,
+            ..Self::default()
+        }
     }
 
     /// Set the IPv4 timeout
@@ -230,6 +246,12 @@ impl StrategyConfig {
     /// Enable or disable IPv6 attempts
     pub fn with_ipv6_enabled(mut self, enabled: bool) -> Self {
         self.ipv6_enabled = enabled;
+        self
+    }
+
+    /// Enable or disable hole-punch NAT traversal
+    pub fn with_holepunch_enabled(mut self, enabled: bool) -> Self {
+        self.holepunch_enabled = enabled;
         self
     }
 
@@ -339,6 +361,10 @@ impl ConnectionStrategy {
     }
 
     fn transition_to_holepunch_internal(&mut self) {
+        if !self.config.holepunch_enabled {
+            self.transition_to_relay_internal();
+            return;
+        }
         if let Some(coordinator) = self.config.coordinator {
             self.stage = ConnectionStage::HolePunching {
                 coordinator,
@@ -811,5 +837,49 @@ mod tests {
             strategy.current_stage(),
             ConnectionStage::Failed { .. }
         ));
+    }
+
+    #[test]
+    fn test_holepunch_disabled_skips_to_relay() {
+        let config = StrategyConfig::new()
+            .with_holepunch_enabled(false)
+            .with_coordinator("127.0.0.1:9000".parse().unwrap())
+            .with_relay("127.0.0.1:9001".parse().unwrap());
+        let mut strategy = ConnectionStrategy::new(config);
+
+        strategy.transition_to_ipv6("IPv4 failed");
+        strategy.transition_to_holepunch("IPv6 failed");
+
+        // Should skip hole-punching and go directly to relay
+        assert!(matches!(
+            strategy.current_stage(),
+            ConnectionStage::Relay { .. }
+        ));
+    }
+
+    #[test]
+    fn test_holepunch_and_relay_disabled_fails() {
+        let config = StrategyConfig::new()
+            .with_holepunch_enabled(false)
+            .with_relay_enabled(false)
+            .with_coordinator("127.0.0.1:9000".parse().unwrap());
+        let mut strategy = ConnectionStrategy::new(config);
+
+        strategy.transition_to_ipv6("IPv4 failed");
+        strategy.transition_to_holepunch("IPv6 failed");
+
+        // Both fallbacks disabled -- should fail immediately
+        assert!(matches!(
+            strategy.current_stage(),
+            ConnectionStage::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn test_direct_only_config() {
+        let config = StrategyConfig::direct_only();
+        assert!(!config.holepunch_enabled);
+        assert!(!config.relay_enabled);
+        assert!(config.ipv6_enabled);
     }
 }

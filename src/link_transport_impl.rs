@@ -45,6 +45,7 @@ use futures_util::StreamExt;
 use tokio::sync::{RwLock as TokioRwLock, broadcast};
 use tracing::{debug, error, info, warn};
 
+use crate::connection_strategy::StrategyConfig;
 use crate::high_level::{
     Connection as HighLevelConnection, RecvStream as HighLevelRecvStream,
     SendStream as HighLevelSendStream,
@@ -447,6 +448,9 @@ pub struct P2pLinkTransport {
     endpoint: Arc<P2pEndpoint>,
     /// Additional state for LinkTransport.
     state: Arc<RwLock<LinkTransportState>>,
+    /// Default strategy config for `dial_addr()` connections.
+    /// When `None`, uses `StrategyConfig::default()` (full cascade).
+    default_strategy_config: Option<StrategyConfig>,
 }
 
 impl P2pLinkTransport {
@@ -462,7 +466,11 @@ impl P2pLinkTransport {
             Self::event_forwarder(endpoint_clone, state_clone).await;
         });
 
-        Ok(Self { endpoint, state })
+        Ok(Self {
+            endpoint,
+            state,
+            default_strategy_config: None,
+        })
     }
 
     /// Create from an existing P2pEndpoint.
@@ -476,7 +484,20 @@ impl P2pLinkTransport {
             Self::event_forwarder(endpoint_clone, state_clone).await;
         });
 
-        Self { endpoint, state }
+        Self {
+            endpoint,
+            state,
+            default_strategy_config: None,
+        }
+    }
+
+    /// Set the default strategy configuration for all `dial_addr()` connections.
+    ///
+    /// Use `StrategyConfig::direct_only()` to disable hole-punching and relay
+    /// fallback when all addresses are known to be publicly reachable.
+    pub fn with_default_strategy(mut self, config: StrategyConfig) -> Self {
+        self.default_strategy_config = Some(config);
+        self
     }
 
     /// Forward P2pEvents to LinkEvents.
@@ -674,7 +695,11 @@ impl LinkTransport for P2pLinkTransport {
 
             let (peer_conn, method) = self
                 .endpoint
-                .connect_with_fallback(target_ipv4, target_ipv6, None)
+                .connect_with_fallback(
+                    target_ipv4,
+                    target_ipv6,
+                    self.default_strategy_config.clone(),
+                )
                 .await
                 .map_err(|e| LinkError::ConnectionFailed(e.to_string()))?;
 
