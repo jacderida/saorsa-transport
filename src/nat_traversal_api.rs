@@ -323,6 +323,11 @@ pub struct NatTraversalEndpoint {
     /// Channel for receiving peer address updates (ADD_ADDRESS → DHT bridge)
     pub(crate) peer_address_update_rx:
         TokioMutex<mpsc::UnboundedReceiver<(SocketAddr, SocketAddr)>>,
+    /// The original (pre-relay) UDP socket, saved before the first
+    /// `rebind_abstract` so that every subsequent relay acquisition can
+    /// bypass directly to it.  Without this, each rebind chains through
+    /// the previous (now-dead) relay socket.
+    pre_relay_socket: Arc<std::sync::Mutex<Option<Arc<dyn crate::high_level::AsyncUdpSocket>>>>,
     /// Whether symmetric NAT relay setup has been attempted (one-shot)
     relay_setup_attempted: Arc<std::sync::atomic::AtomicBool>,
     /// Relay address to re-advertise to new peers (set after proactive relay setup)
@@ -1422,6 +1427,7 @@ impl NatTraversalEndpoint {
             transport_candidates: Arc::new(dashmap::DashMap::new()),
             transport_registry,
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
+            pre_relay_socket: Arc::new(std::sync::Mutex::new(None)),
             relay_setup_attempted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             relay_public_addr: Arc::new(std::sync::Mutex::new(None)),
             relay_advertised_peers: Arc::new(std::sync::Mutex::new(
@@ -1850,6 +1856,7 @@ impl NatTraversalEndpoint {
             transport_candidates: Arc::new(dashmap::DashMap::new()),
             transport_registry,
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
+            pre_relay_socket: Arc::new(std::sync::Mutex::new(None)),
             relay_setup_attempted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             relay_public_addr: Arc::new(std::sync::Mutex::new(None)),
             relay_advertised_peers: Arc::new(std::sync::Mutex::new(
@@ -4106,19 +4113,32 @@ impl NatTraversalEndpoint {
 
         // Step 3: Rebind the Quinn endpoint to route through the relay.
         //
-        // Snapshot the original socket BEFORE rebinding so the relay
-        // connection's own QUIC traffic can bypass the tunnel (avoiding
-        // the circular dependency where the tunnel carries itself).
+        // Use the ORIGINAL UDP socket (saved before the very first rebind)
+        // so relay-server bypass always goes directly to the real socket,
+        // never through a previous (now-dead) relay tunnel.
         let endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
             NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
         })?;
 
-        let original_socket = endpoint.current_socket().map_err(|e| {
-            NatTraversalError::ConnectionFailed(format!(
-                "Failed to snapshot original socket: {}",
-                e
-            ))
-        })?;
+        let original_socket = {
+            let mut guard = self
+                .pre_relay_socket
+                .lock()
+                .map_err(|_| NatTraversalError::ConfigError("mutex poisoned".to_string()))?;
+            match guard.as_ref() {
+                Some(s) => s.clone(),
+                None => {
+                    // First relay acquisition — snapshot the current (real) socket.
+                    let s = endpoint.current_socket().map_err(|e| {
+                        NatTraversalError::ConnectionFailed(format!(
+                            "Failed to snapshot original socket: {e}",
+                        ))
+                    })?;
+                    *guard = Some(s.clone());
+                    s
+                }
+            }
+        };
 
         // Wrap the relay socket with bypass support: traffic to the relay
         // server goes through the original socket, everything else through
@@ -5398,6 +5418,7 @@ impl NatTraversalEndpoint {
                 let relay_advertised_peers_store = self.relay_advertised_peers.clone();
                 let server_config = self.server_config.clone();
                 let endpoint_for_socket = self.inner_endpoint.clone();
+                let pre_relay_socket_store = self.pre_relay_socket.clone();
 
                 tokio::spawn(async move {
                     info!(
@@ -5531,19 +5552,34 @@ impl NatTraversalEndpoint {
                     relay_sessions.insert(bootstrap, session);
 
                     // Create a secondary Quinn endpoint on the MasqueRelaySocket.
-                    // Snapshot the original socket so the relay connection's own
-                    // QUIC traffic bypasses the tunnel (avoids circular dependency).
-                    let original_socket = match &endpoint_for_socket {
-                        Some(ep) => match ep.current_socket() {
-                            Ok(s) => s,
-                            Err(e) => {
-                                warn!("Failed to snapshot original socket: {e}");
+                    // Use the pre-relay socket (saved before the first rebind)
+                    // so the bypass always reaches the real UDP socket.
+                    let original_socket = {
+                        let mut guard = match pre_relay_socket_store.lock() {
+                            Ok(g) => g,
+                            Err(_) => {
+                                warn!("pre_relay_socket mutex poisoned");
                                 return;
                             }
-                        },
-                        None => {
-                            warn!("No endpoint for relay socket bypass");
-                            return;
+                        };
+                        match guard.as_ref() {
+                            Some(s) => s.clone(),
+                            None => match &endpoint_for_socket {
+                                Some(ep) => match ep.current_socket() {
+                                    Ok(s) => {
+                                        *guard = Some(s.clone());
+                                        s
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to snapshot original socket: {e}");
+                                        return;
+                                    }
+                                },
+                                None => {
+                                    warn!("No endpoint for relay socket bypass");
+                                    return;
+                                }
+                            },
                         }
                     };
                     let relay_socket = crate::masque::MasqueRelaySocket::new(
