@@ -224,7 +224,19 @@ impl AsyncUdpSocket for MasqueRelaySocket {
             return Poll::Ready(Ok(0));
         }
 
-        // Priority 1: drain packets that arrived through the relay tunnel.
+        // Priority 1: relay-server traffic on the original socket.
+        //
+        // The relay connection's own QUIC ACKs and keepalives arrive here.
+        // They MUST be processed promptly — if ACKs are delayed past the
+        // stream timeout (505ms) the relay connection dies and takes the
+        // entire tunnel with it.  Checking this before the tunnel queue
+        // prevents starvation under heavy relay traffic.
+        match self.original_socket.poll_recv(cx, bufs, meta) {
+            Poll::Ready(result) => return Poll::Ready(result),
+            Poll::Pending => {}
+        }
+
+        // Priority 2: packets that arrived through the relay tunnel.
         if let Ok(mut queue) = self.recv_queue.lock() {
             if let Some((payload, source)) = queue.pop_front() {
                 // Drop oversized payloads rather than truncating — a truncated
@@ -250,13 +262,6 @@ impl AsyncUdpSocket for MasqueRelaySocket {
 
                 return Poll::Ready(Ok(1));
             }
-        }
-
-        // Priority 2: check the original socket for relay-server traffic
-        // (QUIC packets from the relay server's connection).
-        match self.original_socket.poll_recv(cx, bufs, meta) {
-            Poll::Ready(result) => return Poll::Ready(result),
-            Poll::Pending => {}
         }
 
         // Neither source has data — register waker for the tunnel queue.
