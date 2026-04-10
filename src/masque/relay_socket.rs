@@ -200,7 +200,7 @@ impl AsyncUdpSocket for MasqueRelaySocket {
         // data carrying the tunnel) must go directly on the original socket;
         // routing them through the tunnel would create a circular dependency.
         if transmit.destination == self.relay_server_addr {
-            tracing::debug!(
+            tracing::info!(
                 dest = %transmit.destination,
                 len = transmit.contents.len(),
                 "RELAY_BYPASS: send via original socket (relay server)"
@@ -270,7 +270,7 @@ impl AsyncUdpSocket for MasqueRelaySocket {
         ) {
             Poll::Ready(Ok(n)) => {
                 for i in filled..filled + n {
-                    tracing::debug!(
+                    tracing::info!(
                         source = %meta[i].addr,
                         len = meta[i].len,
                         "RELAY_BYPASS: recv from original socket"
@@ -279,7 +279,7 @@ impl AsyncUdpSocket for MasqueRelaySocket {
                 filled += n;
             }
             Poll::Ready(Err(e)) => {
-                tracing::debug!(error = %e, "RELAY_BYPASS: original socket recv error");
+                tracing::info!(error = %e, "RELAY_BYPASS: original socket recv error");
                 if filled > 0 {
                     return Poll::Ready(Ok(filled));
                 }
