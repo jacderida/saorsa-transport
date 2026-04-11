@@ -2313,12 +2313,27 @@ impl P2pEndpoint {
                         .ok_or(EndpointError::PeerNotFound(*addr))?
                 };
 
-                // Log connection state before attempting to open stream
+                // Fail fast on a dead connection.
+                //
+                // If the QUIC connection has a close_reason, every step of
+                // the send path below is guaranteed to either fail or hang
+                // until the per-step timeout. In particular,
+                // `send_stream.stopped()` waits the full ack_timeout
+                // (~1 s + payload budget) for a peer that can never
+                // acknowledge — 1 s of dead latency per attempted send
+                // against a torn-down connection. Short-circuiting here
+                // collapses that to a microsecond-scale error.
+                //
+                // The upper layer (transport_handle channel recovery)
+                // treats `EndpointError::PeerNotFound` as "this channel
+                // is dead, remove it and try the next", which is the
+                // behaviour we want here.
                 if let Some(reason) = connection.close_reason() {
-                    warn!(
-                        "send({}): connection has close_reason BEFORE open_uni: {}",
+                    debug!(
+                        "send({}): skipping, connection already closed ({})",
                         addr, reason
                     );
+                    return Err(EndpointError::PeerNotFound(*addr));
                 }
 
                 let mut send_stream = connection.open_uni().await.map_err(|e| {
