@@ -334,8 +334,6 @@ pub struct NatTraversalEndpoint {
     relay_public_addr: Arc<std::sync::Mutex<Option<SocketAddr>>>,
     /// Peers already advertised the relay address to
     relay_advertised_peers: Arc<std::sync::Mutex<std::collections::HashSet<SocketAddr>>>,
-    /// Server config for creating secondary endpoints (e.g., relay accept endpoint)
-    server_config: Option<crate::ServerConfig>,
     /// Task handles for transport listener tasks
     /// Used for cleanup on shutdown
     transport_listener_handles: Arc<ParkingMutex<Vec<tokio::task::JoinHandle<()>>>>,
@@ -1309,7 +1307,7 @@ impl NatTraversalEndpoint {
             .as_ref()
             .map(|arc| arc.as_ref())
             .unwrap_or(&empty_registry);
-        let (inner_endpoint, event_tx, event_rx, local_addr, relay_server_config) =
+        let (inner_endpoint, event_tx, event_rx, local_addr, _relay_server_config) =
             Self::create_inner_endpoint(&config, token_store, registry_ref, None).await?;
 
         // Spawn the best-effort UPnP service against the actual bound port
@@ -1433,7 +1431,6 @@ impl NatTraversalEndpoint {
             relay_advertised_peers: Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
-            server_config: relay_server_config,
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
             constrained_engine,
             constrained_event_tx: constrained_event_tx.clone(),
@@ -1738,7 +1735,7 @@ impl NatTraversalEndpoint {
             .as_ref()
             .map(|arc| arc.as_ref())
             .unwrap_or(&empty_registry);
-        let (inner_endpoint, event_tx, event_rx, local_addr, relay_server_config) =
+        let (inner_endpoint, event_tx, event_rx, local_addr, _relay_server_config) =
             Self::create_inner_endpoint(&config, token_store, registry_ref, quinn_socket).await?;
 
         // Spawn the best-effort UPnP service against the actual bound port
@@ -1862,7 +1859,6 @@ impl NatTraversalEndpoint {
             relay_advertised_peers: Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
-            server_config: relay_server_config,
             transport_listener_handles: Arc::new(ParkingMutex::new(Vec::new())),
             constrained_engine,
             constrained_event_tx: constrained_event_tx.clone(),
@@ -4185,6 +4181,24 @@ impl NatTraversalEndpoint {
             relay_public_addr, advertised
         );
 
+        // Record the session as active so the rest of the endpoint
+        // suppresses conflicting broadcasts:
+        //  - `check_connections_for_observed_addresses` skips raw
+        //    NATted ADD_ADDRESS broadcasts for newly discovered
+        //    observed addresses (only the relay address should be
+        //    advertised once a tunnel is active).
+        //  - `send_candidate_advertisement` short-circuits so
+        //    NAT-traversal candidates do not overwrite the relay
+        //    address in peers' DHT records.
+        //
+        // The flag is cleared by [`Self::reset_relay_state`] when the
+        // caller detects the relay has died.
+        self.relay_setup_attempted
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut addr) = self.relay_public_addr.lock() {
+            *addr = Some(relay_public_addr);
+        }
+
         Ok(relay_public_addr)
     }
 
@@ -5371,320 +5385,19 @@ impl NatTraversalEndpoint {
         &self,
         _events: &mut Vec<NatTraversalEvent>,
     ) -> Result<(), NatTraversalError> {
-        // Count connections with observed addresses
-        let mut observed_count = 0;
-        for entry in self.connections.iter() {
-            if entry.value().observed_address().is_some() {
-                observed_count += 1;
-            }
-        }
-
-        // Need ≥2 observations before we can detect NAT type
-        if observed_count < 2 {
-            return Ok(());
-        }
-
-        // Only attempt relay setup once
-        if self
-            .relay_setup_attempted
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            return Ok(());
-        }
-
-        // Symmetric NAT detected — set up a proactive relay so inbound connections
-        // can reach this node. The relay address is advertised via ADD_ADDRESS.
-        if self.is_symmetric_nat() {
-            // Mark as attempted before spawning to avoid races
-            self.relay_setup_attempted
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-
-            // Collect ALL bootstrap nodes as relay candidates, not just the first.
-            // The spawned task iterates through them until one succeeds.
-            let relay_candidates: Vec<SocketAddr> = {
-                let nodes = self.bootstrap_nodes.read();
-                nodes.iter().map(|n| n.address).collect()
-            };
-
-            if relay_candidates.is_empty() {
-                debug!("Symmetric NAT detected but no bootstrap nodes available for relay");
-            } else {
-                // Clone self reference for the spawned task
-                let connections = self.connections.clone();
-                let relay_sessions = self.relay_sessions.clone();
-                let relay_setup_attempted = self.relay_setup_attempted.clone();
-                let relay_public_addr_store = self.relay_public_addr.clone();
-                let accepted_addrs_tx = self.accepted_addrs_tx.clone();
-                let relay_advertised_peers_store = self.relay_advertised_peers.clone();
-                let server_config = self.server_config.clone();
-                let endpoint_for_socket = self.inner_endpoint.clone();
-                let pre_relay_socket_store = self.pre_relay_socket.clone();
-
-                tokio::spawn(async move {
-                    info!(
-                        "Spawning proactive relay setup for symmetric NAT — {} candidates",
-                        relay_candidates.len()
-                    );
-
-                    let mut connection = None;
-                    let mut bootstrap = relay_candidates[0]; // default, overwritten on success
-
-                    for candidate in &relay_candidates {
-                        match connections.get(candidate) {
-                            Some(conn) if conn.close_reason().is_none() => {
-                                info!("Relay candidate {} — active connection, trying", candidate);
-                                bootstrap = *candidate;
-                                connection = Some(conn.clone());
-                                break;
-                            }
-                            Some(_) => {
-                                debug!(
-                                    "Relay candidate {} — connection closed, skipping",
-                                    candidate
-                                );
-                            }
-                            None => {
-                                debug!("Relay candidate {} — no connection, skipping", candidate);
-                            }
-                        }
-                    }
-
-                    let connection = match connection {
-                        Some(c) => c,
-                        None => {
-                            warn!(
-                                "No active connection to any relay candidate ({} tried), will retry",
-                                relay_candidates.len()
-                            );
-                            relay_setup_attempted
-                                .store(false, std::sync::atomic::Ordering::Relaxed);
-                            return;
-                        }
-                    };
-
-                    // Open bidi stream and send CONNECT-UDP Bind
-                    let (mut send_stream, mut recv_stream) = match connection.open_bi().await {
-                        Ok(streams) => streams,
-                        Err(e) => {
-                            warn!("Failed to open relay stream to {}: {}", bootstrap, e);
-                            relay_setup_attempted
-                                .store(false, std::sync::atomic::Ordering::Relaxed);
-                            return;
-                        }
-                    };
-
-                    // Length-prefixed request
-                    let request = ConnectUdpRequest::bind_any();
-                    let req_bytes = request.encode();
-                    let req_len = req_bytes.len() as u32;
-                    if let Err(e) = send_stream.write_all(&req_len.to_be_bytes()).await {
-                        warn!("Failed to send relay request length: {}", e);
-                        relay_setup_attempted.store(false, std::sync::atomic::Ordering::Relaxed);
-                        return;
-                    }
-                    if let Err(e) = send_stream.write_all(&req_bytes).await {
-                        warn!("Failed to send relay request: {}", e);
-                        relay_setup_attempted.store(false, std::sync::atomic::Ordering::Relaxed);
-                        return;
-                    }
-
-                    // Length-prefixed response
-                    let mut resp_len_buf = [0u8; 4];
-                    if let Err(e) = recv_stream.read_exact(&mut resp_len_buf).await {
-                        warn!("Failed to read relay response length: {}", e);
-                        relay_setup_attempted.store(false, std::sync::atomic::Ordering::Relaxed);
-                        return;
-                    }
-                    let resp_len = u32::from_be_bytes(resp_len_buf) as usize;
-                    let mut response_bytes = vec![0u8; resp_len];
-                    if let Err(e) = recv_stream.read_exact(&mut response_bytes).await {
-                        warn!("Failed to read relay response: {}", e);
-                        relay_setup_attempted.store(false, std::sync::atomic::Ordering::Relaxed);
-                        return;
-                    }
-
-                    let response =
-                        match ConnectUdpResponse::decode(&mut bytes::Bytes::from(response_bytes)) {
-                            Ok(r) => r,
-                            Err(e) => {
-                                warn!("Invalid relay response: {}", e);
-                                relay_setup_attempted
-                                    .store(false, std::sync::atomic::Ordering::Relaxed);
-                                return;
-                            }
-                        };
-
-                    if !response.is_success() {
-                        warn!("Relay rejected: {:?}", response.reason);
-                        relay_setup_attempted.store(false, std::sync::atomic::Ordering::Relaxed);
-                        return;
-                    }
-
-                    let relay_public_addr = match response.proxy_public_address {
-                        Some(addr) => {
-                            // If the relay returned an unspecified IP (e.g., [::]:PORT),
-                            // replace with the bootstrap's known IP. The relay server
-                            // binds on INADDR_ANY so it doesn't know its own public IP.
-                            if addr.ip().is_unspecified() {
-                                SocketAddr::new(bootstrap.ip(), addr.port())
-                            } else {
-                                addr
-                            }
-                        }
-                        None => {
-                            warn!("Relay did not provide public address");
-                            return;
-                        }
-                    };
-
-                    info!(
-                        "Proactive relay session established: public addr {} via {}",
-                        relay_public_addr, bootstrap
-                    );
-
-                    // Store relay session
-                    let session = RelaySession {
-                        connection: connection.clone(),
-                        public_address: Some(relay_public_addr),
-                        established_at: std::time::Instant::now(),
-                        relay_addr: bootstrap,
-                    };
-                    relay_sessions.insert(bootstrap, session);
-
-                    // Create a secondary Quinn endpoint on the MasqueRelaySocket.
-                    // Use the pre-relay socket (saved before the first rebind)
-                    // so the bypass always reaches the real UDP socket.
-                    let original_socket = {
-                        let mut guard = match pre_relay_socket_store.lock() {
-                            Ok(g) => g,
-                            Err(_) => {
-                                warn!("pre_relay_socket mutex poisoned");
-                                return;
-                            }
-                        };
-                        match guard.as_ref() {
-                            Some(s) => s.clone(),
-                            None => match &endpoint_for_socket {
-                                Some(ep) => match ep.current_socket() {
-                                    Ok(s) => {
-                                        *guard = Some(s.clone());
-                                        s
-                                    }
-                                    Err(e) => {
-                                        warn!("Failed to snapshot original socket: {e}");
-                                        return;
-                                    }
-                                },
-                                None => {
-                                    warn!("No endpoint for relay socket bypass");
-                                    return;
-                                }
-                            },
-                        }
-                    };
-                    let relay_socket = crate::masque::MasqueRelaySocket::new(
-                        send_stream,
-                        recv_stream,
-                        relay_public_addr,
-                        bootstrap,
-                        original_socket,
-                    );
-
-                    let runtime = match crate::high_level::default_runtime() {
-                        Some(r) => r,
-                        None => {
-                            warn!("No async runtime for relay endpoint");
-                            return;
-                        }
-                    };
-
-                    let relay_endpoint = match crate::high_level::Endpoint::new_with_abstract_socket(
-                        crate::EndpointConfig::default(),
-                        server_config,
-                        relay_socket,
-                        runtime,
-                    ) {
-                        Ok(ep) => ep,
-                        Err(e) => {
-                            warn!("Failed to create relay accept endpoint: {}", e);
-                            return;
-                        }
-                    };
-
-                    info!(
-                        "Secondary relay endpoint created for accepting connections at {}",
-                        relay_public_addr
-                    );
-
-                    // Run accept loop on the secondary endpoint — forward accepted
-                    // connections to the main node's connection handling.
-                    // The connection is stored in the shared connections map AND
-                    // notified via accepted_addrs_tx so the P2pEndpoint can spawn
-                    // a reader task for incoming streams (DHT, chunk protocol, etc.).
-                    let conn_map = connections.clone();
-                    let accepted_tx = accepted_addrs_tx.clone();
-                    tokio::spawn(async move {
-                        loop {
-                            match relay_endpoint.accept().await {
-                                Some(incoming) => {
-                                    match incoming.await {
-                                        Ok(conn) => {
-                                            let remote = conn.remote_address();
-                                            info!(
-                                                "Accepted relayed connection from {} via relay — registering with P2pEndpoint",
-                                                remote
-                                            );
-                                            // Store in the shared connections map so the
-                                            // send path can find the connection.
-                                            conn_map.insert(remote, conn);
-                                            // Notify P2pEndpoint so it spawns a reader
-                                            // task and registers the peer. Without this,
-                                            // incoming streams (DHT, chunk) are never read.
-                                            let _ = accepted_tx.send(remote);
-                                        }
-                                        Err(e) => {
-                                            debug!("Relayed connection handshake failed: {}", e);
-                                        }
-                                    }
-                                }
-                                None => {
-                                    info!("Relay accept endpoint closed");
-                                    break;
-                                }
-                            }
-                        }
-                    });
-
-                    // Store for re-advertisement to future peers
-                    if let Ok(mut a) = relay_public_addr_store.lock() {
-                        *a = Some(relay_public_addr);
-                    }
-
-                    // Advertise relay address to all connected peers
-                    let mut advertised = 0;
-                    for entry in connections.iter() {
-                        let peer = *entry.key();
-                        let conn = entry.value().clone();
-                        match conn.send_nat_address_advertisement(relay_public_addr, 100) {
-                            Ok(_) => {
-                                advertised += 1;
-                                if let Ok(mut p) = relay_advertised_peers_store.lock() {
-                                    p.insert(peer);
-                                }
-                            }
-                            Err(e) => {
-                                debug!("Failed to advertise relay to {}: {}", entry.key(), e);
-                            }
-                        }
-                    }
-
-                    info!(
-                        "Proactive relay active at {} — advertised to {} peers",
-                        relay_public_addr, advertised
-                    );
-                });
-            }
-        }
+        // Legacy symmetric-NAT-gated auto-relay has been removed. Relay
+        // acquisition is now driven exclusively from saorsa-core's
+        // `reachability::driver`, which calls `setup_proactive_relay`
+        // unconditionally after bootstrap via the transport handle.
+        //
+        // This function is retained for the re-advertise pass below,
+        // which pushes a previously-acquired relay address to peers
+        // that connected after initial setup.
+        //
+        // The deleted auto-setup block walked bootstrap nodes and called
+        // `setup_proactive_relay` directly from this event loop; the new
+        // acquisition driver in saorsa-core performs the same walk
+        // through the XOR-closest set of the DHT instead.
 
         // Re-advertise relay address to peers that connected after initial setup
         {

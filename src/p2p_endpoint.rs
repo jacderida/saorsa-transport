@@ -2534,45 +2534,12 @@ impl P2pEndpoint {
             total: known_peers.len(),
         });
 
-        // After bootstrap, check for symmetric NAT and set up relay if needed
-        if connected > 0 {
-            let inner = Arc::clone(&self.inner);
-            let bootstrap_addrs: Vec<SocketAddr> = known_peers
-                .iter()
-                .filter_map(|addr| match addr {
-                    TransportAddr::Quic(a) => Some(*a),
-                    _ => None,
-                })
-                .collect();
-
-            tokio::spawn(async move {
-                // Wait for OBSERVED_ADDRESS frames to arrive from peers
-                tokio::time::sleep(Duration::from_secs(5)).await;
-
-                if inner.is_symmetric_nat() {
-                    info!("Symmetric NAT detected — setting up proactive relay");
-
-                    for bootstrap in &bootstrap_addrs {
-                        match inner.setup_proactive_relay(*bootstrap).await {
-                            Ok(relay_addr) => {
-                                info!(
-                                    "Proactive relay active at {} via bootstrap {}",
-                                    relay_addr, bootstrap
-                                );
-                                return;
-                            }
-                            Err(e) => {
-                                warn!("Failed to set up relay via {}: {}", bootstrap, e);
-                            }
-                        }
-                    }
-
-                    warn!("Failed to set up proactive relay on any bootstrap node");
-                } else {
-                    debug!("NAT check: not symmetric NAT, no relay needed");
-                }
-            });
-        }
+        // Relay acquisition is now driven exclusively by saorsa-core's
+        // acquisition driver (see saorsa-core `reachability::driver`),
+        // which unconditionally tries to acquire a MASQUE relay from an
+        // XOR-closest peer after bootstrap. The legacy symmetric-NAT-
+        // gated auto-relay that used to run here would race the driver
+        // and produce duplicate rebinds.
 
         Ok(connected)
     }
