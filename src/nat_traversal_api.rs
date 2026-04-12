@@ -3173,12 +3173,6 @@ impl NatTraversalEndpoint {
                     let mut discovery = discovery_manager.lock();
                     let _ =
                         discovery.accept_quic_discovered_address(local_session_id, observed_addr);
-                    // Mark the bootstrap probe (if `remote_addr` is one)
-                    // as resolved so discovery can complete the moment
-                    // every probe is accounted for, instead of running
-                    // out the wall-clock ceiling. No-op for non-bootstrap
-                    // peers.
-                    discovery.notify_bootstrap_probe_resolved(local_session_id, remote_addr);
                 }
             }
 
