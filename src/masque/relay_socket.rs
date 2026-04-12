@@ -232,6 +232,20 @@ impl AsyncUdpSocket for MasqueRelaySocket {
             return Poll::Ready(Ok(0));
         }
 
+        // Register the waker BEFORE checking the queue to avoid a race
+        // with the background reader task.  Without this ordering:
+        //   1. poll_recv checks queue → empty
+        //   2. background task pushes packet + tries to wake → no waker
+        //   3. poll_recv stores waker → returns Pending
+        //   4. packet sits undelivered until the next arrival
+        // Registering first means the background task will always see a
+        // waker if it pushes between our registration and queue check.
+        // Spurious wakes are harmless — Quinn will re-poll and find
+        // nothing.
+        if let Ok(mut waker) = self.recv_waker.lock() {
+            *waker = Some(cx.waker().clone());
+        }
+
         let capacity = bufs.len().min(meta.len());
         let mut filled = 0;
 
@@ -271,12 +285,6 @@ impl AsyncUdpSocket for MasqueRelaySocket {
 
         if filled > 0 {
             return Poll::Ready(Ok(filled));
-        }
-
-        // No data available — register waker so the recv background
-        // task can wake us when a new frame arrives.
-        if let Ok(mut waker) = self.recv_waker.lock() {
-            *waker = Some(cx.waker().clone());
         }
 
         Poll::Pending
