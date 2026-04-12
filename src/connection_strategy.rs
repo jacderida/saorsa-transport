@@ -51,9 +51,13 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 /// Timeout for direct connection attempts (both IPv4 and IPv6).
-/// Kept short because successful direct connections typically complete in <500ms;
-/// a longer timeout just delays fallback to hole-punching.
-const DEFAULT_DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+/// Relay-allocated addresses (advertised via the DHT as plain socket
+/// addresses) are indistinguishable from direct addresses at the
+/// transport level.  A relay handshake adds one extra RTT through the
+/// relay server, so cross-continent relay paths need up to ~1.5 s.
+/// 3 s gives comfortable headroom without meaningfully delaying
+/// fallback to hole-punching for truly unreachable endpoints.
+const DEFAULT_DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How a connection was established
 #[derive(Debug, Clone, PartialEq, Eq)]
