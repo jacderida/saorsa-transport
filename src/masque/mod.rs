@@ -95,7 +95,6 @@ pub mod connect;
 pub mod context;
 pub mod datagram;
 pub mod integration;
-pub mod migration;
 pub mod relay_client;
 pub mod relay_server;
 pub mod relay_session;
@@ -115,7 +114,6 @@ pub use datagram::{CompressedDatagram, Datagram, UncompressedDatagram};
 pub use integration::{
     RelayHealthStatus, RelayManager, RelayManagerConfig, RelayManagerStats, RelayOperationResult,
 };
-pub use migration::{MigrationConfig, MigrationCoordinator, MigrationState, MigrationStats};
 pub use relay_client::{
     MasqueRelayClient, RelayClientConfig, RelayClientStats, RelayConnectionState,
 };

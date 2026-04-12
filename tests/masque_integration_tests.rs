@@ -13,12 +13,10 @@
 //! - Client connection and registration
 //! - Context compression flow
 //! - Datagram forwarding
-//! - Migration coordinator
 //! - NAT traversal API integration
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use bytes::Bytes;
 use saorsa_transport::VarInt;
@@ -39,10 +37,6 @@ use saorsa_transport::masque::{
     // Server types
     MasqueRelayConfig,
     MasqueRelayServer,
-    // Migration types
-    MigrationConfig,
-    MigrationCoordinator,
-    MigrationState,
     RelayClientConfig,
     RelayConnectionState,
     // Integration types
@@ -227,94 +221,6 @@ async fn test_context_manager_bidirectional() {
 }
 
 // ============================================================================
-// Migration Coordinator Tests
-// ============================================================================
-
-#[tokio::test]
-async fn test_migration_full_flow() {
-    let config = MigrationConfig {
-        initial_delay: Duration::from_millis(1),
-        validation_timeout: Duration::from_secs(10),
-        auto_migrate: true,
-        ..Default::default()
-    };
-    let coordinator = MigrationCoordinator::new(config);
-
-    let peer = test_addr(9000);
-    let candidate1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 9001);
-    let candidate2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 9002);
-
-    // Add candidates
-    coordinator
-        .add_candidates(peer, vec![candidate1, candidate2])
-        .await;
-
-    // Start migration
-    coordinator.start_migration(peer).await;
-    assert!(matches!(
-        coordinator.state(peer).await,
-        MigrationState::WaitingToProbe { .. }
-    ));
-
-    // Wait for delay
-    tokio::time::sleep(Duration::from_millis(10)).await;
-
-    // Poll to trigger probing
-    coordinator.poll(peer).await;
-    assert!(matches!(
-        coordinator.state(peer).await,
-        MigrationState::ProbeInProgress { .. }
-    ));
-
-    // Report validated path
-    coordinator
-        .report_validated_path(peer, candidate1, Duration::from_millis(50))
-        .await;
-    assert!(matches!(
-        coordinator.state(peer).await,
-        MigrationState::MigrationPending { .. }
-    ));
-
-    // Complete migration
-    coordinator.complete_migration(peer).await;
-    let state = coordinator.state(peer).await;
-    assert!(matches!(state, MigrationState::DirectEstablished { .. }));
-    assert!(state.is_direct());
-    assert!(!state.is_relayed());
-}
-
-#[tokio::test]
-async fn test_migration_auto_fallback() {
-    let config = MigrationConfig {
-        initial_delay: Duration::from_millis(1),
-        validation_timeout: Duration::from_millis(10),
-        max_attempts: 1,
-        auto_migrate: true,
-        ..Default::default()
-    };
-    let coordinator = MigrationCoordinator::new(config);
-
-    let peer = test_addr(9000);
-    let candidate = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 9001);
-
-    // Add candidates and start migration
-    coordinator.add_candidates(peer, vec![candidate]).await;
-    coordinator.start_migration(peer).await;
-
-    // Wait for probing to start
-    tokio::time::sleep(Duration::from_millis(10)).await;
-    coordinator.poll(peer).await;
-
-    // Wait for timeout
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    coordinator.poll(peer).await;
-
-    // Should fallback to relay
-    let state = coordinator.state(peer).await;
-    assert!(matches!(state, MigrationState::FallbackToRelay { .. }));
-}
-
-// ============================================================================
 // Relay Manager Integration Tests
 // ============================================================================
 
@@ -462,58 +368,6 @@ async fn test_e2e_relay_scenario() {
 
     // Cleanup
     client.close().await;
-}
-
-#[tokio::test]
-async fn test_e2e_migration_scenario() {
-    // Setup relay infrastructure
-    let relay_config = RelayManagerConfig::default();
-    let relay_manager = RelayManager::new(relay_config);
-    relay_manager.add_relay_node(relay_addr(1)).await;
-
-    // Setup migration coordinator
-    let migration_config = MigrationConfig {
-        initial_delay: Duration::from_millis(1),
-        validation_timeout: Duration::from_secs(10),
-        ..Default::default()
-    };
-    let coordinator = MigrationCoordinator::new(migration_config);
-    coordinator.set_relay(relay_addr(1)).await;
-
-    let peer = test_addr(9000);
-    let direct_candidate = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 9001);
-
-    // Simulate: connection established through relay
-    let response = ConnectUdpResponse::success(Some(test_addr(50000)));
-    relay_manager
-        .handle_connect_response(relay_addr(1), response)
-        .await
-        .unwrap();
-
-    // Receive peer's direct address candidates
-    coordinator
-        .add_candidates(peer, vec![direct_candidate])
-        .await;
-
-    // Start migration attempt
-    coordinator.start_migration(peer).await;
-    tokio::time::sleep(Duration::from_millis(10)).await;
-    coordinator.poll(peer).await;
-
-    // Simulate: direct path validated
-    coordinator
-        .report_validated_path(peer, direct_candidate, Duration::from_millis(30))
-        .await;
-    coordinator.complete_migration(peer).await;
-
-    // Verify we're on direct path
-    let state = coordinator.state(peer).await;
-    assert!(state.is_direct());
-    assert!(!state.is_relayed());
-
-    // Migration stats
-    let stats = coordinator.stats();
-    assert_eq!(stats.successful.load(Ordering::Relaxed), 1);
 }
 
 // ============================================================================
