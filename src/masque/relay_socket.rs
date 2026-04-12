@@ -7,19 +7,20 @@
 
 //! MASQUE Relay Socket
 //!
-//! A virtual UDP socket that routes QUIC packets through a MASQUE relay
-//! via a persistent QUIC stream (length-prefixed framing).
+//! A virtual UDP socket backed entirely by a MASQUE relay tunnel.
 //!
-//! Implements [`AsyncUdpSocket`] so it can be plugged into a Quinn endpoint
-//! as a transparent replacement for a real UDP socket.
+//! Implements [`AsyncUdpSocket`] so it can back a standalone Quinn
+//! endpoint that accepts connections arriving through the relay.  The
+//! node's **main** endpoint keeps its original UDP socket and is never
+//! touched — this socket powers a **second** endpoint that provides an
+//! additional inbound path.
 //!
-//! ## Relay-server bypass
+//! ## Routing
 //!
-//! When constructed with [`MasqueRelaySocket::new`], the socket also receives
-//! the relay server's address and the original UDP socket. Packets destined
-//! for the relay server bypass the tunnel and go directly through the
-//! original socket, breaking the circular dependency where the relay
-//! tunnel's own QUIC connection would otherwise route through itself.
+//! - **Outgoing** → encoded as length-prefixed
+//!   [`UncompressedDatagram`]s and written to the relay QUIC stream.
+//! - **Incoming** → read from the relay QUIC stream, decoded, and
+//!   queued for Quinn's `poll_recv`.
 
 use bytes::Bytes;
 use std::collections::VecDeque;
@@ -39,8 +40,7 @@ use crate::masque::UncompressedDatagram;
 /// Raw QUIC streams from a relay session, before socket construction.
 ///
 /// Returned by `establish_relay_session` so the caller can construct a
-/// [`MasqueRelaySocket`] with the additional context it needs (e.g. the
-/// relay-server bypass socket).
+/// [`MasqueRelaySocket`] with the additional context it needs.
 pub struct RawRelayStreams {
     /// Send half of the relay QUIC stream (length-prefixed datagrams).
     pub send_stream: crate::high_level::SendStream,
@@ -48,13 +48,12 @@ pub struct RawRelayStreams {
     pub recv_stream: crate::high_level::RecvStream,
 }
 
-/// A virtual UDP socket that tunnels packets through a MASQUE relay
-/// via a persistent QUIC stream with length-prefixed framing.
+/// A virtual UDP socket backed entirely by a MASQUE relay tunnel.
 ///
-/// Packets destined for the relay server itself bypass the tunnel and
-/// are sent directly through the original UDP socket, preventing the
-/// relay connection's own QUIC traffic from looping through its own
-/// tunnel.
+/// All traffic — both outgoing and incoming — flows through the relay
+/// QUIC stream.  This socket is intended for a **second** Quinn endpoint
+/// dedicated to relay traffic, leaving the main endpoint and its
+/// original UDP socket completely untouched.
 pub struct MasqueRelaySocket {
     /// The relay's public address (returned as our local address).
     relay_public_addr: SocketAddr,
@@ -62,21 +61,19 @@ pub struct MasqueRelaySocket {
     recv_queue: std::sync::Mutex<VecDeque<(Vec<u8>, SocketAddr)>>,
     /// Waker to notify when new packets arrive.
     recv_waker: std::sync::Mutex<Option<Waker>>,
-    /// Channel for outbound packets (written to the relay stream by background task).
+    /// Channel for outbound packets (written to the relay stream by
+    /// the background write task).
     send_tx: tokio::sync::mpsc::UnboundedSender<Bytes>,
-    /// The relay server's address — traffic to this address bypasses the
-    /// tunnel and goes through `original_socket` instead.
-    relay_server_addr: SocketAddr,
-    /// The pre-rebind UDP socket kept alive for the relay connection's own
-    /// QUIC traffic.
-    original_socket: Arc<dyn AsyncUdpSocket>,
+    /// The original socket is kept alive so the relay connection's own
+    /// QUIC traffic (keepalives, ACKs, stream data) continues to flow
+    /// directly.  Without this reference the OS may reclaim the socket.
+    _original_socket: Arc<dyn AsyncUdpSocket>,
 }
 
 impl fmt::Debug for MasqueRelaySocket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MasqueRelaySocket")
             .field("relay_public_addr", &self.relay_public_addr)
-            .field("relay_server_addr", &self.relay_server_addr)
             .field(
                 "recv_queue_len",
                 &self.recv_queue.lock().map(|q| q.len()).unwrap_or(0),
@@ -86,21 +83,23 @@ impl fmt::Debug for MasqueRelaySocket {
 }
 
 impl MasqueRelaySocket {
-    /// Create a new stream-based relay socket with relay-server bypass.
+    /// Create a new tunnel-only relay socket.
     ///
-    /// `relay_server_addr` is the address of the relay server (the peer
-    /// carrying the MASQUE tunnel). `original_socket` is the endpoint's
-    /// pre-rebind UDP socket. Together they allow the relay connection's
-    /// own QUIC traffic to bypass the tunnel.
+    /// All I/O flows through the relay QUIC stream.  `original_socket`
+    /// is held alive (but not used for I/O) to prevent the OS from
+    /// reclaiming the underlying file descriptor while the relay
+    /// connection's own QUIC traffic still needs it.
     ///
     /// Spawns two background tasks:
-    /// - Read from `recv_stream`, decode frames, queue for `poll_recv`
-    /// - Read from `send_tx` channel, write length-prefixed frames to `send_stream`
+    /// - A reader that decodes length-prefixed frames from
+    ///   `recv_stream` and queues them for [`poll_recv`].
+    /// - A writer that drains the `send_tx` channel and writes
+    ///   length-prefixed frames to `send_stream`.
     pub fn new(
         mut send_stream: crate::high_level::SendStream,
         mut recv_stream: crate::high_level::RecvStream,
         relay_public_addr: SocketAddr,
-        relay_server_addr: SocketAddr,
+        _relay_server_addr: SocketAddr,
         original_socket: Arc<dyn AsyncUdpSocket>,
     ) -> Arc<Self> {
         let (send_tx, mut send_rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
@@ -110,8 +109,7 @@ impl MasqueRelaySocket {
             recv_queue: std::sync::Mutex::new(VecDeque::new()),
             recv_waker: std::sync::Mutex::new(None),
             send_tx,
-            relay_server_addr,
-            original_socket,
+            _original_socket: original_socket,
         });
 
         // Background task: read length-prefixed frames from relay stream → queue
@@ -189,34 +187,17 @@ impl MasqueRelaySocket {
 
 impl AsyncUdpSocket for MasqueRelaySocket {
     fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn UdpPoller>> {
-        Box::pin(RelayPoller {
-            original: self.original_socket.clone().create_io_poller(),
-        })
+        // The tunnel is always writable (writes go to an unbounded
+        // mpsc), so the poller just returns Ready immediately.
+        Box::pin(TunnelPoller)
     }
 
     fn try_send(&self, transmit: &Transmit) -> io::Result<()> {
-        // Bypass the tunnel for traffic destined to the relay server itself.
-        // The relay connection's own QUIC packets (keepalives, ACKs, stream
-        // data carrying the tunnel) must go directly on the original socket;
-        // routing them through the tunnel would create a circular dependency.
-        if transmit.destination == self.relay_server_addr {
-            tracing::trace!(
-                dest = %transmit.destination,
-                len = transmit.contents.len(),
-                "RELAY_BYPASS: send via original socket (relay server)"
-            );
-            return self.original_socket.try_send(transmit);
-        }
-        tracing::trace!(
-            dest = %transmit.destination,
-            len = transmit.contents.len(),
-            "RELAY_TUNNEL: send via tunnel"
-        );
-
-        // When Quinn uses GSO (Generic Segmentation Offload), transmit.contents
-        // contains multiple concatenated QUIC packets of `segment_size` bytes.
-        // Each segment must be sent as its own tunnel frame — the relay server
-        // has a per-frame size limit and cannot handle the entire batch as one.
+        // When Quinn uses GSO (Generic Segmentation Offload),
+        // transmit.contents contains multiple concatenated QUIC packets
+        // of `segment_size` bytes.  Each segment must be sent as its
+        // own tunnel frame — the relay server has a per-frame size
+        // limit and cannot handle the entire batch as one.
         if let Some(segment_size) = transmit.segment_size {
             for chunk in transmit.contents.chunks(segment_size) {
                 let datagram = UncompressedDatagram::new(
@@ -254,41 +235,6 @@ impl AsyncUdpSocket for MasqueRelaySocket {
         let capacity = bufs.len().min(meta.len());
         let mut filled = 0;
 
-        // Source 1: original socket (relay-server ACKs + direct peer traffic).
-        //
-        // Relay-server ACKs are critical — delaying them past the QUIC stream
-        // timeout (505ms) kills the tunnel.  Direct peer traffic also arrives
-        // here from nodes that connected before the endpoint rebind.
-        //
-        // We hand the REMAINING buffer slots to the original socket so it can
-        // batch-fill as many as it has ready, then fill the rest from the
-        // tunnel queue.  This ensures neither source starves the other.
-        match self.original_socket.poll_recv(
-            cx,
-            &mut bufs[filled..capacity],
-            &mut meta[filled..capacity],
-        ) {
-            Poll::Ready(Ok(n)) => {
-                for i in filled..filled + n {
-                    tracing::trace!(
-                        source = %meta[i].addr,
-                        len = meta[i].len,
-                        "RELAY_BYPASS: recv from original socket"
-                    );
-                }
-                filled += n;
-            }
-            Poll::Ready(Err(e)) => {
-                tracing::trace!(error = %e, "RELAY_BYPASS: original socket recv error");
-                if filled > 0 {
-                    return Poll::Ready(Ok(filled));
-                }
-                return Poll::Ready(Err(e));
-            }
-            Poll::Pending => {}
-        }
-
-        // Source 2: tunnel queue (packets relayed from external peers).
         if let Ok(mut queue) = self.recv_queue.lock() {
             while filled < capacity {
                 let Some((payload, source)) = queue.pop_front() else {
@@ -313,7 +259,7 @@ impl AsyncUdpSocket for MasqueRelaySocket {
                 recv_meta.dst_ip = None;
                 meta[filled] = recv_meta;
 
-                tracing::debug!(
+                tracing::trace!(
                     source = %source,
                     len,
                     "RELAY_TUNNEL: recv from tunnel queue"
@@ -327,8 +273,8 @@ impl AsyncUdpSocket for MasqueRelaySocket {
             return Poll::Ready(Ok(filled));
         }
 
-        // Neither source has data — register waker for the tunnel queue.
-        // (The original socket already registered its waker above.)
+        // No data available — register waker so the recv background
+        // task can wake us when a new frame arrives.
         if let Ok(mut waker) = self.recv_waker.lock() {
             *waker = Some(cx.waker().clone());
         }
@@ -345,18 +291,15 @@ impl AsyncUdpSocket for MasqueRelaySocket {
     }
 }
 
-/// Poller that delegates to the original socket's poller.
+/// Poller for the tunnel socket.
 ///
-/// The relay tunnel is always writable (writes go to an unbounded mpsc),
-/// but the original socket may need to register a write waker for its
-/// kernel buffer. We use the original socket's poller to cover both.
+/// The tunnel is always writable (writes go to an unbounded mpsc
+/// channel), so this immediately returns `Ready`.
 #[derive(Debug)]
-struct RelayPoller {
-    original: Pin<Box<dyn UdpPoller>>,
-}
+struct TunnelPoller;
 
-impl UdpPoller for RelayPoller {
-    fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        self.original.as_mut().poll_writable(cx)
+impl UdpPoller for TunnelPoller {
+    fn poll_writable(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }

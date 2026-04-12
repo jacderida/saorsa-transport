@@ -323,11 +323,9 @@ pub struct NatTraversalEndpoint {
     /// Channel for receiving peer address updates (ADD_ADDRESS → DHT bridge)
     pub(crate) peer_address_update_rx:
         TokioMutex<mpsc::UnboundedReceiver<(SocketAddr, SocketAddr)>>,
-    /// The original (pre-relay) UDP socket, saved before the first
-    /// `rebind_abstract` so that every subsequent relay acquisition can
-    /// bypass directly to it.  Without this, each rebind chains through
-    /// the previous (now-dead) relay socket.
-    pre_relay_socket: Arc<std::sync::Mutex<Option<Arc<dyn crate::high_level::AsyncUdpSocket>>>>,
+    /// Server config cloned at endpoint creation time for building the
+    /// relay endpoint in [`setup_proactive_relay`].
+    relay_server_config: Arc<std::sync::Mutex<Option<crate::ServerConfig>>>,
     /// Whether symmetric NAT relay setup has been attempted (one-shot)
     relay_setup_attempted: Arc<std::sync::atomic::AtomicBool>,
     /// Relay address to re-advertise to new peers (set after proactive relay setup)
@@ -1307,7 +1305,7 @@ impl NatTraversalEndpoint {
             .as_ref()
             .map(|arc| arc.as_ref())
             .unwrap_or(&empty_registry);
-        let (inner_endpoint, event_tx, event_rx, local_addr, _relay_server_config) =
+        let (inner_endpoint, event_tx, event_rx, local_addr, relay_server_config) =
             Self::create_inner_endpoint(&config, token_store, registry_ref, None).await?;
 
         // Spawn the best-effort UPnP service against the actual bound port
@@ -1428,7 +1426,7 @@ impl NatTraversalEndpoint {
             transport_candidates: Arc::new(dashmap::DashMap::new()),
             transport_registry,
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
-            pre_relay_socket: Arc::new(std::sync::Mutex::new(None)),
+            relay_server_config: Arc::new(std::sync::Mutex::new(relay_server_config)),
             relay_setup_attempted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             relay_public_addr: Arc::new(std::sync::Mutex::new(None)),
             relay_advertised_peers: Arc::new(std::sync::Mutex::new(
@@ -1738,7 +1736,7 @@ impl NatTraversalEndpoint {
             .as_ref()
             .map(|arc| arc.as_ref())
             .unwrap_or(&empty_registry);
-        let (inner_endpoint, event_tx, event_rx, local_addr, _relay_server_config) =
+        let (inner_endpoint, event_tx, event_rx, local_addr, relay_server_config) =
             Self::create_inner_endpoint(&config, token_store, registry_ref, quinn_socket).await?;
 
         // Spawn the best-effort UPnP service against the actual bound port
@@ -1859,7 +1857,7 @@ impl NatTraversalEndpoint {
             transport_candidates: Arc::new(dashmap::DashMap::new()),
             transport_registry,
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
-            pre_relay_socket: Arc::new(std::sync::Mutex::new(None)),
+            relay_server_config: Arc::new(std::sync::Mutex::new(relay_server_config)),
             relay_setup_attempted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             relay_public_addr: Arc::new(std::sync::Mutex::new(None)),
             relay_advertised_peers: Arc::new(std::sync::Mutex::new(
@@ -4087,15 +4085,18 @@ impl NatTraversalEndpoint {
         is_symmetric
     }
 
-    /// Set up proactive relay for a node behind symmetric NAT.
+    /// Set up a proactive relay as a supplementary inbound path.
     ///
-    /// Establishes a MASQUE relay session with the bootstrap node, creates a
-    /// `MasqueRelaySocket` from the relay connection, rebinds the Quinn endpoint
-    /// to route all traffic through the relay, and advertises the relay's bound
-    /// address to all connected peers.
+    /// Establishes a MASQUE relay session with `bootstrap_addr`, creates
+    /// a **second** Quinn endpoint backed by the relay tunnel socket,
+    /// and spawns an accept loop for it.  The main endpoint and its
+    /// original UDP socket are never touched — direct connections
+    /// continue to work exactly as before.
     ///
-    /// After this, the node is reachable via the relay's bound UDP socket.
-    /// Other nodes connect to the relay address transparently (normal QUIC).
+    /// Peers that connect to the relay-allocated address land on the
+    /// relay endpoint.  Accepted connections are inserted into the
+    /// shared `connections` DashMap so the rest of the stack sees them
+    /// identically to direct connections.
     pub async fn setup_proactive_relay(
         &self,
         bootstrap_addr: SocketAddr,
@@ -4106,11 +4107,11 @@ impl NatTraversalEndpoint {
         );
 
         // Step 1: Establish relay session with bootstrap
-        let (public_addr, relay_socket) = self.establish_relay_session(bootstrap_addr).await?;
+        let (public_addr, raw_streams) = self.establish_relay_session(bootstrap_addr).await?;
         let relay_public_addr = public_addr.ok_or_else(|| {
             NatTraversalError::ConnectionFailed("Relay did not provide public address".to_string())
         })?;
-        let relay_socket = relay_socket.ok_or_else(|| {
+        let raw_streams = raw_streams.ok_or_else(|| {
             NatTraversalError::ConnectionFailed("Relay did not provide socket".to_string())
         })?;
 
@@ -4119,63 +4120,57 @@ impl NatTraversalEndpoint {
             relay_public_addr
         );
 
-        // Step 3: Rebind the Quinn endpoint to route through the relay.
-        //
-        // Use the ORIGINAL UDP socket (saved before the very first rebind)
-        // so relay-server bypass always goes directly to the real socket,
-        // never through a previous (now-dead) relay tunnel.
-        let endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
+        // Step 2: Get the main endpoint's original socket (kept alive so the
+        // relay connection's own QUIC traffic — which flows over the real UDP
+        // socket — continues to work).
+        let main_endpoint = self.inner_endpoint.as_ref().ok_or_else(|| {
             NatTraversalError::ConfigError("QUIC endpoint not initialized".to_string())
         })?;
 
-        let original_socket = {
-            let mut guard = self
-                .pre_relay_socket
-                .lock()
-                .map_err(|_| NatTraversalError::ConfigError("mutex poisoned".to_string()))?;
-            match guard.as_ref() {
-                Some(s) => s.clone(),
-                None => {
-                    // First relay acquisition — snapshot the current (real) socket.
-                    let s = endpoint.current_socket().map_err(|e| {
-                        NatTraversalError::ConnectionFailed(format!(
-                            "Failed to snapshot original socket: {e}",
-                        ))
-                    })?;
-                    *guard = Some(s.clone());
-                    s
-                }
-            }
-        };
+        let original_socket = main_endpoint.current_socket().map_err(|e| {
+            NatTraversalError::ConnectionFailed(format!("Failed to get original socket: {e}",))
+        })?;
 
-        // Wrap the relay socket with bypass support: traffic to the relay
-        // server goes through the original socket, everything else through
-        // the tunnel.
-        let bypass_socket = crate::masque::MasqueRelaySocket::new(
-            relay_socket.send_stream,
-            relay_socket.recv_stream,
+        // Step 3: Build a tunnel-only relay socket and a second Quinn
+        // endpoint.  The main endpoint is never touched.
+        let relay_socket = crate::masque::MasqueRelaySocket::new(
+            raw_streams.send_stream,
+            raw_streams.recv_stream,
             relay_public_addr,
             bootstrap_addr,
             original_socket,
         );
 
-        endpoint.rebind_abstract(bypass_socket).map_err(|e| {
-            NatTraversalError::ConnectionFailed(format!(
-                "Failed to rebind endpoint to relay socket: {}",
-                e
-            ))
+        let server_config = self
+            .relay_server_config
+            .lock()
+            .map_err(|_| NatTraversalError::ConfigError("mutex poisoned".to_string()))?
+            .clone();
+
+        let runtime = crate::high_level::default_runtime().ok_or_else(|| {
+            NatTraversalError::ConfigError("No async runtime available".to_string())
         })?;
 
-        info!(
-            "Quinn endpoint rebound to relay socket (relay addr: {})",
-            relay_public_addr
-        );
+        let relay_endpoint = InnerEndpoint::new_with_abstract_socket(
+            EndpointConfig::default(),
+            server_config,
+            relay_socket,
+            runtime,
+        )
+        .map_err(|e| {
+            NatTraversalError::ConnectionFailed(format!("Failed to create relay endpoint: {e}"))
+        })?;
 
-        // Step 4: Advertise the relay address to all connected peers
+        info!("Relay endpoint created (relay addr: {})", relay_public_addr);
+
+        // Step 4: Spawn an accept loop for the relay endpoint that feeds
+        // accepted connections into the shared connections DashMap.
+        self.spawn_relay_endpoint_accept_loop(relay_endpoint);
+
+        // Step 5: Advertise the relay address to all connected peers
         let mut advertised = 0;
         for entry in self.connections.iter() {
             let conn = entry.value().clone();
-            // Use high priority since this is our only reachable address
             match conn.send_nat_address_advertisement(relay_public_addr, 100) {
                 Ok(_) => advertised += 1,
                 Err(e) => {
@@ -4194,17 +4189,7 @@ impl NatTraversalEndpoint {
         );
 
         // Record the session as active so the rest of the endpoint
-        // suppresses conflicting broadcasts:
-        //  - `check_connections_for_observed_addresses` skips raw
-        //    NATted ADD_ADDRESS broadcasts for newly discovered
-        //    observed addresses (only the relay address should be
-        //    advertised once a tunnel is active).
-        //  - `send_candidate_advertisement` short-circuits so
-        //    NAT-traversal candidates do not overwrite the relay
-        //    address in peers' DHT records.
-        //
-        // The flag is cleared by [`Self::reset_relay_state`] when the
-        // caller detects the relay has died.
+        // suppresses conflicting broadcasts.
         self.relay_setup_attempted
             .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Ok(mut addr) = self.relay_public_addr.lock() {
@@ -4212,6 +4197,95 @@ impl NatTraversalEndpoint {
         }
 
         Ok(relay_public_addr)
+    }
+
+    /// Spawn an accept loop for the relay endpoint.
+    ///
+    /// Accepted connections are inserted into the shared `connections`
+    /// DashMap and forwarded through the same `handshake_tx` channel as
+    /// main-endpoint connections, so the upper layer sees them
+    /// identically.
+    fn spawn_relay_endpoint_accept_loop(&self, endpoint: InnerEndpoint) {
+        let tx = self.handshake_tx.clone();
+        let connections = self.connections.clone();
+        let emitted = self.emitted_established_events.clone();
+        let relay_server = self.relay_server.clone();
+        let event_tx_opt = self.event_tx.clone();
+        let shutdown = self.shutdown.clone();
+
+        tokio::spawn(async move {
+            loop {
+                if shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+
+                let connecting = match endpoint.accept().await {
+                    Some(c) => c,
+                    None => {
+                        debug!("Relay endpoint closed, accept loop exiting");
+                        return;
+                    }
+                };
+
+                let tx2 = tx.clone();
+                let connections2 = connections.clone();
+                let emitted2 = emitted.clone();
+                let relay_server2 = relay_server.clone();
+                let event_tx2 = event_tx_opt.clone();
+                tokio::spawn(async move {
+                    let connection = match connecting.await {
+                        Ok(conn) => conn,
+                        Err(e) => {
+                            debug!("Relay accept handshake failed: {}", e);
+                            let _ = tx2.send(Err(e.to_string())).await;
+                            return;
+                        }
+                    };
+
+                    let remote_address = connection.remote_address();
+                    info!(
+                        "Accepted connection from {} (relay endpoint)",
+                        remote_address
+                    );
+
+                    let normalized_remote = crate::shared::normalize_socket_addr(remote_address);
+                    let has_live = |addr: &std::net::SocketAddr| -> bool {
+                        connections2
+                            .get(addr)
+                            .is_some_and(|e| e.value().close_reason().is_none())
+                    };
+                    if has_live(&remote_address) || has_live(&normalized_remote) {
+                        info!(
+                            "relay accept_loop: {} already has a live connection, keeping existing",
+                            remote_address
+                        );
+                        connection.close(0u32.into(), b"duplicate");
+                        return;
+                    }
+                    connections2.insert(remote_address, connection.clone());
+
+                    if emitted2.insert(remote_address) {
+                        if let Some(ref server) = relay_server2 {
+                            let conn_clone = connection.clone();
+                            let server_clone = Arc::clone(server);
+                            tokio::spawn(async move {
+                                Self::handle_relay_requests(conn_clone, server_clone).await;
+                            });
+                        }
+
+                        if let Some(ref etx) = event_tx2 {
+                            let etx = etx.clone();
+                            let conn = connection.clone();
+                            tokio::spawn(async move {
+                                Self::handle_connection(remote_address, conn, etx).await;
+                            });
+                        }
+
+                        let _ = tx2.send(Ok((remote_address, connection))).await;
+                    }
+                });
+            }
+        });
     }
 
     // ============ Multi-Transport Address Advertising ============

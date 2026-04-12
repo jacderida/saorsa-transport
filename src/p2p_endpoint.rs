@@ -2586,21 +2586,19 @@ impl P2pEndpoint {
         self.inner.set_relay_serving_enabled(enabled);
     }
 
-    /// Establish a proactive MASQUE relay session with `relay_addr` and rebind
-    /// the local Quinn endpoint onto the resulting tunnel.
+    /// Establish a proactive MASQUE relay session with `relay_addr` as a
+    /// supplementary inbound path.
     ///
     /// This is the caller-driven entry point for ADR-014-style relay acquisition
     /// in saorsa-core. It delegates to [`NatTraversalEndpoint::setup_proactive_relay`],
-    /// which establishes the MASQUE `CONNECT-UDP` session, calls
-    /// `endpoint.rebind_abstract()` to route all local QUIC traffic through the
-    /// MASQUE tunnel, and advertises the relay's public-side allocated address
-    /// to all currently connected peers.
+    /// which establishes the MASQUE `CONNECT-UDP` session, creates a **second**
+    /// Quinn endpoint backed by the relay tunnel, and advertises the
+    /// relay-allocated address to all currently connected peers.  The main
+    /// endpoint and its original UDP socket are never touched.
     ///
     /// On success, the returned `SocketAddr` is the relay-allocated public
     /// address the caller should publish as its contact address in the DHT
-    /// self-record. A `RelayEstablished` event is also emitted on the event
-    /// broadcaster so downstream listeners (e.g., saorsa-core's DHT bridge)
-    /// can propagate the address without needing the return value.
+    /// self-record.
     ///
     /// Errors from `setup_proactive_relay` (including
     /// [`NatTraversalError::RelayAtCapacity`]) are propagated through the
