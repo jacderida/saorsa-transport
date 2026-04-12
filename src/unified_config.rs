@@ -122,9 +122,10 @@ pub struct NatConfig {
     /// Enable automatic relay fallback when direct connection fails (legacy flag, always true)
     pub enable_relay_fallback: bool,
 
-    /// Enable relay service for other peers (legacy flag, always true)
+    /// Enable relay service for other peers.
     /// When true, this node will accept and forward CONNECT-UDP Bind requests from peers.
     /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
+    /// Clients set this to false since they are outbound-only and should not relay for others.
     pub enable_relay_service: bool,
 
     /// Known relay nodes for MASQUE CONNECT-UDP Bind fallback
@@ -302,7 +303,7 @@ impl P2pConfig {
             coordination_timeout: self.timeouts.nat_traversal.coordination_timeout,
             enable_symmetric_nat: true,
             enable_relay_fallback: true,
-            enable_relay_service: true,
+            enable_relay_service: self.nat.enable_relay_service,
             relay_nodes: self.nat.relay_nodes.clone(),
             max_concurrent_attempts: self.nat.max_concurrent_attempts,
             bind_addr: self

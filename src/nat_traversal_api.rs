@@ -423,10 +423,11 @@ pub struct NatTraversalConfig {
     pub enable_symmetric_nat: bool,
     /// Enable automatic relay fallback (always true; legacy flag ignored)
     pub enable_relay_fallback: bool,
-    /// Enable relay service for other peers (always true; legacy flag ignored)
+    /// Enable relay service for other peers.
     /// When true, this node will accept and forward CONNECT-UDP Bind requests from peers.
     /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
-    /// Default: true (every node provides relay services)
+    /// Clients set this to false since they are outbound-only and should not relay for others.
+    /// Default: true
     pub enable_relay_service: bool,
     /// Known relay nodes for MASQUE CONNECT-UDP Bind fallback
     /// When direct NAT traversal fails, connections can be relayed through these nodes
@@ -1168,11 +1169,10 @@ impl ConfigValidator for NatTraversalConfig {
 
 impl NatTraversalEndpoint {
     fn normalize_config(mut config: NatTraversalConfig) -> NatTraversalConfig {
-        // v0.13.0+: symmetric P2P is mandatory. No opt-out for NAT traversal,
-        // relay fallback, or relay service.
+        // v0.13.0+: symmetric P2P is mandatory. No opt-out for NAT traversal
+        // or relay fallback. Relay *service* is opt-in per node (clients disable it).
         config.enable_symmetric_nat = true;
         config.enable_relay_fallback = true;
-        config.enable_relay_service = true;
         config.prefer_rfc_nat_traversal = true;
 
         // Ensure PQC is always enabled, even if callers attempted to disable it.
@@ -1354,23 +1354,26 @@ impl NatTraversalEndpoint {
             None
         };
 
-        // Symmetric P2P: Create MASQUE relay server so this node can provide relay services
+        // Symmetric P2P: Create MASQUE relay server so this node can provide relay services.
         // Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
         // Per ADR-014 (saorsa-core): the per-node cap is bounded so popular public peers do
         // not become involuntary infrastructure for the whole network.
-        let relay_server = {
+        // Clients are outbound-only and skip the relay server entirely.
+        let relay_server = if config.enable_relay_service {
             let relay_config = MasqueRelayConfig {
                 max_sessions: MAX_RELAY_CLIENTS_PER_PUBLIC_PEER,
                 require_authentication: true,
                 ..MasqueRelayConfig::default()
             };
-            // Use the local address as the public address (will be updated when external address is discovered)
             let server = MasqueRelayServer::new(relay_config, local_addr);
             info!(
                 "Created MASQUE relay server on {} (symmetric P2P node)",
                 local_addr
             );
             Some(Arc::new(server))
+        } else {
+            info!("Relay service disabled — skipping MASQUE relay server");
+            None
         };
 
         // Clone the callback for background tasks before moving into endpoint
@@ -1782,23 +1785,26 @@ impl NatTraversalEndpoint {
             None
         };
 
-        // Symmetric P2P: Create MASQUE relay server so this node can provide relay services
+        // Symmetric P2P: Create MASQUE relay server so this node can provide relay services.
         // Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
         // Per ADR-014 (saorsa-core): the per-node cap is bounded so popular public peers do
         // not become involuntary infrastructure for the whole network.
-        let relay_server = {
+        // Clients are outbound-only and skip the relay server entirely.
+        let relay_server = if config.enable_relay_service {
             let relay_config = MasqueRelayConfig {
                 max_sessions: MAX_RELAY_CLIENTS_PER_PUBLIC_PEER,
                 require_authentication: true,
                 ..MasqueRelayConfig::default()
             };
-            // Use the local address as the public address (will be updated when external address is discovered)
             let server = MasqueRelayServer::new(relay_config, local_addr);
             info!(
                 "Created MASQUE relay server on {} (symmetric P2P node)",
                 local_addr
             );
             Some(Arc::new(server))
+        } else {
+            info!("Relay service disabled — skipping MASQUE relay server");
+            None
         };
 
         // Clone the callback for background tasks before moving into endpoint
@@ -3169,6 +3175,12 @@ impl NatTraversalEndpoint {
                     let mut discovery = discovery_manager.lock();
                     let _ =
                         discovery.accept_quic_discovered_address(local_session_id, observed_addr);
+                    // Mark the bootstrap probe (if `remote_addr` is one)
+                    // as resolved so discovery can complete the moment
+                    // every probe is accounted for, instead of running
+                    // out the wall-clock ceiling. No-op for non-bootstrap
+                    // peers.
+                    discovery.notify_bootstrap_probe_resolved(local_session_id, remote_addr);
                 }
             }
 
