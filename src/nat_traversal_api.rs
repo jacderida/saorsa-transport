@@ -2642,6 +2642,19 @@ impl NatTraversalEndpoint {
             transport_config.stream_receive_window(window);
             transport_config.send_window(config.max_message_size as u64);
 
+            // Raise the initial congestion window from the default 14 KB
+            // to 1 MB.  The default is too small for relay-tunnelled
+            // connections (~200-400 ms RTT → ~50 KB/s), but using the
+            // full max_message_size (10 MB) is too aggressive — it causes
+            // a burst that overflows the receiver's kernel UDP buffer
+            // (208 KB on Linux).  1 MB balances fast starts (4 MB chunk
+            // completes in ~2 RTTs through slow-start) with pacing that
+            // receivers can absorb.
+            const INITIAL_CONGESTION_WINDOW: u64 = 1024 * 1024;
+            let mut cc = crate::congestion::CubicConfig::default();
+            cc.initial_window(INITIAL_CONGESTION_WINDOW);
+            transport_config.congestion_controller_factory(Arc::new(cc));
+
             // v0.13.0+: All nodes use ServerSupport for full P2P capabilities
             // Per draft-seemann-quic-nat-traversal-02, all nodes can coordinate
             let nat_config = crate::transport_parameters::NatTraversalConfig::ServerSupport {
@@ -2712,6 +2725,14 @@ impl NatTraversalEndpoint {
             let window = varint_from_max_message_size(config.max_message_size);
             transport_config.stream_receive_window(window);
             transport_config.send_window(config.max_message_size as u64);
+
+            // Set the initial congestion window to max_message_size so
+            // relay-tunnelled connections can push a full chunk without
+            // waiting for slow-start.  See the server config comment for
+            // the full rationale.
+            let mut cc = crate::congestion::CubicConfig::default();
+            cc.initial_window(config.max_message_size as u64);
+            transport_config.congestion_controller_factory(Arc::new(cc));
 
             // v0.13.0+: All nodes use ServerSupport for full P2P capabilities
             // Per draft-seemann-quic-nat-traversal-02, all nodes can coordinate

@@ -56,6 +56,14 @@ use crate::upnp::{UpnpConfig, UpnpMappingService};
 /// the QUIC idle timeout from firing on the underlying connection.
 const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
+/// Capacity of the bounded channel between the UDP reader task and the
+/// stream writer task in Direction 1 (external → NATted node).  Sized
+/// to absorb a full max-message-size burst (~4 MB / ~1200 bytes per
+/// QUIC packet ≈ 3500 packets) without the reader stalling.  Acts as a
+/// userspace buffer that replaces the tiny kernel UDP receive buffer
+/// (208 KB default on Linux, which holds only ~170 packets).
+const RELAY_FORWARD_CHANNEL_CAPACITY: usize = 8192;
+
 /// Configuration for the MASQUE relay server
 #[derive(Debug, Clone)]
 pub struct MasqueRelayConfig {
@@ -1011,59 +1019,79 @@ impl MasqueRelayServer {
         let stats2 = self.stats();
         let keepalive_bytes = 0u32.to_be_bytes();
 
-        tokio::select! {
-            // Direction 1: UDP → Stream (target → relay → client)
-            // Also sends periodic zero-length keepalive frames to keep
-            // the NAT conntrack entry alive on the client's side.
-            _ = async {
-                let mut buf = vec![0u8; 65536];
-                let mut keepalive = tokio::time::interval(RELAY_KEEPALIVE_INTERVAL);
-                keepalive.tick().await; // skip immediate first tick
+        // Direction 1: UDP → Stream (target → relay → client)
+        //
+        // Decoupled into a reader task and a writer task connected by a
+        // bounded channel.  The reader drains the UDP socket into the
+        // channel as fast as the kernel delivers packets.  The writer
+        // pulls from the channel and writes to the QUIC stream at
+        // whatever rate the stream's flow control allows.  The channel
+        // acts as a userspace buffer (~10 MB at capacity) that absorbs
+        // full max-message-size bursts that would otherwise overflow the
+        // kernel's tiny 208 KB UDP receive buffer.
+        let (fwd_tx, mut fwd_rx) =
+            tokio::sync::mpsc::channel::<Bytes>(RELAY_FORWARD_CHANNEL_CAPACITY);
 
-                loop {
-                    tokio::select! {
-                        result = socket.recv_from(&mut buf) => {
-                            match result {
-                                Ok((len, source)) => {
-                                    let payload = Bytes::copy_from_slice(&buf[..len]);
-                                    tracing::trace!(
-                                        session_id, source = %source, len,
-                                        "Stream relay: received UDP from target"
-                                    );
-
-                                    let datagram = UncompressedDatagram::new(
-                                        VarInt::from_u32(0), source, payload,
-                                    );
-                                    let encoded = datagram.encode();
-
-                                    let frame_len = encoded.len() as u32;
-                                    if let Err(e) = send_stream.write_all(&frame_len.to_be_bytes()).await {
-                                        tracing::debug!(session_id, error = %e, "Stream write error (length)");
-                                        break;
-                                    }
-                                    if let Err(e) = send_stream.write_all(&encoded).await {
-                                        tracing::debug!(session_id, error = %e, "Stream write error (data)");
-                                        break;
-                                    }
-
-                                    stats.record_bytes(encoded.len() as u64);
-                                    stats.record_datagram();
-                                }
-                                Err(e) => {
-                                    tracing::debug!(session_id, error = %e, "UDP recv error");
-                                    break;
-                                }
-                            }
+        // Reader: UDP socket → channel (never blocked by stream writes)
+        let reader_handle = tokio::spawn(async move {
+            let mut buf = vec![0u8; 65536];
+            loop {
+                match socket.recv_from(&mut buf).await {
+                    Ok((len, source)) => {
+                        let payload = Bytes::copy_from_slice(&buf[..len]);
+                        tracing::trace!(
+                            session_id, source = %source, len,
+                            "Stream relay: received UDP from target"
+                        );
+                        let datagram =
+                            UncompressedDatagram::new(VarInt::from_u32(0), source, payload);
+                        let encoded = datagram.encode();
+                        stats.record_bytes(encoded.len() as u64);
+                        stats.record_datagram();
+                        if fwd_tx.send(encoded).await.is_err() {
+                            break; // writer closed
                         }
-                        _ = keepalive.tick() => {
-                            if let Err(e) = send_stream.write_all(&keepalive_bytes).await {
-                                tracing::debug!(session_id, error = %e, "Keepalive write error");
-                                break;
-                            }
+                    }
+                    Err(e) => {
+                        tracing::debug!(session_id, error = %e, "UDP recv error");
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Writer: channel → QUIC stream (paced by stream flow control)
+        let writer_handle = tokio::spawn(async move {
+            let mut keepalive = tokio::time::interval(RELAY_KEEPALIVE_INTERVAL);
+            keepalive.tick().await; // skip immediate first tick
+
+            loop {
+                tokio::select! {
+                    item = fwd_rx.recv() => {
+                        let Some(encoded) = item else { break };
+                        let frame_len = encoded.len() as u32;
+                        if let Err(e) = send_stream.write_all(&frame_len.to_be_bytes()).await {
+                            tracing::debug!(session_id, error = %e, "Stream write error (length)");
+                            break;
+                        }
+                        if let Err(e) = send_stream.write_all(&encoded).await {
+                            tracing::debug!(session_id, error = %e, "Stream write error (data)");
+                            break;
+                        }
+                    }
+                    _ = keepalive.tick() => {
+                        if let Err(e) = send_stream.write_all(&keepalive_bytes).await {
+                            tracing::debug!(session_id, error = %e, "Keepalive write error");
+                            break;
                         }
                     }
                 }
-            } => {},
+            }
+        });
+
+        tokio::select! {
+            _ = reader_handle => {},
+            _ = writer_handle => {},
 
             // Direction 2: Stream → UDP (client → relay → target)
             _ = async {
