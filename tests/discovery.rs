@@ -4,43 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use saorsa_transport::candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig};
-use saorsa_transport::{DiscoveryError, ValidatedCandidate};
 use std::time::Duration;
-
-// Helper to run blocking discovery with a hard timeout so tests never hang
-async fn run_blocking_with_timeout<F, R>(dur: Duration, f: F) -> Result<R, &'static str>
-where
-    F: FnOnce() -> R + Send + 'static,
-    R: Send + 'static,
-{
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(f());
-    });
-
-    match tokio::time::timeout(dur, rx).await {
-        Ok(Ok(result)) => Ok(result),
-        Ok(Err(_)) => Err("task panicked"),
-        Err(_elapsed) => Err("timeout"),
-    }
-}
-
-// Improved helper that provides better error context
-async fn run_discovery_with_timeout<F>(
-    dur: Duration,
-    operation_name: &str,
-    f: F,
-) -> Result<Vec<ValidatedCandidate>, String>
-where
-    F: FnOnce() -> Result<Vec<ValidatedCandidate>, DiscoveryError> + Send + 'static,
-{
-    match run_blocking_with_timeout(dur, f).await {
-        Ok(Ok(candidates)) => Ok(candidates),
-        Ok(Err(e)) => Err(format!("{} failed: {:?}", operation_name, e)),
-        Err("timeout") => Err(format!("{} timed out after {:?}", operation_name, dur)),
-        Err(other) => Err(format!("{} failed with error: {}", operation_name, other)),
-    }
-}
 
 // Platform-specific tests are included directly in this file
 
@@ -61,20 +25,23 @@ async fn test_discovery_basic_functionality() {
         allow_loopback: true,
     };
 
-    let discovery = CandidateDiscoveryManager::new(config);
-    let candidates =
-        match run_discovery_with_timeout(Duration::from_secs(30), "Basic discovery", move || {
-            let mut d = discovery;
-            d.discover_local_candidates()
-        })
-        .await
-        {
-            Ok(candidates) => candidates,
-            Err(e) => {
-                println!("Discovery failed: {} — skipping assertions", e);
-                return;
-            }
-        };
+    let mut discovery = CandidateDiscoveryManager::new(config);
+    let candidates = match tokio::time::timeout(
+        Duration::from_secs(30),
+        discovery.discover_local_candidates(),
+    )
+    .await
+    {
+        Ok(Ok(candidates)) => candidates,
+        Ok(Err(e)) => {
+            println!("Discovery failed: {e:?} — skipping assertions");
+            return;
+        }
+        Err(_) => {
+            println!("Discovery timed out — skipping assertions");
+            return;
+        }
+    };
 
     assert!(
         !candidates.is_empty(),
@@ -140,18 +107,17 @@ async fn test_discovery_with_timeout() {
         allow_loopback: true,
     };
 
-    let discovery = CandidateDiscoveryManager::new(config);
+    let mut discovery = CandidateDiscoveryManager::new(config);
     // Should either succeed quickly or timeout gracefully
-    match run_blocking_with_timeout(Duration::from_secs(2), move || {
-        let mut d = discovery;
-        d.discover_local_candidates()
-    })
+    match tokio::time::timeout(
+        Duration::from_secs(2),
+        discovery.discover_local_candidates(),
+    )
     .await
     {
         Ok(Ok(candidates)) => println!("Discovery succeeded with {} candidates", candidates.len()),
-        Ok(Err(e)) => println!("Discovery failed as expected with short timeouts: {:?}", e),
-        Err("timeout") => println!("Discovery blocked; test timed out as expected"),
-        Err(other) => panic!("Unexpected error: {}", other),
+        Ok(Err(e)) => println!("Discovery failed as expected with short timeouts: {e:?}"),
+        Err(_) => println!("Discovery blocked; test timed out as expected"),
     }
 }
 
@@ -177,20 +143,23 @@ mod mock_tests {
             allow_loopback: true,
         };
 
-        let discovery = CandidateDiscoveryManager::new(config);
-        let candidates =
-            match run_discovery_with_timeout(Duration::from_secs(30), "Mock discovery", move || {
-                let mut d = discovery;
-                d.discover_local_candidates()
-            })
-            .await
-            {
-                Ok(candidates) => candidates,
-                Err(e) => {
-                    println!("Mock discovery failed: {} — skipping assertions", e);
-                    return;
-                }
-            };
+        let mut discovery = CandidateDiscoveryManager::new(config);
+        let candidates = match tokio::time::timeout(
+            Duration::from_secs(30),
+            discovery.discover_local_candidates(),
+        )
+        .await
+        {
+            Ok(Ok(candidates)) => candidates,
+            Ok(Err(e)) => {
+                println!("Mock discovery failed: {e:?} — skipping assertions");
+                return;
+            }
+            Err(_) => {
+                println!("Mock discovery timed out — skipping assertions");
+                return;
+            }
+        };
 
         // Should at least have localhost
         assert!(!candidates.is_empty());
@@ -223,10 +192,7 @@ mod linux_tests {
 
             let mut discovery = CandidateDiscoveryManager::new(config);
 
-            // discover_local_candidates is not async, so we wrap it
-            let discovery_result = discovery.discover_local_candidates();
-
-            match discovery_result {
+            match discovery.discover_local_candidates().await {
                 Ok(candidates) => {
                     assert!(
                         !candidates.is_empty(),
@@ -239,7 +205,7 @@ mod linux_tests {
                     assert!(has_loopback, "Linux should discover loopback interfaces");
                 }
                 Err(e) => {
-                    eprintln!("Discovery failed: {:?}", e);
+                    eprintln!("Discovery failed: {e:?}");
                     // Don't panic, just log the error
                 }
             }
@@ -273,20 +239,20 @@ mod macos_tests {
             allow_loopback: true,
         };
 
-        let discovery = CandidateDiscoveryManager::new(config);
-        let candidates = match run_discovery_with_timeout(
+        let mut discovery = CandidateDiscoveryManager::new(config);
+        let candidates = match tokio::time::timeout(
             Duration::from_secs(30),
-            "macOS discovery",
-            move || {
-                let mut d = discovery;
-                d.discover_local_candidates()
-            },
+            discovery.discover_local_candidates(),
         )
         .await
         {
-            Ok(candidates) => candidates,
-            Err(e) => {
-                println!("macOS discovery failed: {} — skipping assertions", e);
+            Ok(Ok(candidates)) => candidates,
+            Ok(Err(e)) => {
+                println!("macOS discovery failed: {e:?} — skipping assertions");
+                return;
+            }
+            Err(_) => {
+                println!("macOS discovery timed out — skipping assertions");
                 return;
             }
         };
@@ -338,7 +304,7 @@ mod windows_tests {
         };
 
         let mut discovery = CandidateDiscoveryManager::new(config);
-        let candidates = discovery.discover_local_candidates().unwrap();
+        let candidates = discovery.discover_local_candidates().await.unwrap();
 
         assert!(
             !candidates.is_empty(),

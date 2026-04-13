@@ -48,6 +48,13 @@ use crate::masque::{
     RelaySessionConfig, RelaySessionState, UncompressedDatagram,
 };
 use crate::relay::error::{RelayError, RelayResult, SessionErrorKind};
+use crate::upnp::{UpnpConfig, UpnpMappingService};
+
+/// Interval at which both sides of a relay stream send a zero-length
+/// keepalive frame.  Keeps the NAT conntrack entry alive (default
+/// `nf_conntrack_udp_timeout_stream` is 120 s on Linux) and prevents
+/// the QUIC idle timeout from firing on the underlying connection.
+const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Configuration for the MASQUE relay server
 #[derive(Debug, Clone)]
@@ -212,6 +219,11 @@ pub struct MasqueRelayServer {
     /// Defaults to `true` so nodes are relay-capable unless the classifier
     /// explicitly disables it.
     relay_serving_enabled: AtomicBool,
+    /// UPnP port mappings for relay-allocated sockets, keyed by session ID.
+    /// Each relay session binds a random ephemeral port; this mapping asks
+    /// the local IGD gateway (if any) to forward that port from the public
+    /// side so relay-forwarded traffic can reach it through a NAT.
+    upnp_mappings: RwLock<HashMap<u64, UpnpMappingService>>,
 }
 
 impl std::fmt::Debug for MasqueRelayServer {
@@ -238,6 +250,7 @@ impl MasqueRelayServer {
             stats: Arc::new(MasqueRelayStats::new()),
             started_at: Instant::now(),
             bridged_connections: AtomicU64::new(0),
+            upnp_mappings: RwLock::new(HashMap::new()),
         }
     }
 
@@ -285,6 +298,7 @@ impl MasqueRelayServer {
             stats: Arc::new(MasqueRelayStats::new()),
             started_at: Instant::now(),
             bridged_connections: AtomicU64::new(0),
+            upnp_mappings: RwLock::new(HashMap::new()),
         }
     }
 
@@ -561,6 +575,15 @@ impl MasqueRelayServer {
         if requires_bridging {
             self.record_bridged_connection();
         }
+
+        // Best-effort UPnP: ask the local gateway (if any) to forward
+        // the relay port so traffic can reach it through a home NAT.
+        // The service is non-blocking and tolerates missing gateways.
+        let upnp_svc = UpnpMappingService::start(bound_port, UpnpConfig::default());
+        self.upnp_mappings
+            .write()
+            .await
+            .insert(session_id, upnp_svc);
 
         tracing::info!(
             session_id = session_id,
@@ -986,48 +1009,57 @@ impl MasqueRelayServer {
         let socket2 = Arc::clone(&socket);
         let stats = self.stats();
         let stats2 = self.stats();
+        let keepalive_bytes = 0u32.to_be_bytes();
 
         tokio::select! {
-            // TODO: Rate limiting — check_rate_limit should be called in both
-            // directions to enforce the per-session bandwidth_limit from
-            // RelaySessionConfig. Currently the stream path bypasses rate
-            // limiting entirely. Requires passing the session's rate limiter
-            // into this loop.
-            //
             // Direction 1: UDP → Stream (target → relay → client)
+            // Also sends periodic zero-length keepalive frames to keep
+            // the NAT conntrack entry alive on the client's side.
             _ = async {
                 let mut buf = vec![0u8; 65536];
+                let mut keepalive = tokio::time::interval(RELAY_KEEPALIVE_INTERVAL);
+                keepalive.tick().await; // skip immediate first tick
+
                 loop {
-                    match socket.recv_from(&mut buf).await {
-                        Ok((len, source)) => {
-                            let payload = Bytes::copy_from_slice(&buf[..len]);
-                            tracing::trace!(
-                                session_id, source = %source, len,
-                                "Stream relay: received UDP from target"
-                            );
+                    tokio::select! {
+                        result = socket.recv_from(&mut buf) => {
+                            match result {
+                                Ok((len, source)) => {
+                                    let payload = Bytes::copy_from_slice(&buf[..len]);
+                                    tracing::trace!(
+                                        session_id, source = %source, len,
+                                        "Stream relay: received UDP from target"
+                                    );
 
-                            let datagram = UncompressedDatagram::new(
-                                VarInt::from_u32(0), source, payload,
-                            );
-                            let encoded = datagram.encode();
+                                    let datagram = UncompressedDatagram::new(
+                                        VarInt::from_u32(0), source, payload,
+                                    );
+                                    let encoded = datagram.encode();
 
-                            // Write length-prefixed frame to stream
-                            let frame_len = encoded.len() as u32;
-                            if let Err(e) = send_stream.write_all(&frame_len.to_be_bytes()).await {
-                                tracing::debug!(session_id, error = %e, "Stream write error (length)");
-                                break;
+                                    let frame_len = encoded.len() as u32;
+                                    if let Err(e) = send_stream.write_all(&frame_len.to_be_bytes()).await {
+                                        tracing::debug!(session_id, error = %e, "Stream write error (length)");
+                                        break;
+                                    }
+                                    if let Err(e) = send_stream.write_all(&encoded).await {
+                                        tracing::debug!(session_id, error = %e, "Stream write error (data)");
+                                        break;
+                                    }
+
+                                    stats.record_bytes(encoded.len() as u64);
+                                    stats.record_datagram();
+                                }
+                                Err(e) => {
+                                    tracing::debug!(session_id, error = %e, "UDP recv error");
+                                    break;
+                                }
                             }
-                            if let Err(e) = send_stream.write_all(&encoded).await {
-                                tracing::debug!(session_id, error = %e, "Stream write error (data)");
-                                break;
-                            }
-
-                            stats.record_bytes(encoded.len() as u64);
-                            stats.record_datagram();
                         }
-                        Err(e) => {
-                            tracing::debug!(session_id, error = %e, "UDP recv error");
-                            break;
+                        _ = keepalive.tick() => {
+                            if let Err(e) = send_stream.write_all(&keepalive_bytes).await {
+                                tracing::debug!(session_id, error = %e, "Keepalive write error");
+                                break;
+                            }
                         }
                     }
                 }
@@ -1043,6 +1075,11 @@ impl MasqueRelayServer {
                         break;
                     }
                     let frame_len = u32::from_be_bytes(len_buf) as usize;
+
+                    // Zero-length frame = keepalive ping, skip.
+                    if frame_len == 0 {
+                        continue;
+                    }
 
                     // Safety cap: reject obviously corrupt length prefixes that
                     // would allocate huge buffers.  Legitimate QUIC packets are
@@ -1121,6 +1158,11 @@ impl MasqueRelayServer {
         if let Some(addr) = client_addr {
             let mut client_map = self.client_to_session.write().await;
             client_map.remove(&addr);
+        }
+
+        // Release the UPnP port mapping (if one was created for this session).
+        if let Some(svc) = self.upnp_mappings.write().await.remove(&session_id) {
+            svc.shutdown().await;
         }
 
         self.stats.record_session_terminated();

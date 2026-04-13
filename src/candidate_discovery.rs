@@ -28,13 +28,33 @@ use crate::{
     nat_traversal_api::{BootstrapNode, CandidateAddress},
 };
 
-/// Discovery-side priority assigned to UPnP port-mapped candidates.
-///
-/// Slotted strictly above the bound-address promotion (`60_000`) so that
-/// a router-confirmed public mapping always outranks any host-side
-/// candidate during pairing. The constant lives here so the priority
-/// scale stays in one file alongside the other discovery priorities.
-const PORT_MAPPED_DISCOVERY_PRIORITY: u32 = 70_000;
+// ── Discovery priority scale (0–1000) ──────────────────────────────
+//
+// All candidate priorities live on a single 0–1000 scale so that
+// comparison across discovery sources is meaningful. Higher = better.
+//
+// The ranking reflects confidence that the address is actually
+// reachable from the public internet:
+//
+//   Port-mapped (UPnP) > Bound address > Server-reflexive (OBSERVED_ADDRESS)
+//   > Local interface scan > Base (unclassified)
+
+/// UPnP port-mapped candidates. The router has explicitly confirmed it
+/// will forward traffic, so this is the highest-confidence source.
+const PORT_MAPPED_DISCOVERY_PRIORITY: u32 = 700;
+
+/// The actual local socket address we bound to. High confidence because
+/// we know the OS gave us this address, but it may be behind NAT.
+const BOUND_ADDRESS_PRIORITY: u32 = 600;
+
+/// External addresses discovered via QUIC `OBSERVED_ADDRESS` frames or
+/// reported as server-reflexive by bootstrap peers. Verified by a real
+/// peer connection, but may be transient if the NAT rebinds.
+const SERVER_REFLEXIVE_PRIORITY: u32 = 550;
+
+/// Addresses from local interface enumeration (platform-specific scan).
+/// These are real OS-assigned addresses but may be private/link-local.
+const LOCAL_INTERFACE_PRIORITY: u32 = 500;
 
 /// Session identifier for the candidate discovery manager.
 ///
@@ -785,8 +805,13 @@ impl CandidateDiscoveryManager {
         true
     }
 
-    /// Discover local network interface candidates synchronously
-    pub fn discover_local_candidates(&mut self) -> Result<Vec<ValidatedCandidate>, DiscoveryError> {
+    /// Discover local network interface candidates.
+    ///
+    /// Polls `check_scan_complete()` with short async sleeps to avoid
+    /// blocking a tokio worker thread.
+    pub async fn discover_local_candidates(
+        &mut self,
+    ) -> Result<Vec<ValidatedCandidate>, DiscoveryError> {
         // Start interface scan
         self.interface_discovery.lock().start_scan().map_err(|e| {
             DiscoveryError::NetworkError(format!("Failed to start interface scan: {e}"))
@@ -813,7 +838,7 @@ impl CandidateDiscoveryManager {
                             id: CandidateId(rand::random()),
                             address: addr,
                             source: DiscoverySourceType::Local,
-                            priority: 50000, // High priority for local interfaces
+                            priority: LOCAL_INTERFACE_PRIORITY,
                             rtt: None,
                             reliability_score: 1.0,
                         });
@@ -827,10 +852,8 @@ impl CandidateDiscoveryManager {
                 return Ok(candidates);
             }
 
-            // Brief sleep to avoid busy-waiting while scan completes.
-            // Although getifaddrs is fast, in edge cases check_scan_complete()
-            // may return None for up to 2s, so we throttle to avoid CPU burn.
-            std::thread::sleep(Duration::from_millis(10));
+            // Yield to the runtime instead of blocking the worker thread.
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
@@ -926,7 +949,7 @@ impl CandidateDiscoveryManager {
                         if !already_present {
                             let candidate = DiscoveryCandidate {
                                 address: bound_addr,
-                                priority: 60000,
+                                priority: BOUND_ADDRESS_PRIORITY,
                                 source: DiscoverySourceType::Local,
                                 state: CandidateState::New,
                             };
@@ -975,30 +998,38 @@ impl CandidateDiscoveryManager {
 
                     let mut candidates_added = 0;
 
-                    // Add the bound address if available
+                    // Add the bound address if available and not already
+                    // present (the early-promotion site above may have
+                    // inserted it before the scan completed).
                     if let Some(bound_addr) = self.config.bound_address {
                         if self.is_valid_local_address(&bound_addr) || bound_addr.ip().is_loopback()
                         {
-                            let candidate = DiscoveryCandidate {
-                                address: bound_addr,
-                                priority: 60000, // High priority for the actual bound address
-                                source: DiscoverySourceType::Local,
-                                state: CandidateState::New,
-                            };
-
                             if let Some(session) = self.active_sessions.get_mut(&session_id) {
-                                session.discovered_candidates.push(candidate.clone());
-                                session.statistics.local_candidates_found += 1;
-                                candidates_added += 1;
+                                let already_present = session
+                                    .discovered_candidates
+                                    .iter()
+                                    .any(|c| c.address == bound_addr);
+                                if !already_present {
+                                    let candidate = DiscoveryCandidate {
+                                        address: bound_addr,
+                                        priority: BOUND_ADDRESS_PRIORITY,
+                                        source: DiscoverySourceType::Local,
+                                        state: CandidateState::New,
+                                    };
 
-                                all_events.push(DiscoveryEvent::LocalCandidateDiscovered {
-                                    candidate: candidate.to_candidate_address(),
-                                });
+                                    session.discovered_candidates.push(candidate.clone());
+                                    session.statistics.local_candidates_found += 1;
+                                    candidates_added += 1;
 
-                                debug!(
-                                    "Added bound address {} as local candidate for {:?}",
-                                    bound_addr, session_id
-                                );
+                                    all_events.push(DiscoveryEvent::LocalCandidateDiscovered {
+                                        candidate: candidate.to_candidate_address(),
+                                    });
+
+                                    debug!(
+                                        "Added bound address {} as local candidate for {:?}",
+                                        bound_addr, session_id
+                                    );
+                                }
                             }
                         }
                     }
@@ -1142,7 +1173,7 @@ impl CandidateDiscoveryManager {
                             if !already_present {
                                 let candidate = DiscoveryCandidate {
                                     address: bound_addr,
-                                    priority: 60000,
+                                    priority: BOUND_ADDRESS_PRIORITY,
                                     source: DiscoverySourceType::Local,
                                     state: CandidateState::New,
                                 };
@@ -1232,14 +1263,67 @@ impl CandidateDiscoveryManager {
         }
     }
 
-    /// Get current discovery status
+    /// Get aggregated discovery status across all active sessions.
+    ///
+    /// The returned phase reflects the "most active" session: any
+    /// in-progress phase wins over Idle or Completed.
     pub fn get_status(&self) -> DiscoveryStatus {
-        // Return a default status since we now manage multiple sessions
+        if self.active_sessions.is_empty() {
+            return DiscoveryStatus {
+                phase: DiscoveryPhase::Idle,
+                discovered_candidates: Vec::new(),
+                statistics: DiscoveryStatistics::default(),
+                elapsed_time: Duration::from_secs(0),
+            };
+        }
+
+        let mut combined_candidates = Vec::new();
+        let mut combined_stats = DiscoveryStatistics::default();
+        let mut max_elapsed = Duration::ZERO;
+        let mut overall_phase = DiscoveryPhase::Idle;
+
+        for session in self.active_sessions.values() {
+            let candidates: Vec<CandidateAddress> = session
+                .discovered_candidates
+                .iter()
+                .map(|c| c.to_candidate_address())
+                .collect();
+            combined_candidates.extend(candidates);
+
+            combined_stats.local_candidates_found += session.statistics.local_candidates_found;
+            combined_stats.server_reflexive_candidates_found +=
+                session.statistics.server_reflexive_candidates_found;
+            combined_stats.predicted_candidates_generated +=
+                session.statistics.predicted_candidates_generated;
+            combined_stats.bootstrap_queries_sent += session.statistics.bootstrap_queries_sent;
+            combined_stats.bootstrap_queries_successful +=
+                session.statistics.bootstrap_queries_successful;
+
+            let elapsed = session.started_at.elapsed();
+            if elapsed > max_elapsed {
+                max_elapsed = elapsed;
+            }
+
+            // Prefer the most "active" phase as the overall status.
+            match (&overall_phase, &session.current_phase) {
+                (DiscoveryPhase::Idle, other) => overall_phase = other.clone(),
+                (DiscoveryPhase::Completed { .. }, other)
+                    if !matches!(
+                        other,
+                        DiscoveryPhase::Completed { .. } | DiscoveryPhase::Idle
+                    ) =>
+                {
+                    overall_phase = other.clone();
+                }
+                _ => {}
+            }
+        }
+
         DiscoveryStatus {
-            phase: DiscoveryPhase::Idle,
-            discovered_candidates: Vec::new(),
-            statistics: DiscoveryStatistics::default(),
-            elapsed_time: Duration::from_secs(0),
+            phase: overall_phase,
+            discovered_candidates: combined_candidates,
+            statistics: combined_stats,
+            elapsed_time: max_elapsed,
         }
     }
 
@@ -1263,7 +1347,7 @@ impl CandidateDiscoveryManager {
 
         // Aggregate results from all sessions
         let mut all_candidates = Vec::new();
-        let mut latest_completion = Instant::now();
+        let mut latest_completion: Option<Instant> = None;
         let mut combined_stats = DiscoveryStatistics::default();
 
         for session in self.active_sessions.values() {
@@ -1274,7 +1358,10 @@ impl CandidateDiscoveryManager {
                 } => {
                     // Add candidates from this session
                     all_candidates.extend(final_candidates.clone());
-                    latest_completion = *completion_time;
+                    latest_completion = Some(match latest_completion {
+                        Some(prev) if prev > *completion_time => prev,
+                        _ => *completion_time,
+                    });
                     // Combine statistics
                     combined_stats.local_candidates_found +=
                         session.statistics.local_candidates_found;
@@ -1305,7 +1392,7 @@ impl CandidateDiscoveryManager {
         } else {
             Some(DiscoveryResults {
                 candidates: all_candidates,
-                completion_time: latest_completion,
+                completion_time: latest_completion.unwrap_or_else(Instant::now),
                 statistics: combined_stats,
             })
         }
@@ -1351,7 +1438,7 @@ impl CandidateDiscoveryManager {
 
             let candidate = DiscoveryCandidate {
                 address: external_addr,
-                priority: 55000, // High priority - external addresses are valuable
+                priority: SERVER_REFLEXIVE_PRIORITY,
                 source: DiscoverySourceType::ServerReflexive,
                 state: CandidateState::New,
             };
@@ -1392,7 +1479,7 @@ impl CandidateDiscoveryManager {
 
                 let candidate = DiscoveryCandidate {
                     address: external_addr,
-                    priority: 55000,
+                    priority: SERVER_REFLEXIVE_PRIORITY,
                     source: DiscoverySourceType::ServerReflexive,
                     state: CandidateState::New,
                 };
@@ -1520,33 +1607,31 @@ impl CandidateDiscoveryManager {
         Ok(true)
     }
 
-    /// Calculate priority for QUIC-discovered addresses
+    /// Calculate priority for QUIC-discovered addresses.
+    ///
+    /// Uses [`SERVER_REFLEXIVE_PRIORITY`] as the base and applies penalties
+    /// for private, loopback, or link-local addresses.
     fn calculate_quic_discovered_priority(&self, address: &SocketAddr) -> u32 {
-        // QUIC-discovered addresses get higher priority than STUN-discovered ones
-        // because they come from actual QUIC connections and are more reliable
-        let mut priority = 255; // Base priority for QUIC-discovered addresses
+        let mut priority = SERVER_REFLEXIVE_PRIORITY;
 
         match address.ip() {
             IpAddr::V4(ipv4) => {
                 if ipv4.is_private() {
-                    priority -= 10; // Slight penalty for private addresses
+                    priority -= 10;
                 } else if ipv4.is_loopback() {
-                    priority -= 20; // More penalty for loopback
+                    priority -= 20;
                 }
-                // Public IPv4 keeps base priority of 255
             }
             IpAddr::V6(ipv6) => {
-                // Prefer IPv6 for better NAT traversal potential
-                priority += 10; // Boost for IPv6 (265 base)
+                priority += 10; // Small boost for IPv6
 
                 if ipv6.is_loopback() {
-                    priority -= 30; // Significant penalty for loopback
+                    priority -= 30;
                 } else if ipv6.is_multicast() {
-                    priority -= 40; // Even more penalty for multicast
+                    priority -= 40;
                 } else if ipv6.is_unspecified() {
-                    priority -= 50; // Unspecified should not be used
+                    priority -= 50;
                 } else {
-                    // Use classifier for address type penalty
                     priority -= Ipv6AddressType::classify(&ipv6).quic_discovered_penalty();
                 }
             }

@@ -30,12 +30,19 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
+use std::time::Duration;
 
 use quinn_udp::{RecvMeta, Transmit};
 
 use crate::VarInt;
 use crate::high_level::{AsyncUdpSocket, UdpPoller};
 use crate::masque::UncompressedDatagram;
+
+/// Interval at which the relay client sends a zero-length keepalive
+/// frame through the relay stream.  Must be shorter than the NAT
+/// conntrack UDP stream timeout (typically 120 s on Linux) to prevent
+/// the mapping from expiring while the relay is idle.
+const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Raw QUIC streams from a relay session, before socket construction.
 ///
@@ -123,6 +130,11 @@ impl MasqueRelaySocket {
                     break;
                 }
                 let frame_len = u32::from_be_bytes(len_buf) as usize;
+                // Zero-length frame = keepalive ping from the relay
+                // server, skip without trying to decode a datagram.
+                if frame_len == 0 {
+                    continue;
+                }
                 // Safety cap — same as relay_server::MAX_RELAY_FRAME.
                 if frame_len > 512 * 1024 {
                     tracing::warn!(frame_len, "MasqueRelaySocket: corrupt frame length");
@@ -174,9 +186,30 @@ impl MasqueRelaySocket {
                     tracing::debug!(error = %e, "MasqueRelaySocket: stream write error (length)");
                     break;
                 }
-                if let Err(e) = send_stream.write_all(&encoded).await {
-                    tracing::debug!(error = %e, "MasqueRelaySocket: stream write error (data)");
-                    break;
+                // Zero-length frames (keepalives) need only the length
+                // prefix — skip the empty write_all.
+                if !encoded.is_empty() {
+                    if let Err(e) = send_stream.write_all(&encoded).await {
+                        tracing::debug!(error = %e, "MasqueRelaySocket: stream write error (data)");
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Background task: periodic keepalive pings.
+        // Sends a zero-length frame through the writer channel to keep
+        // the NAT conntrack entry alive for the underlying QUIC
+        // connection.  The writer encodes it as a 4-byte `[0,0,0,0]`
+        // length prefix with no payload; the relay server skips it.
+        let keepalive_tx = socket.send_tx.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(RELAY_KEEPALIVE_INTERVAL);
+            tick.tick().await; // skip immediate first tick
+            loop {
+                tick.tick().await;
+                if keepalive_tx.send(Bytes::new()).is_err() {
+                    break; // channel closed — relay dead
                 }
             }
         });
