@@ -25,7 +25,7 @@ use crate::SHUTDOWN_DRAIN_TIMEOUT;
 /// infrastructure for the whole network. The cap bounds relay load while still
 /// giving private peers enough choice to find an accepting relayer within their
 /// XOR close-group walk.
-const MAX_RELAY_CLIENTS_PER_PUBLIC_PEER: usize = 4;
+const MAX_RELAY_CLIENTS_PER_PUBLIC_PEER: usize = 2;
 
 /// HTTP-like status code returned by a MASQUE relay when it refuses a new
 /// CONNECT-UDP Bind request because its relay client slots are full.
