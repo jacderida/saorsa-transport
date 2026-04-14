@@ -34,6 +34,11 @@ const MAX_RELAY_CLIENTS_PER_PUBLIC_PEER: usize = 2;
 /// rather than retrying against the same one. See [`NatTraversalError::RelayAtCapacity`].
 const MASQUE_RELAY_FULL_STATUS: u16 = 503;
 
+/// Buffer for completed handshakes. Sized above the peak backlog observed
+/// in the ant-rc-18 testnet (1 079 connections) so transient consumer
+/// stalls don't block the accept loop.
+const HANDSHAKE_CHANNEL_CAPACITY: usize = 1024;
+
 /// Creates a bind address that allows the OS to select a random available port
 ///
 /// This provides protocol obfuscation by preventing port fingerprinting, which improves
@@ -1421,7 +1426,7 @@ impl NatTraversalEndpoint {
         inner_endpoint.set_peer_address_update_tx(peer_addr_tx);
 
         // Channel for background handshake completion (persistent across accept calls)
-        let (hs_tx, hs_rx) = mpsc::channel(32);
+        let (hs_tx, hs_rx) = mpsc::channel(HANDSHAKE_CHANNEL_CAPACITY);
 
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
@@ -1855,7 +1860,7 @@ impl NatTraversalEndpoint {
         inner_endpoint.set_peer_address_update_tx(peer_addr_tx);
 
         // Channel for background handshake completion (persistent across accept calls)
-        let (hs_tx, hs_rx) = mpsc::channel(32);
+        let (hs_tx, hs_rx) = mpsc::channel(HANDSHAKE_CHANNEL_CAPACITY);
 
         let endpoint = Self {
             inner_endpoint: Some(inner_endpoint.clone()),
