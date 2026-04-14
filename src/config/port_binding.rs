@@ -211,16 +211,37 @@ mod socket2_impl {
                 .map_err(|e| EndpointConfigError::BindFailed(e.to_string()))?;
         }
 
-        // SO_REUSEPORT support is platform-specific and optional
-        // We'll skip it for now to ensure cross-platform compatibility
-        #[allow(clippy::collapsible_if)]
+        // SO_REUSEPORT lets multiple processes bind the same `{addr, port}`
+        // and have the kernel hash inbound datagrams across them by 4-tuple.
+        // This is how tokio-quiche-style multi-core scaling is deployed at
+        // Cloudflare: run N worker processes on the same endpoint, let the
+        // kernel's reuseport group do the fan-out.
+        //
+        // Supported on Linux, the BSDs (incl. macOS), and Android. Solaris /
+        // illumos use a different API and are excluded. Windows has no direct
+        // equivalent (SO_REUSEADDR has very different semantics there), so the
+        // flag is ignored. Failure is logged and treated as non-fatal — the
+        // caller gets a working single-owner socket.
         if opts.reuse_port {
-            #[cfg(all(unix, not(target_os = "solaris"), not(target_os = "illumos")))]
-            {
-                // On supported Unix platforms, try to set SO_REUSEPORT
-                // This is a best-effort attempt - failure is not critical
-                tracing::debug!("SO_REUSEPORT requested but skipped for compatibility");
+            #[cfg(all(
+                unix,
+                not(target_os = "solaris"),
+                not(target_os = "illumos"),
+                not(target_os = "fuchsia")
+            ))]
+            if let Err(e) = socket.set_reuse_port(true) {
+                tracing::warn!(%e, "failed to set SO_REUSEPORT; falling back to single-owner bind");
             }
+            #[cfg(any(
+                not(unix),
+                target_os = "solaris",
+                target_os = "illumos",
+                target_os = "fuchsia"
+            ))]
+            tracing::debug!(
+                target_os = std::env::consts::OS,
+                "SO_REUSEPORT not supported on this platform; ignoring request",
+            );
         }
 
         // Apply buffer sizes with graceful fallback
@@ -654,5 +675,49 @@ mod tests {
 
         assert!(!bound.all_addrs().is_empty());
         assert_eq!(bound.all_addrs(), &bound.addrs[..]);
+    }
+
+    /// On platforms that expose `SO_REUSEPORT`, two sockets with
+    /// `reuse_port = true` must be able to co-bind the same `{addr, port}`.
+    /// This is the actual contract the flag needs to satisfy — we previously
+    /// accepted the option in config but silently dropped it.
+    #[cfg(all(
+        feature = "network-discovery",
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        )
+    ))]
+    #[test]
+    fn reuse_port_allows_two_bindings_on_same_port() {
+        let loopback = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+        let opts = SocketOptions {
+            reuse_address: true,
+            reuse_port: true,
+            send_buffer_size: None,
+            recv_buffer_size: None,
+        };
+
+        let first = create_socket(&loopback, &opts).expect("first bind with reuse_port");
+        let shared_addr = first.local_addr().expect("bound socket has a local addr");
+        assert_ne!(shared_addr.port(), 0);
+
+        let second = create_socket(&shared_addr, &opts).expect(
+            "second bind to the same port with reuse_port=true must succeed on this platform",
+        );
+        assert_eq!(
+            second.local_addr().expect("local_addr").port(),
+            shared_addr.port(),
+            "second socket must land on the same port as the first",
+        );
+
+        drop(first);
+        drop(second);
     }
 }

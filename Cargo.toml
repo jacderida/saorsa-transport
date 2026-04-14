@@ -117,7 +117,7 @@ rustls-platform-verifier = { version = "0.6", optional = true }
 rustls-post-quantum = { version = "0.2", features = ["aws-lc-rs-unstable"] }
 
 # Network discovery dependencies (optional)
-socket2 = { version = "0.5", optional = true }
+socket2 = { version = "0.5", optional = true, features = ["all"] }
 nix = { version = "0.29", features = ["resource", "net"], optional = true }
 
 # UPnP IGD port mapping (optional)
