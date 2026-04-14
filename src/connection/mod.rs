@@ -17,7 +17,13 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use frame::StreamMetaVec;
-// Removed qlog feature
+
+/// qlog schema version emitted in the `qlog_version` header field.
+///
+/// Matches what `quiche` and `tokio-quiche` write so qvis / qlog tooling can
+/// parse our traces interchangeably.
+#[cfg(feature = "__qlog")]
+const QLOG_VERSION: &str = "0.3";
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use thiserror::Error;
@@ -275,9 +281,14 @@ pub struct Connection {
     #[cfg(feature = "trace")]
     event_log: Arc<crate::tracing::EventLog>,
 
-    /// Qlog writer
+    /// JSON-SEQ qlog streamer for this connection.
+    ///
+    /// `None` until [`Connection::set_qlog`] is called. When `Some`, the driver
+    /// emits `RecoveryMetricsUpdated` events on send / recv / loss-detection
+    /// boundaries. The streamer's header has already been written
+    /// (`start_log` is called inside `set_qlog`).
     #[cfg(feature = "__qlog")]
-    qlog_streamer: Option<Box<dyn std::io::Write + Send + Sync>>,
+    qlog_streamer: Option<qlog::streamer::QlogStreamer>,
 
     /// Optional bound peer identity (set after channel binding)
     peer_id_for_tokens: Option<PeerId>,
@@ -472,23 +483,78 @@ impl Connection {
         this
     }
 
-    /// Set up qlog for this connection
+    /// Set up JSON-SEQ qlog streaming for this connection.
+    ///
+    /// Builds a [`qlog::TraceSeq`] with a [`qlog::VantagePoint`] reflecting
+    /// this connection's [`Side`], wraps `writer` in a [`QlogStreamer`], and
+    /// writes the qlog header. Subsequent `RecoveryMetricsUpdated` events
+    /// are streamed automatically from the driver loop.
+    ///
+    /// If header writing fails (e.g. broken pipe), the streamer is dropped
+    /// silently — qlog is best-effort observability and must not affect the
+    /// connection's correctness path.
+    ///
+    /// [`QlogStreamer`]: qlog::streamer::QlogStreamer
     #[cfg(feature = "__qlog")]
     pub fn set_qlog(
         &mut self,
         writer: Box<dyn std::io::Write + Send + Sync>,
-        _title: Option<String>,
-        _description: Option<String>,
-        _now: Instant,
+        title: Option<String>,
+        description: Option<String>,
+        now: Instant,
     ) {
-        self.qlog_streamer = Some(writer);
+        let vantage_point = qlog::VantagePoint {
+            name: None,
+            ty: if self.side.is_client() {
+                qlog::VantagePointType::Client
+            } else {
+                qlog::VantagePointType::Server
+            },
+            flow: None,
+        };
+        let trace = qlog::TraceSeq::new(
+            vantage_point,
+            title.clone(),
+            description.clone(),
+            Some(qlog::Configuration {
+                time_offset: Some(0.0),
+                original_uris: None,
+            }),
+            None,
+        );
+        let mut streamer = qlog::streamer::QlogStreamer::new(
+            QLOG_VERSION.to_string(),
+            title,
+            description,
+            None,
+            now,
+            trace,
+            qlog::events::EventImportance::Base,
+            writer,
+        );
+        if streamer.start_log().is_err() {
+            warn!("qlog start_log failed; disabling qlog for this connection");
+            return;
+        }
+        self.qlog_streamer = Some(streamer);
     }
 
-    /// Emit qlog recovery metrics
+    /// Emit a `RecoveryMetricsUpdated` qlog event reflecting current congestion
+    /// state. Best-effort: streamer errors are logged at trace level and the
+    /// streamer is left in place (transient I/O blips are common with stdout).
     #[cfg(feature = "__qlog")]
-    fn emit_qlog_recovery_metrics(&mut self, _now: Instant) {
-        // TODO: Implement actual qlog recovery metrics emission
-        // For now, this is a stub to allow compilation
+    fn emit_qlog_recovery_metrics(&mut self, now: Instant) {
+        let Some(streamer) = self.qlog_streamer.as_mut() else {
+            return;
+        };
+        let Some(metrics) = self.path.qlog_congestion_metrics(self.pto_count) else {
+            return;
+        };
+        if let Err(e) = streamer
+            .add_event_data_with_instant(qlog::events::EventData::MetricsUpdated(metrics), now)
+        {
+            trace!("qlog add_event failed: {:?}", e);
+        }
     }
 
     /// Returns the next time at which `handle_timeout` should be called
