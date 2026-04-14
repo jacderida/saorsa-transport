@@ -45,7 +45,7 @@ use tokio::sync::RwLock;
 use bytes::Bytes;
 
 use crate::masque::{
-    ConnectUdpRequest, ConnectUdpResponse, MasqueRelayClient, RelayClientConfig,
+    ConnectUdpRequest, ConnectUdpResponse, IpPolicy, MasqueRelayClient, RelayClientConfig,
     RelayConnectionState,
 };
 use crate::relay::error::{RelayError, RelayResult, SessionErrorKind};
@@ -308,6 +308,11 @@ pub struct RelayManager {
     active: AtomicBool,
     /// Statistics
     stats: Arc<RelayManagerStats>,
+    /// Optional IP-diversity policy. When set, the manager refuses to
+    /// establish relays through a peer that shares one of the node's own
+    /// local IPs, and records each connected relay's IP so that the paired
+    /// [`super::MasqueRelayServer`] can refuse inbound clients on those IPs.
+    ip_policy: Option<Arc<IpPolicy>>,
 }
 
 impl RelayManager {
@@ -318,7 +323,28 @@ impl RelayManager {
             relays: RwLock::new(HashMap::new()),
             active: AtomicBool::new(true),
             stats: Arc::new(RelayManagerStats::new()),
+            ip_policy: None,
         }
+    }
+
+    /// Create a new relay manager with a shared IP-diversity policy.
+    ///
+    /// The same [`IpPolicy`] handle should also be given to the node's
+    /// [`super::MasqueRelayServer`] so both halves observe a consistent view of
+    /// local IPs and current upstream relays.
+    pub fn with_ip_policy(config: RelayManagerConfig, ip_policy: Arc<IpPolicy>) -> Self {
+        Self {
+            config,
+            relays: RwLock::new(HashMap::new()),
+            active: AtomicBool::new(true),
+            stats: Arc::new(RelayManagerStats::new()),
+            ip_policy: Some(ip_policy),
+        }
+    }
+
+    /// Access the IP policy handle, if one was installed.
+    pub fn ip_policy(&self) -> Option<&Arc<IpPolicy>> {
+        self.ip_policy.as_ref()
     }
 
     /// Get statistics
@@ -326,8 +352,18 @@ impl RelayManager {
         Arc::clone(&self.stats)
     }
 
-    /// Add a potential relay node
+    /// Add a potential relay node.
+    ///
+    /// Rejected (with a log entry) when the configured [`IpPolicy`] says the
+    /// relay's IP matches one of this node's own IPs. In that case the node is
+    /// skipped and the manager never connects to it.
     pub async fn add_relay_node(&self, address: SocketAddr) {
+        if let Some(policy) = &self.ip_policy {
+            if let Err(denial) = policy.check_establish_relay(address) {
+                tracing::warn!(relay = %address, reason = %denial, "Refusing to add relay node (IP policy)");
+                return;
+            }
+        }
         let mut relays = self.relays.write().await;
         if !relays.contains_key(&address) && relays.len() < self.config.max_relays {
             relays.insert(address, RelayNodeInfo::new(address));
@@ -337,10 +373,24 @@ impl RelayManager {
 
     /// Add a dual-stack relay node that can bridge IPv4 ↔ IPv6
     ///
+    /// Rejected when either the primary or secondary address is blocked by the
+    /// [`IpPolicy`]: a dual-stack relay sharing any of our IPs is still a
+    /// same-IP relay.
+    ///
     /// # Arguments
     /// * `primary` - Primary address to connect to the relay
     /// * `secondary` - Secondary address (the other IP version)
     pub async fn add_dual_stack_relay(&self, primary: SocketAddr, secondary: SocketAddr) {
+        if let Some(policy) = &self.ip_policy {
+            if let Err(denial) = policy.check_establish_relay(primary) {
+                tracing::warn!(relay = %primary, reason = %denial, "Refusing to add dual-stack relay (IP policy)");
+                return;
+            }
+            if let Err(denial) = policy.check_establish_relay(secondary) {
+                tracing::warn!(relay = %secondary, reason = %denial, "Refusing to add dual-stack relay (IP policy)");
+                return;
+            }
+        }
         let mut relays = self.relays.write().await;
         if !relays.contains_key(&primary) && relays.len() < self.config.max_relays {
             relays.insert(primary, RelayNodeInfo::new_dual_stack(primary, secondary));
@@ -398,7 +448,9 @@ impl RelayManager {
         relays.get(&relay).and_then(|info| info.secondary_address)
     }
 
-    /// Remove a relay node
+    /// Remove a relay node. Also clears it from the upstream-IP set in the
+    /// shared [`IpPolicy`] (if any) so inbound clients on that IP become
+    /// acceptable again.
     pub async fn remove_relay_node(&self, address: SocketAddr) {
         let mut relays = self.relays.write().await;
         if let Some(info) = relays.remove(&address) {
@@ -406,6 +458,9 @@ impl RelayManager {
                 self.stats.record_disconnect();
             }
             tracing::debug!(relay = %address, "Removed relay node");
+        }
+        if let Some(policy) = &self.ip_policy {
+            policy.unregister_upstream_relay(address);
         }
     }
 
@@ -440,12 +495,32 @@ impl RelayManager {
         ConnectUdpRequest::bind_any()
     }
 
-    /// Handle relay connection response
+    /// Handle relay connection response.
+    ///
+    /// If the [`IpPolicy`] rejects the relay (e.g. it was added before a local
+    /// IP was registered) this returns an error without marking the relay as
+    /// connected. On success the relay's IP is recorded as an upstream so the
+    /// paired server can reject inbound clients on the same IP.
     pub async fn handle_connect_response(
         &self,
         relay: SocketAddr,
         response: ConnectUdpResponse,
     ) -> RelayResult<Option<SocketAddr>> {
+        if let Some(policy) = &self.ip_policy {
+            if let Err(denial) = policy.check_establish_relay(relay) {
+                let mut relays = self.relays.write().await;
+                if let Some(info) = relays.get_mut(&relay) {
+                    info.mark_failed();
+                    info.available = false;
+                }
+                self.stats.record_attempt(false);
+                return Err(RelayError::ConfigurationError {
+                    parameter: "relay_address".into(),
+                    reason: denial.to_string(),
+                });
+            }
+        }
+
         if !response.is_success() {
             let mut relays = self.relays.write().await;
             if let Some(info) = relays.get_mut(&relay) {
@@ -473,6 +548,10 @@ impl RelayManager {
             if let Some(info) = relays.get_mut(&relay) {
                 info.mark_connected(client);
             }
+        }
+
+        if let Some(policy) = &self.ip_policy {
+            policy.register_upstream_relay(relay);
         }
 
         self.stats.record_attempt(true);
@@ -549,16 +628,28 @@ impl RelayManager {
         })
     }
 
-    /// Close all relay connections
+    /// Close all relay connections.
+    ///
+    /// Also clears the upstream-relay IP set in the shared [`IpPolicy`] (if
+    /// any): once every upstream is closed, no inbound client IP is blocked by
+    /// the upstream-collision rule.
     pub async fn close_all(&self) {
         self.active.store(false, Ordering::SeqCst);
 
         let mut relays = self.relays.write().await;
+        let closing: Vec<SocketAddr> = relays.keys().copied().collect();
         for info in relays.values_mut() {
             if let Some(ref client) = info.client {
                 client.close().await;
             }
             info.client = None;
+        }
+        drop(relays);
+
+        if let Some(policy) = &self.ip_policy {
+            for addr in closing {
+                policy.unregister_upstream_relay(addr);
+            }
         }
 
         tracing::info!("Closed all relay connections");
@@ -646,6 +737,7 @@ impl RelayManager {
     /// Returns the number of relays that were found to be disconnected.
     pub async fn health_check_relays(&self) -> usize {
         let mut disconnected = 0;
+        let mut disconnected_addrs: Vec<SocketAddr> = Vec::new();
         let mut relays = self.relays.write().await;
 
         for info in relays.values_mut() {
@@ -658,6 +750,7 @@ impl RelayManager {
                     info.client = None;
                     self.stats.record_disconnect();
                     disconnected += 1;
+                    disconnected_addrs.push(info.address);
 
                     tracing::warn!(
                         relay = %info.address,
@@ -670,6 +763,13 @@ impl RelayManager {
                     let check_time = Duration::from_millis(1);
                     info.record_health_check(check_time);
                 }
+            }
+        }
+        drop(relays);
+
+        if let Some(policy) = &self.ip_policy {
+            for addr in disconnected_addrs {
+                policy.unregister_upstream_relay(addr);
             }
         }
 
@@ -833,6 +933,89 @@ mod tests {
 
         manager.close_all().await;
         // Should not panic
+    }
+
+    // ========== IP-Policy Tests ==========
+
+    #[tokio::test]
+    async fn ip_policy_rejects_same_ip_relay() {
+        let policy = IpPolicy::shared();
+        let my_ip = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
+        policy.add_local_address(my_ip);
+
+        let manager = RelayManager::with_ip_policy(RelayManagerConfig::default(), policy);
+
+        // Same IP as our own — must be rejected.
+        manager.add_relay_node(relay_addr(1)).await;
+        // Different IP — must be accepted.
+        manager.add_relay_node(relay_addr(2)).await;
+
+        let available = manager.available_relays().await;
+        assert_eq!(available.len(), 1);
+        assert_eq!(available[0], relay_addr(2));
+    }
+
+    #[tokio::test]
+    async fn ip_policy_local_testnet_bypasses_same_ip_rejection() {
+        let policy = IpPolicy::shared();
+        policy.add_local_address(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)));
+        policy.set_local_testnet(true);
+
+        let manager = RelayManager::with_ip_policy(RelayManagerConfig::default(), policy);
+
+        manager.add_relay_node(relay_addr(1)).await;
+        assert!(manager.has_available_relay().await);
+    }
+
+    #[tokio::test]
+    async fn ip_policy_records_upstream_on_successful_connect() {
+        let policy = IpPolicy::shared();
+        let manager =
+            RelayManager::with_ip_policy(RelayManagerConfig::default(), Arc::clone(&policy));
+
+        let relay = relay_addr(7);
+        manager.add_relay_node(relay).await;
+
+        let response = ConnectUdpResponse::success(Some(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            12345,
+        )));
+
+        manager
+            .handle_connect_response(relay, response)
+            .await
+            .expect("connect response");
+
+        assert!(policy.upstream_relay_ips().contains(&relay.ip()));
+
+        // Removing the relay should clear it from the upstream-IP set.
+        manager.remove_relay_node(relay).await;
+        assert!(!policy.upstream_relay_ips().contains(&relay.ip()));
+    }
+
+    #[tokio::test]
+    async fn ip_policy_close_all_clears_upstream_ips() {
+        let policy = IpPolicy::shared();
+        let manager =
+            RelayManager::with_ip_policy(RelayManagerConfig::default(), Arc::clone(&policy));
+
+        let r1 = relay_addr(10);
+        let r2 = relay_addr(11);
+        manager.add_relay_node(r1).await;
+        manager.add_relay_node(r2).await;
+
+        for r in [r1, r2] {
+            let response = ConnectUdpResponse::success(Some(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+                12345,
+            )));
+            manager.handle_connect_response(r, response).await.unwrap();
+        }
+
+        assert_eq!(policy.upstream_relay_ips().len(), 2);
+
+        manager.close_all().await;
+        assert!(policy.upstream_relay_ips().is_empty());
     }
 
     // ========== Dual-Stack Tests ==========

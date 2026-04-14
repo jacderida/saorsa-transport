@@ -95,6 +95,7 @@ pub mod connect;
 pub mod context;
 pub mod datagram;
 pub mod integration;
+pub mod ip_policy;
 pub mod relay_client;
 pub mod relay_server;
 pub mod relay_session;
@@ -114,6 +115,7 @@ pub use datagram::{CompressedDatagram, Datagram, UncompressedDatagram};
 pub use integration::{
     RelayHealthStatus, RelayManager, RelayManagerConfig, RelayManagerStats, RelayOperationResult,
 };
+pub use ip_policy::{IpPolicy, PolicyDenial};
 pub use relay_client::{
     MasqueRelayClient, RelayClientConfig, RelayClientStats, RelayConnectionState,
 };

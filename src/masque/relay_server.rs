@@ -43,6 +43,7 @@ use tokio::sync::RwLock;
 
 use crate::VarInt;
 use crate::high_level::Connection as QuicConnection;
+use crate::masque::ip_policy::IpPolicy;
 use crate::masque::{
     Capsule, ConnectUdpRequest, ConnectUdpResponse, Datagram, RelaySession, RelaySessionConfig,
     RelaySessionState, UncompressedDatagram,
@@ -232,6 +233,10 @@ pub struct MasqueRelayServer {
     /// the local IGD gateway (if any) to forward that port from the public
     /// side so relay-forwarded traffic can reach it through a NAT.
     upnp_mappings: RwLock<HashMap<u64, UpnpMappingService>>,
+    /// Optional IP-diversity policy shared with the node's relay-client half.
+    /// When set, the server refuses inbound clients whose source IP matches
+    /// one of our current upstream relays (see [`IpPolicy`]).
+    ip_policy: Option<Arc<IpPolicy>>,
 }
 
 impl std::fmt::Debug for MasqueRelayServer {
@@ -259,7 +264,20 @@ impl MasqueRelayServer {
             started_at: Instant::now(),
             bridged_connections: AtomicU64::new(0),
             upnp_mappings: RwLock::new(HashMap::new()),
+            ip_policy: None,
         }
+    }
+
+    /// Install a shared [`IpPolicy`]. Should be the same handle passed to the
+    /// node's [`super::RelayManager`] so server-side "upstream IP" checks see
+    /// the relays the client half has established.
+    pub fn set_ip_policy(&mut self, policy: Arc<IpPolicy>) {
+        self.ip_policy = Some(policy);
+    }
+
+    /// Access the installed IP policy (if any).
+    pub fn ip_policy(&self) -> Option<&Arc<IpPolicy>> {
+        self.ip_policy.as_ref()
     }
 
     /// Create a new dual-stack MASQUE relay server
@@ -307,6 +325,7 @@ impl MasqueRelayServer {
             started_at: Instant::now(),
             bridged_connections: AtomicU64::new(0),
             upnp_mappings: RwLock::new(HashMap::new()),
+            ip_policy: None,
         }
     }
 
@@ -456,6 +475,21 @@ impl MasqueRelayServer {
                 503,
                 "Node is not serving as relay (classified as private)".to_string(),
             ));
+        }
+
+        // Enforce the upstream-IP rule: if this node is currently being
+        // relayed through an upstream whose IP matches the incoming client's
+        // IP, refuse relaying for them. Prevents traffic loops through the
+        // same upstream relay. Bypassed on a local testnet (see IpPolicy).
+        if let Some(policy) = &self.ip_policy {
+            if let Err(denial) = policy.check_accept_client(client_addr) {
+                tracing::warn!(
+                    client = %client_addr,
+                    reason = %denial,
+                    "Rejecting relay CONNECT (IP policy: client on upstream relay IP)",
+                );
+                return Ok(ConnectUdpResponse::error(403, denial.to_string()));
+            }
         }
 
         // Check session limit
@@ -1357,6 +1391,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response2.status, 409);
+    }
+
+    #[tokio::test]
+    async fn ip_policy_rejects_client_on_upstream_relay_ip() {
+        let policy = IpPolicy::shared();
+        let upstream_ip = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 42));
+        policy.register_upstream_relay(SocketAddr::new(upstream_ip, 9000));
+
+        let mut server = MasqueRelayServer::new(MasqueRelayConfig::default(), test_addr(9000));
+        server.set_ip_policy(Arc::clone(&policy));
+
+        // Client sharing IP with one of our upstream relays: must be rejected (403).
+        let offending_client = SocketAddr::new(upstream_ip, 55555);
+        let request = ConnectUdpRequest::bind_any();
+        let response = server
+            .handle_connect_request(&request, offending_client)
+            .await
+            .unwrap();
+        assert_eq!(response.status, 403);
+        assert_eq!(server.session_count().await, 0);
+
+        // Client on any other IP is still accepted.
+        let response = server
+            .handle_connect_request(&request, client_addr(1))
+            .await
+            .unwrap();
+        assert_eq!(response.status, 200);
+    }
+
+    #[tokio::test]
+    async fn ip_policy_local_testnet_bypasses_server_rejection() {
+        let policy = IpPolicy::shared();
+        let upstream_ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        policy.register_upstream_relay(SocketAddr::new(upstream_ip, 9000));
+        policy.set_local_testnet(true);
+
+        let mut server = MasqueRelayServer::new(MasqueRelayConfig::default(), test_addr(9000));
+        server.set_ip_policy(policy);
+
+        let request = ConnectUdpRequest::bind_any();
+        let response = server
+            .handle_connect_request(&request, SocketAddr::new(upstream_ip, 55555))
+            .await
+            .unwrap();
+        assert_eq!(response.status, 200);
     }
 
     #[tokio::test]
