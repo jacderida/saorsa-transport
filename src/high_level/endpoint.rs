@@ -186,7 +186,17 @@ impl Endpoint {
         )
     }
 
-    /// Construct an endpoint with arbitrary configuration and socket
+    /// Construct an endpoint with arbitrary configuration and socket.
+    ///
+    /// When the `network-discovery` feature is enabled (the default), this
+    /// also raises `SO_SNDBUF` / `SO_RCVBUF` on `socket` to the PQC-sized
+    /// recommendation (see [`buffer_defaults::recommended_buffer_size`]).
+    /// saorsa-transport defaults to PQC handshakes, whose Initial flights
+    /// and sustained throughput both benefit from multi-MB kernel buffers;
+    /// the platform default (e.g. 512 KiB on macOS) is too small for bulk
+    /// transfer. Failures are logged at debug — kernel limits (e.g. Linux
+    /// `net.core.{r,w}mem_max`) may cap the actual value, in which case
+    /// the socket simply keeps whatever the OS accepted.
     #[cfg(not(wasm_browser))]
     pub fn new(
         config: EndpointConfig,
@@ -194,9 +204,29 @@ impl Endpoint {
         socket: std::net::UdpSocket,
         runtime: Arc<dyn Runtime>,
     ) -> io::Result<Self> {
+        Self::tune_udp_buffers(&socket);
         let socket = runtime.wrap_udp_socket(socket)?;
         Self::new_with_abstract_socket(config, server_config, socket, runtime)
     }
+
+    /// Best-effort raise of UDP socket buffers to the crate's recommended
+    /// size for the active crypto mode.
+    #[cfg(all(not(wasm_browser), feature = "network-discovery"))]
+    fn tune_udp_buffers(socket: &std::net::UdpSocket) {
+        let size = crate::config::buffer_defaults::recommended_buffer_size(true);
+        let sock = socket2::SockRef::from(socket);
+        if let Err(e) = sock.set_send_buffer_size(size) {
+            tracing::debug!(%e, requested = size, "unable to raise SO_SNDBUF");
+        }
+        if let Err(e) = sock.set_recv_buffer_size(size) {
+            tracing::debug!(%e, requested = size, "unable to raise SO_RCVBUF");
+        }
+    }
+
+    /// No-op stub when the `network-discovery` feature is disabled. Callers
+    /// that bypass that feature are expected to size their sockets manually.
+    #[cfg(all(not(wasm_browser), not(feature = "network-discovery")))]
+    fn tune_udp_buffers(_socket: &std::net::UdpSocket) {}
 
     /// Construct an endpoint with arbitrary configuration and pre-constructed abstract socket
     ///
