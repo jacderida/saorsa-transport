@@ -30,6 +30,7 @@
 //! let session = RelaySession::new(config, public_addr);
 //! ```
 
+use bytes::{Buf, Bytes};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -38,9 +39,10 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::net::UdpSocket;
 
 use crate::VarInt;
+use crate::coding::Codec;
 use crate::masque::{
     Capsule, CompressionAck, CompressionAssign, CompressionClose, ContextError, ContextManager,
-    Datagram,
+    Datagram, UncompressedDatagram,
 };
 use crate::relay::error::{RelayError, RelayResult, SessionErrorKind};
 
@@ -469,6 +471,47 @@ impl RelaySession {
             Datagram::Compressed(d) => self.context_manager.get_target(d.context_id),
             Datagram::Uncompressed(d) => Some(d.target),
         }
+    }
+
+    /// Read-only lookup: return the registered context ID for `target`
+    /// if an active compressed context already exists.
+    ///
+    /// Intended for the fast path in relay forwarding, where we want
+    /// to avoid escalating to a write lock on the sessions map when a
+    /// context has already been allocated.  Returns `None` if no
+    /// context exists yet (caller must then take a write lock to
+    /// allocate one).
+    pub fn existing_context_for_target(&self, target: SocketAddr) -> Option<VarInt> {
+        self.target_to_context.get(&target).copied()
+    }
+
+    /// Zero-decode dispatch of a raw relay datagram.
+    ///
+    /// Peeks only the Context ID VarInt and resolves its target via
+    /// the session's context table.  If the context is compressed,
+    /// the remainder of the buffer is the payload (zero-copy slice);
+    /// if the context is uncompressed or unknown, the full
+    /// `UncompressedDatagram` format is parsed.
+    ///
+    /// Replaces the previous "try-uncompressed-then-compressed"
+    /// fallback, which both doubled decode work and could
+    /// mis-interpret compressed payloads whose first byte happened to
+    /// be `4` or `6`.
+    pub fn resolve_raw_datagram(&self, data: &Bytes) -> Option<(SocketAddr, Bytes)> {
+        let mut peek = data.clone();
+        let ctx_id = VarInt::decode(&mut peek).ok()?;
+
+        if let Some(target) = self.context_manager.get_target(ctx_id) {
+            // Compressed context — `peek` already points past the
+            // context ID, so the remainder is the raw UDP payload.
+            let payload = peek.copy_to_bytes(peek.remaining());
+            return Some((target, payload));
+        }
+
+        // Unknown or uncompressed context — fall back to full decode.
+        let mut full = data.clone();
+        let datagram = UncompressedDatagram::decode(&mut full).ok()?;
+        Some((datagram.target, datagram.payload))
     }
 
     /// Get or allocate a context ID for a target address

@@ -44,8 +44,8 @@ use tokio::sync::RwLock;
 use crate::VarInt;
 use crate::high_level::Connection as QuicConnection;
 use crate::masque::{
-    Capsule, CompressedDatagram, ConnectUdpRequest, ConnectUdpResponse, Datagram, RelaySession,
-    RelaySessionConfig, RelaySessionState, UncompressedDatagram,
+    Capsule, ConnectUdpRequest, ConnectUdpResponse, Datagram, RelaySession, RelaySessionConfig,
+    RelaySessionState, UncompressedDatagram,
 };
 use crate::relay::error::{RelayError, RelayResult, SessionErrorKind};
 use crate::upnp::{UpnpConfig, UpnpMappingService};
@@ -738,12 +738,43 @@ impl MasqueRelayServer {
     /// Handle an incoming datagram from a target (to be relayed back to client)
     ///
     /// Returns the client address and encoded datagram.
+    ///
+    /// Fast path uses a **read** lock on the sessions map — when a
+    /// compressed context for `source` already exists (the common
+    /// case after the first datagram), no other session's forwarding
+    /// is blocked.  Only when a new context must be allocated does
+    /// this escalate to a write lock.
     pub async fn handle_target_datagram(
         &self,
         session_id: u64,
         source: SocketAddr,
         payload: Bytes,
     ) -> RelayResult<(SocketAddr, Bytes)> {
+        // ── Fast path: context already exists, read-lock only. ─────
+        {
+            let sessions = self.sessions.read().await;
+            let session = sessions.get(&session_id).ok_or(RelayError::SessionError {
+                session_id: Some(session_id as u32),
+                kind: SessionErrorKind::NotFound,
+            })?;
+
+            if let Some(ctx_id) = session.existing_context_for_target(source) {
+                let client_addr = session.client_address().ok_or(RelayError::SessionError {
+                    session_id: Some(session_id as u32),
+                    kind: SessionErrorKind::InvalidState {
+                        current_state: "no client address".into(),
+                        expected_state: "client address set".into(),
+                    },
+                })?;
+
+                let encoded = crate::masque::CompressedDatagram::new(ctx_id, payload).encode();
+                self.stats.record_bytes(encoded.len() as u64);
+                self.stats.record_datagram();
+                return Ok((client_addr, encoded));
+            }
+        }
+
+        // ── Slow path: allocate a new context, write-lock required. ─
         let mut sessions = self.sessions.write().await;
         let session = sessions
             .get_mut(&session_id)
@@ -760,14 +791,9 @@ impl MasqueRelayServer {
             },
         })?;
 
-        // Get or allocate context for this source
         let ctx_id = session.context_for_target(source)?;
+        let encoded = crate::masque::CompressedDatagram::new(ctx_id, payload).encode();
 
-        // Encode the datagram
-        let datagram = crate::masque::CompressedDatagram::new(ctx_id, payload.clone());
-        let encoded = datagram.encode();
-
-        // Record statistics
         self.stats.record_bytes(encoded.len() as u64);
         self.stats.record_datagram();
 
@@ -881,28 +907,35 @@ impl MasqueRelayServer {
             } => {},
 
             // Direction 2: QUIC → UDP (client requests → relay → target)
+            //
+            // Uses `RelaySession::resolve_raw_datagram` to dispatch
+            // compressed vs. uncompressed in a single decode pass,
+            // using the session's context table as the source of
+            // truth. This avoids the previous try-uncompressed-then-
+            // try-compressed fallback (which both doubled decode
+            // work and could mis-interpret compressed payloads whose
+            // first byte happened to look like an IP-version tag).
             _ = async {
                 loop {
                     match conn2.read_datagram().await {
                         Ok(data) => {
-                            // Try to decode as uncompressed datagram (includes target address)
-                            let mut cursor = data.clone();
-                            match UncompressedDatagram::decode(&mut cursor) {
-                                Ok(datagram) => {
-                                    let target = datagram.target;
-                                    let payload = &datagram.payload;
+                            let resolved = {
+                                let sessions = server2.sessions.read().await;
+                                sessions
+                                    .get(&session_id)
+                                    .and_then(|s| s.resolve_raw_datagram(&data))
+                            };
+                            match resolved {
+                                Some((target, payload)) => {
                                     tracing::trace!(
                                         session_id,
                                         target = %target,
                                         len = payload.len(),
                                         "Relay: forwarding to target via UDP"
                                     );
-
-                                    // Record stats
                                     server2.stats.record_bytes(payload.len() as u64);
                                     server2.stats.record_datagram();
-
-                                    if let Err(e) = socket2.send_to(payload, target).await {
+                                    if let Err(e) = socket2.send_to(&payload, target).await {
                                         tracing::warn!(
                                             session_id,
                                             target = %target,
@@ -911,46 +944,12 @@ impl MasqueRelayServer {
                                         );
                                     }
                                 }
-                                Err(_) => {
-                                    // Try as compressed datagram — look up context in session
-                                    let mut cursor2 = data.clone();
-                                    if let Ok(compressed) = CompressedDatagram::decode(&mut cursor2) {
-                                        let client_addr = conn2.remote_address();
-                                        let datagram = Datagram::Compressed(compressed);
-                                        let payload_clone = datagram.payload().clone();
-                                        match server2.handle_client_datagram(
-                                            client_addr, datagram, payload_clone,
-                                        ).await {
-                                            DatagramResult::Forward(outbound) => {
-                                                server2.stats.record_bytes(outbound.payload.len() as u64);
-                                                server2.stats.record_datagram();
-                                                if let Err(e) = socket2.send_to(
-                                                    &outbound.payload, outbound.target,
-                                                ).await {
-                                                    tracing::warn!(
-                                                        session_id,
-                                                        target = %outbound.target,
-                                                        error = %e,
-                                                        "Failed to send UDP to target (compressed)"
-                                                    );
-                                                }
-                                            }
-                                            DatagramResult::Error(e) => {
-                                                tracing::debug!(
-                                                    session_id,
-                                                    error = %e,
-                                                    "Failed to process compressed datagram"
-                                                );
-                                            }
-                                            _ => {}
-                                        }
-                                    } else {
-                                        tracing::debug!(
-                                            session_id,
-                                            len = data.len(),
-                                            "Failed to decode relay datagram, skipping"
-                                        );
-                                    }
+                                None => {
+                                    tracing::debug!(
+                                        session_id,
+                                        len = data.len(),
+                                        "Failed to decode/resolve relay datagram, skipping"
+                                    );
                                 }
                             }
                         }

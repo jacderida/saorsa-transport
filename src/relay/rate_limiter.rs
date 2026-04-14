@@ -8,9 +8,9 @@
 //! Token bucket rate limiting implementation for relay operations.
 
 use crate::relay::{RelayError, RelayResult};
-use std::collections::HashMap;
+use dashmap::DashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Rate limiter interface for controlling request rates
@@ -25,15 +25,20 @@ pub trait RateLimiter: Send + Sync {
     fn cleanup_expired(&self);
 }
 
-/// Token bucket rate limiter with per-address tracking
+/// Token bucket rate limiter with per-address tracking.
+///
+/// Uses `DashMap` for sharded concurrent access — each address's bucket
+/// lives in its own shard so unrelated callers never block each other.
+/// Replaces the old single `Mutex<HashMap>` design that serialised every
+/// rate-limit check across all client addresses.
 #[derive(Debug)]
 pub struct TokenBucket {
     /// Tokens added per second
     tokens_per_second: u32,
     /// Maximum number of tokens that can be stored
     max_tokens: u32,
-    /// Per-address token buckets
-    buckets: Arc<Mutex<HashMap<SocketAddr, BucketState>>>,
+    /// Per-address token buckets, sharded for concurrent access.
+    buckets: Arc<DashMap<SocketAddr, BucketState>>,
 }
 
 /// Individual bucket state for an address
@@ -65,17 +70,18 @@ impl TokenBucket {
         Ok(Self {
             tokens_per_second,
             max_tokens,
-            buckets: Arc::new(Mutex::new(HashMap::new())),
+            buckets: Arc::new(DashMap::new()),
         })
     }
 
-    /// Try to consume one token from the bucket
-    #[allow(clippy::unwrap_used)]
+    /// Try to consume one token from the bucket.
+    ///
+    /// Acquires a per-shard write lock via `DashMap::entry`; concurrent
+    /// callers for addresses in different shards proceed in parallel.
     fn try_consume_token(&self, addr: &SocketAddr) -> RelayResult<()> {
-        let mut buckets = self.buckets.lock().unwrap();
         let now = Instant::now();
 
-        let state = buckets.entry(*addr).or_insert(BucketState {
+        let mut state = self.buckets.entry(*addr).or_insert(BucketState {
             tokens: self.max_tokens as f64,
             last_update: now,
         });
@@ -102,19 +108,16 @@ impl RateLimiter for TokenBucket {
         self.try_consume_token(addr)
     }
 
-    #[allow(clippy::unwrap_used)]
     fn reset(&self, addr: &SocketAddr) {
-        let mut buckets = self.buckets.lock().unwrap();
-        buckets.remove(addr);
+        self.buckets.remove(addr);
     }
 
-    #[allow(clippy::unwrap_used)]
     fn cleanup_expired(&self) {
-        let mut buckets = self.buckets.lock().unwrap();
         let now = Instant::now();
         let cleanup_threshold = Duration::from_secs(300); // 5 minutes
 
-        buckets.retain(|_, state| now.duration_since(state.last_update) < cleanup_threshold);
+        self.buckets
+            .retain(|_, state| now.duration_since(state.last_update) < cleanup_threshold);
     }
 }
 
@@ -213,17 +216,11 @@ mod tests {
         assert!(bucket.check_rate_limit(&addr).is_ok());
 
         // Verify entry exists
-        {
-            let buckets = bucket.buckets.lock().unwrap();
-            assert!(buckets.contains_key(&addr));
-        }
+        assert!(bucket.buckets.contains_key(&addr));
 
         // Cleanup should not remove recent entries
         bucket.cleanup_expired();
-        {
-            let buckets = bucket.buckets.lock().unwrap();
-            assert!(buckets.contains_key(&addr));
-        }
+        assert!(bucket.buckets.contains_key(&addr));
     }
 
     #[test]

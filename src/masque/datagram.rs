@@ -89,11 +89,23 @@ impl UncompressedDatagram {
         }
     }
 
-    /// Encode the datagram to bytes
+    /// Encode the datagram to bytes.
+    ///
+    /// Pre-allocates the exact capacity needed via [`encoded_size`] so the
+    /// underlying `BytesMut` never reallocates during encoding. This is on
+    /// the per-datagram hot path of the relay forwarding loops.
     pub fn encode(&self) -> Bytes {
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::with_capacity(self.encoded_size());
+        self.encode_into(&mut buf);
+        buf.freeze()
+    }
 
-        self.context_id.encode(&mut buf);
+    /// Encode the datagram into an existing `BufMut`.
+    ///
+    /// Use this form when the caller already owns a destination buffer
+    /// (e.g. a reused scratch buffer) to avoid an intermediate allocation.
+    pub fn encode_into<B: BufMut>(&self, buf: &mut B) {
+        self.context_id.encode(buf);
 
         match self.target.ip() {
             IpAddr::V4(v4) => {
@@ -108,8 +120,6 @@ impl UncompressedDatagram {
 
         buf.put_u16(self.target.port());
         buf.put_slice(&self.payload);
-
-        buf.freeze()
     }
 
     /// Decode a datagram from bytes
@@ -183,12 +193,20 @@ impl CompressedDatagram {
         }
     }
 
-    /// Encode the datagram to bytes
+    /// Encode the datagram to bytes.
+    ///
+    /// Pre-allocates the exact capacity via [`encoded_size`] to avoid
+    /// `BytesMut` reallocations on the forwarding hot path.
     pub fn encode(&self) -> Bytes {
-        let mut buf = BytesMut::new();
-        self.context_id.encode(&mut buf);
-        buf.put_slice(&self.payload);
+        let mut buf = BytesMut::with_capacity(self.encoded_size());
+        self.encode_into(&mut buf);
         buf.freeze()
+    }
+
+    /// Encode the datagram into an existing `BufMut`.
+    pub fn encode_into<B: BufMut>(&self, buf: &mut B) {
+        self.context_id.encode(buf);
+        buf.put_slice(&self.payload);
     }
 
     /// Decode a datagram from bytes

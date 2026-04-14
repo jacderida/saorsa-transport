@@ -247,6 +247,13 @@ pub enum Capsule {
     },
 }
 
+/// Upper bound on the inner payload of a well-formed known capsule.
+///
+/// Structure of the largest known payload (COMPRESSION_ASSIGN with IPv6):
+/// context_id VarInt (≤8) + ip_version (1) + ipv6 (16) + port (2) = 27 bytes.
+/// Unknown capsules use their own `data.len()` directly.
+const MAX_KNOWN_CAPSULE_PAYLOAD: usize = 32;
+
 impl Capsule {
     /// Decode a capsule from a buffer
     ///
@@ -285,9 +292,17 @@ impl Capsule {
     /// Encode a capsule to a buffer
     ///
     /// Returns the encoded bytes including capsule type and length prefix.
+    ///
+    /// Both the payload scratch buffer and the final buffer are pre-sized
+    /// so no intermediate `BytesMut` reallocations occur during encoding.
     pub fn encode(&self) -> Bytes {
-        let mut buf = BytesMut::new();
-        let mut payload = BytesMut::new();
+        // Pick a payload-capacity upper bound: bounded for known capsule
+        // types, exact size for unknown ones.
+        let payload_capacity = match self {
+            Capsule::Unknown { data, .. } => data.len(),
+            _ => MAX_KNOWN_CAPSULE_PAYLOAD,
+        };
+        let mut payload = BytesMut::with_capacity(payload_capacity);
 
         let capsule_type = match self {
             Capsule::CompressionAssign(c) => {
@@ -308,17 +323,13 @@ impl Capsule {
             }
         };
 
-        // Encode capsule type
-        if let Ok(ct) = VarInt::from_u64(capsule_type) {
-            ct.encode(&mut buf);
-        }
+        // Compute exact final size: two VarInts (type + length) + payload.
+        let type_vi = VarInt::from_u64(capsule_type).unwrap_or(VarInt::from_u32(0));
+        let len_vi = VarInt::from_u64(payload.len() as u64).unwrap_or(VarInt::from_u32(0));
+        let mut buf = BytesMut::with_capacity(VarInt::MAX_SIZE + VarInt::MAX_SIZE + payload.len());
 
-        // Encode length
-        if let Ok(len) = VarInt::from_u64(payload.len() as u64) {
-            len.encode(&mut buf);
-        }
-
-        // Append payload
+        type_vi.encode(&mut buf);
+        len_vi.encode(&mut buf);
         buf.put(payload);
 
         buf.freeze()

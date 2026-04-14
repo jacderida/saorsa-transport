@@ -33,6 +33,10 @@ pub struct ContextManager {
     local_contexts: HashMap<VarInt, ContextInfo>,
     /// Remotely allocated contexts
     remote_contexts: HashMap<VarInt, ContextInfo>,
+    /// Secondary index: target address → context ID for any non-closed
+    /// compressed context. Keeps duplicate-target checks and
+    /// target→context lookups O(1) instead of scanning every context.
+    target_index: HashMap<SocketAddr, VarInt>,
     /// Current uncompressed context (only one allowed)
     uncompressed_context: Option<VarInt>,
     /// Next local context ID to allocate
@@ -100,6 +104,7 @@ impl ContextManager {
         Self {
             local_contexts: HashMap::new(),
             remote_contexts: HashMap::new(),
+            target_index: HashMap::new(),
             uncompressed_context: None,
             // Start at 2 for client (0 reserved), 1 for server
             next_local_id: if is_client { 2 } else { 1 },
@@ -182,15 +187,9 @@ impl ContextManager {
         context_id: VarInt,
         target: SocketAddr,
     ) -> Result<(), ContextError> {
-        // Check for duplicate target
-        for info in self
-            .local_contexts
-            .values()
-            .chain(self.remote_contexts.values())
-        {
-            if info.target == Some(target) && info.state != ContextState::Closed {
-                return Err(ContextError::DuplicateTarget(target));
-            }
+        // O(1) duplicate-target check via the index.
+        if self.target_index.contains_key(&target) {
+            return Err(ContextError::DuplicateTarget(target));
         }
 
         let info = ContextInfo {
@@ -201,6 +200,7 @@ impl ContextManager {
         };
 
         self.local_contexts.insert(context_id, info);
+        self.target_index.insert(target, context_id);
 
         Ok(())
     }
@@ -224,16 +224,10 @@ impl ContextManager {
             return Err(ContextError::DuplicateUncompressed);
         }
 
-        // Check for duplicate target
+        // O(1) duplicate-target check via the index.
         if let Some(t) = target {
-            for info in self
-                .local_contexts
-                .values()
-                .chain(self.remote_contexts.values())
-            {
-                if info.target == Some(t) && info.state != ContextState::Closed {
-                    return Err(ContextError::DuplicateTarget(t));
-                }
+            if self.target_index.contains_key(&t) {
+                return Err(ContextError::DuplicateTarget(t));
             }
         }
 
@@ -246,7 +240,9 @@ impl ContextManager {
 
         self.remote_contexts.insert(context_id, info);
 
-        if target.is_none() {
+        if let Some(t) = target {
+            self.target_index.insert(t, context_id);
+        } else {
             self.uncompressed_context = Some(context_id);
         }
 
@@ -286,14 +282,24 @@ impl ContextManager {
     ///
     /// - [`ContextError::UnknownContext`] if the context ID is not found
     pub fn close(&mut self, context_id: VarInt) -> Result<(), ContextError> {
-        if let Some(info) = self.local_contexts.get_mut(&context_id) {
+        let target = if let Some(info) = self.local_contexts.get_mut(&context_id) {
             info.state = ContextState::Closed;
             info.last_activity = Instant::now();
+            info.target
         } else if let Some(info) = self.remote_contexts.get_mut(&context_id) {
             info.state = ContextState::Closed;
             info.last_activity = Instant::now();
+            info.target
         } else {
             return Err(ContextError::UnknownContext);
+        };
+
+        // Keep the target index in sync with the closed state so future
+        // registrations of the same target succeed.
+        if let Some(t) = target {
+            if self.target_index.get(&t) == Some(&context_id) {
+                self.target_index.remove(&t);
+            }
         }
 
         if self.uncompressed_context == Some(context_id) {
@@ -308,16 +314,18 @@ impl ContextManager {
     /// Returns the Context ID for an active compressed context targeting
     /// the specified address, if one exists.
     pub fn get_by_target(&self, target: SocketAddr) -> Option<VarInt> {
-        for (id, info) in self
+        // The index holds every non-closed compressed context, but we only
+        // return a hit if the entry is in Active state (not Pending/Closing).
+        let id = *self.target_index.get(&target)?;
+        let info = self
             .local_contexts
-            .iter()
-            .chain(self.remote_contexts.iter())
-        {
-            if info.target == Some(target) && info.state == ContextState::Active {
-                return Some(*id);
-            }
+            .get(&id)
+            .or_else(|| self.remote_contexts.get(&id))?;
+        if info.state == ContextState::Active {
+            Some(id)
+        } else {
+            None
         }
-        None
     }
 
     /// Get the active uncompressed context ID if available
@@ -368,6 +376,8 @@ impl ContextManager {
     /// Clean up closed contexts older than the specified age
     pub fn cleanup_closed(&mut self, max_age: std::time::Duration) {
         let now = Instant::now();
+        // `close()` already evicts from `target_index` at close-time, so
+        // `retain` here only needs to drop the context-info entries.
         self.local_contexts.retain(|_, info| {
             info.state != ContextState::Closed || now.duration_since(info.last_activity) < max_age
         });
