@@ -222,6 +222,13 @@ use crate::config::validation::{ConfigValidator, ValidationResult};
 
 use crate::crypto::{pqc::PqcConfig, raw_public_keys::RawPublicKeyConfigBuilder};
 
+/// Application-level QUIC close code used when a proactive MASQUE relay's
+/// tunnel dies and we close the backing endpoint gracefully.  Delivered
+/// to every relay-accepted connection via a CONNECTION_CLOSE frame so
+/// peers can distinguish "the tunnel is gone" from other failures and
+/// retry via a non-relay address.
+const RELAY_TUNNEL_LOST_CODE: u32 = 0x52_4c_4f_53; // "RLOS"
+
 /// An active relay session for MASQUE CONNECT-UDP
 ///
 /// Stores the QUIC connection to a relay server and the public address
@@ -4214,7 +4221,13 @@ impl NatTraversalEndpoint {
 
         // Step 3: Build a tunnel-only relay socket and a second Quinn
         // endpoint.  The main endpoint is never touched.
-        let relay_socket = crate::masque::MasqueRelaySocket::new(
+        //
+        // `closed_notify` fires when the relay reader task exits because
+        // its QUIC stream failed.  A watcher spawned below uses this to
+        // call `Endpoint::close(...)` on the relay endpoint BEFORE the
+        // driver's Drop fires — connections get a clean CONNECTION_CLOSE
+        // instead of the "endpoint driver future was dropped" cascade.
+        let (relay_socket, closed_notify) = crate::masque::MasqueRelaySocket::new(
             raw_streams.send_stream,
             raw_streams.recv_stream,
             relay_public_addr,
@@ -4244,9 +4257,37 @@ impl NatTraversalEndpoint {
 
         info!("Relay endpoint created (relay addr: {})", relay_public_addr);
 
+        // Share the relay endpoint between the accept loop and the
+        // graceful-close watcher.
+        let relay_endpoint = Arc::new(relay_endpoint);
+
+        // Spawn the tunnel-death watcher: when the MASQUE reader task
+        // signals the `Notify`, explicitly close the relay endpoint with a
+        // meaningful application-level error code.  `Endpoint::close`
+        // dispatches a `ConnectionEvent::Close` to every active connection
+        // on the endpoint — they emit CONNECTION_CLOSE and shut down
+        // cleanly.  Only after that does the driver future exit; its
+        // `Drop` then clears the (already-empty) sender set without any
+        // cascading errors.  Dropping `relay_endpoint` after `close()` is
+        // safe — `EndpointRef::drop` only decrements a refcount.
+        {
+            let relay_endpoint = Arc::clone(&relay_endpoint);
+            tokio::spawn(async move {
+                closed_notify.notified().await;
+                info!(
+                    "MASQUE tunnel for relay {} died — closing relay endpoint gracefully",
+                    relay_public_addr
+                );
+                relay_endpoint.close(
+                    crate::VarInt::from_u32(RELAY_TUNNEL_LOST_CODE),
+                    b"relay tunnel lost",
+                );
+            });
+        }
+
         // Step 4: Spawn an accept loop for the relay endpoint that feeds
         // accepted connections into the shared connections DashMap.
-        self.spawn_relay_endpoint_accept_loop(relay_endpoint);
+        self.spawn_relay_endpoint_accept_loop(Arc::clone(&relay_endpoint), relay_public_addr);
 
         // Step 5: Advertise the relay address to all connected peers
         let mut advertised = 0;
@@ -4286,7 +4327,15 @@ impl NatTraversalEndpoint {
     /// DashMap and forwarded through the same `handshake_tx` channel as
     /// main-endpoint connections, so the upper layer sees them
     /// identically.
-    fn spawn_relay_endpoint_accept_loop(&self, endpoint: InnerEndpoint) {
+    ///
+    /// `relay_public_addr` is the externally-visible address peers were
+    /// told to dial — logged on accept-loop exit so operators can
+    /// correlate the shutdown with the DHT-advertised address.
+    fn spawn_relay_endpoint_accept_loop(
+        &self,
+        endpoint: Arc<InnerEndpoint>,
+        relay_public_addr: SocketAddr,
+    ) {
         let tx = self.handshake_tx.clone();
         let connections = self.connections.clone();
         let emitted = self.emitted_established_events.clone();
@@ -4303,7 +4352,14 @@ impl NatTraversalEndpoint {
                 let connecting = match endpoint.accept().await {
                     Some(c) => c,
                     None => {
-                        debug!("Relay endpoint closed, accept loop exiting");
+                        // The P2pEvent::RelayLost event itself is emitted by
+                        // the health monitor in p2p_endpoint.rs — it owns the
+                        // P2pEvent broadcast channel.  Logging here just
+                        // gives operators the address-level context.
+                        info!(
+                            "Relay endpoint for {} closed, accept loop exiting",
+                            relay_public_addr
+                        );
                         return;
                     }
                 };

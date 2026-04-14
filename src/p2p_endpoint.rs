@@ -446,6 +446,18 @@ pub enum P2pEvent {
         relay_addr: SocketAddr,
     },
 
+    /// A previously-advertised MASQUE relay address is no longer reachable.
+    ///
+    /// Emitted when the relay health monitor observes the tunnel has died, or
+    /// when the relay endpoint's accept loop exits (MASQUE streams closed).
+    /// Upper layers should use this to immediately republish their address
+    /// set without the relay entry, so peers stop dialing the dead address.
+    RelayLost {
+        /// The relay address that has become unreachable. Matches a
+        /// previously-emitted [`P2pEvent::RelayEstablished::relay_addr`].
+        relay_addr: SocketAddr,
+    },
+
     /// Bootstrap connection status
     BootstrapStatus {
         /// Number of connected bootstrap nodes
@@ -2088,7 +2100,12 @@ impl P2pEndpoint {
         let original_socket = existing_endpoint.current_socket().map_err(|e| {
             EndpointError::Connection(format!("Failed to get original socket: {e}"))
         })?;
-        let relay_socket = crate::masque::MasqueRelaySocket::new(
+        // Dial-through-relay path: the returned `_closed` Notify fires
+        // when the tunnel dies.  The per-dial relay endpoint carries a
+        // single connection and is discarded after the dial completes,
+        // so we don't wire up a graceful-close watcher — the single
+        // connection is the natural unit of recovery at this layer.
+        let (relay_socket, _closed) = crate::masque::MasqueRelaySocket::new(
             raw_streams.send_stream,
             raw_streams.recv_stream,
             relay_public_addr,
@@ -3321,8 +3338,19 @@ impl P2pEndpoint {
                 // relay candidate. The RelayEstablished flag is also reset so
                 // upper layers re-publish the new address.
                 if relay_event_sent && !inner.is_relay_healthy() {
+                    // Snapshot the dead address BEFORE reset clears it so we
+                    // can tell upper layers exactly which relay to stop
+                    // advertising.
+                    let dead = inner.relay_public_addr();
                     inner.reset_relay_state();
                     relay_event_sent = false;
+                    if let Some(relay_addr) = dead {
+                        info!(
+                            "Relay tunnel at {} is unhealthy — emitting RelayLost event",
+                            relay_addr
+                        );
+                        let _ = event_tx_for_nat.send(P2pEvent::RelayLost { relay_addr });
+                    }
                 }
             }
         });

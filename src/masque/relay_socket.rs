@@ -44,7 +44,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 use quinn_udp::{RecvMeta, Transmit};
 
@@ -139,15 +139,25 @@ impl MasqueRelaySocket {
     ///   length-prefixed frames to `send_stream`.
     /// - A keepalive ticker that injects zero-length frames so the
     ///   NAT conntrack entry stays alive on idle connections.
+    ///
+    /// Returns the socket alongside a [`Notify`] that fires exactly once
+    /// when the reader task exits (tunnel failure).  Callers that own the
+    /// backing endpoint should use this to trigger a **graceful** close
+    /// — `Endpoint::close(code, reason)` sends CONNECTION_CLOSE frames
+    /// to every connection before the endpoint driver future is dropped.
+    /// Without this, the driver's `Drop` impl fires last and cascades
+    /// a cryptic `"endpoint driver future was dropped"` into every
+    /// connection accepted through this tunnel.
     pub fn new(
         mut send_stream: crate::high_level::SendStream,
         mut recv_stream: crate::high_level::RecvStream,
         relay_public_addr: SocketAddr,
         _relay_server_addr: SocketAddr,
         original_socket: Arc<dyn AsyncUdpSocket>,
-    ) -> Arc<Self> {
+    ) -> (Arc<Self>, Arc<Notify>) {
         let (send_tx, mut send_rx) = mpsc::channel::<Bytes>(SEND_QUEUE_CAPACITY);
         let (recv_tx, recv_rx) = mpsc::channel::<(Bytes, SocketAddr)>(RECV_QUEUE_CAPACITY);
+        let closed = Arc::new(Notify::new());
 
         let socket = Arc::new(Self {
             relay_public_addr,
@@ -160,6 +170,7 @@ impl MasqueRelaySocket {
         // Background task: read length-prefixed frames from relay stream
         // and forward decoded (payload, source) pairs to `poll_recv`.
         // Holds the payload as `Bytes` throughout — no Vec round-trip.
+        let closed_reader = Arc::clone(&closed);
         tokio::spawn(async move {
             loop {
                 let mut len_buf = [0u8; 4];
@@ -205,6 +216,13 @@ impl MasqueRelaySocket {
             }
             // Dropping `recv_tx` here wakes any pending `poll_recv`
             // with Poll::Ready(None), signalling end-of-stream.
+            //
+            // Signal any watcher waiting on the close notification so it
+            // can initiate a graceful endpoint close BEFORE the driver's
+            // `Drop` fires.  `notify_waiters` wakes every current waiter
+            // exactly once; subsequent waits see `Pending`, which is
+            // fine — the shutdown only needs to run once.
+            closed_reader.notify_waiters();
         });
 
         // Background task: write queued outbound packets to relay stream.
@@ -245,7 +263,7 @@ impl MasqueRelaySocket {
             }
         });
 
-        socket
+        (socket, closed)
     }
 
     /// Number of outbound packets dropped because the send queue was
