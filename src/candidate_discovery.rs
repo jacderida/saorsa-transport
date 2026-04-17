@@ -1572,40 +1572,38 @@ impl CandidateDiscoveryManager {
         session_id: DiscoverySessionId,
         discovered_address: SocketAddr,
     ) -> Result<bool, DiscoveryError> {
-        // Calculate priority for the discovered address first to avoid borrow issues
-        let priority = self.calculate_quic_discovered_priority(&discovered_address);
-
-        // Get the active session
-        let session = self.active_sessions.get_mut(&session_id).ok_or_else(|| {
-            DiscoveryError::InternalError(format!("No active discovery session for {session_id:?}"))
-        })?;
-
-        // Check if address already exists
-        let already_exists = session
+        // Dedup first with an immutable borrow so we skip the priority
+        // computation and the mutable re-borrow on the common duplicate path.
+        let already_present = self
+            .active_sessions
+            .get(&session_id)
+            .ok_or_else(|| {
+                DiscoveryError::InternalError(format!(
+                    "No active discovery session for {session_id:?}"
+                ))
+            })?
             .discovered_candidates
             .iter()
             .any(|c| c.address == discovered_address);
 
-        if already_exists {
-            debug!(
-                "QUIC-discovered address {} already in candidates",
-                discovered_address
-            );
+        if already_present {
             return Ok(false);
         }
 
+        let priority = self.calculate_quic_discovered_priority(&discovered_address);
+
+        let session = self.active_sessions.get_mut(&session_id).ok_or_else(|| {
+            DiscoveryError::InternalError(format!("No active discovery session for {session_id:?}"))
+        })?;
+
         info!("Accepting QUIC-discovered address: {}", discovered_address);
 
-        // Create candidate from QUIC-discovered address
-        let candidate = DiscoveryCandidate {
+        session.discovered_candidates.push(DiscoveryCandidate {
             address: discovered_address,
             priority,
             source: DiscoverySourceType::ServerReflexive,
             state: CandidateState::New,
-        };
-
-        // Add to discovered candidates
-        session.discovered_candidates.push(candidate);
+        });
         session.statistics.server_reflexive_candidates_found += 1;
 
         Ok(true)

@@ -2680,6 +2680,11 @@ impl P2pEndpoint {
             stats.connected_bootstrap_nodes = connected;
         }
 
+        // Close the candidate-discovery feed window before broadcasting
+        // BootstrapStatus, so any observer that reacts to the event sees a
+        // consistent "bootstrap is over" state.
+        self.inner.mark_bootstrap_complete();
+
         let _ = self.event_tx.send(P2pEvent::BootstrapStatus {
             connected,
             total: known_peers.len(),

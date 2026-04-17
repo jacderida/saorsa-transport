@@ -340,6 +340,14 @@ pub struct NatTraversalEndpoint {
     relay_server_config: Arc<std::sync::Mutex<Option<crate::ServerConfig>>>,
     /// Whether symmetric NAT relay setup has been attempted (one-shot)
     relay_setup_attempted: Arc<std::sync::atomic::AtomicBool>,
+    /// Flipped once the external bootstrap phase is over (set by
+    /// `P2pEndpoint::connect_known_peers` right before it broadcasts
+    /// `P2pEvent::BootstrapStatus`). While false, the discovery polling
+    /// task feeds unique QUIC-observed addresses into the local candidate
+    /// session; once true, further observations are dropped — the
+    /// bootstrap window is the only time we care about growing the local
+    /// candidate set from OBSERVED_ADDRESS frames.
+    bootstrap_complete: Arc<std::sync::atomic::AtomicBool>,
     /// Relay address to re-advertise to new peers (set after proactive relay setup)
     relay_public_addr: Arc<std::sync::Mutex<Option<SocketAddr>>>,
     /// Peers already advertised the relay address to
@@ -1517,6 +1525,7 @@ impl NatTraversalEndpoint {
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
             relay_server_config: Arc::new(std::sync::Mutex::new(relay_server_config)),
             relay_setup_attempted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            bootstrap_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             relay_public_addr: Arc::new(std::sync::Mutex::new(None)),
             relay_advertised_peers: Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
@@ -1704,6 +1713,7 @@ impl NatTraversalEndpoint {
         let relay_setup_attempted_clone = endpoint.relay_setup_attempted.clone();
         let relay_server_clone = endpoint.relay_server.clone();
         let advertise = endpoint.advertise_external_addresses;
+        let bootstrap_complete_clone = endpoint.bootstrap_complete.clone();
         tokio::spawn(async move {
             Self::poll_discovery(
                 discovery_manager_clone,
@@ -1715,6 +1725,7 @@ impl NatTraversalEndpoint {
                 relay_setup_attempted_clone,
                 relay_server_clone,
                 advertise,
+                bootstrap_complete_clone,
             )
             .await;
         });
@@ -1951,6 +1962,7 @@ impl NatTraversalEndpoint {
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
             relay_server_config: Arc::new(std::sync::Mutex::new(relay_server_config)),
             relay_setup_attempted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            bootstrap_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             relay_public_addr: Arc::new(std::sync::Mutex::new(None)),
             relay_advertised_peers: Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
@@ -2138,6 +2150,7 @@ impl NatTraversalEndpoint {
         let relay_setup_attempted_clone = endpoint.relay_setup_attempted.clone();
         let relay_server_clone = endpoint.relay_server.clone();
         let advertise = endpoint.advertise_external_addresses;
+        let bootstrap_complete_clone = endpoint.bootstrap_complete.clone();
         tokio::spawn(async move {
             Self::poll_discovery(
                 discovery_manager_clone,
@@ -2149,6 +2162,7 @@ impl NatTraversalEndpoint {
                 relay_setup_attempted_clone,
                 relay_server_clone,
                 advertise,
+                bootstrap_complete_clone,
             )
             .await;
         });
@@ -2657,6 +2671,19 @@ impl NatTraversalEndpoint {
         bootstrap_nodes.retain(|b| b.address != address);
         info!("Removed bootstrap node: {}", address);
         Ok(())
+    }
+
+    /// Signal that the external bootstrap phase is over.
+    ///
+    /// Called by `P2pEndpoint::connect_known_peers` right before it
+    /// broadcasts `P2pEvent::BootstrapStatus`. After this point the
+    /// discovery polling task stops registering new QUIC-observed
+    /// addresses with the local candidate session — peer-facing reactions
+    /// (ADD_ADDRESS broadcast, `ExternalAddressDiscovered` events) are
+    /// unaffected.
+    pub fn mark_bootstrap_complete(&self) {
+        self.bootstrap_complete
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     // Private implementation methods
@@ -3208,6 +3235,7 @@ impl NatTraversalEndpoint {
     }
 
     /// Poll discovery manager in background
+    #[allow(clippy::too_many_arguments)]
     async fn poll_discovery(
         discovery_manager: Arc<ParkingMutex<CandidateDiscoveryManager>>,
         shutdown: Arc<AtomicBool>,
@@ -3218,6 +3246,7 @@ impl NatTraversalEndpoint {
         relay_setup_attempted: Arc<std::sync::atomic::AtomicBool>,
         relay_server: Option<Arc<MasqueRelayServer>>,
         advertise_external_addresses: bool,
+        bootstrap_complete: Arc<std::sync::atomic::AtomicBool>,
     ) {
         use tokio::time::{Duration, interval};
 
@@ -3225,6 +3254,15 @@ impl NatTraversalEndpoint {
         let mut emitted_discovery = std::collections::HashSet::new();
         // Track addresses we've already advertised to avoid spamming
         let mut advertised_addresses = std::collections::HashSet::new();
+        // Unique QUIC-observed addresses already registered with the local
+        // candidate session. Populated only during the bootstrap window
+        // (while `bootstrap_complete` is false) so we don't re-scan the
+        // session's candidate vector on every tick for the same address.
+        let mut fed_to_discovery = std::collections::HashSet::<SocketAddr>::new();
+        // One-shot guard: once we observe the bootstrap-complete flag, drop
+        // the dedup set so its memory is reclaimed; further checks are pure
+        // atomic loads.
+        let mut dedup_released = false;
 
         while !shutdown.load(Ordering::Relaxed) {
             poll_interval.tick().await;
@@ -3286,13 +3324,29 @@ impl NatTraversalEndpoint {
                         }
                     }
 
-                    // Feed the observed address to discovery manager for OUR local peer
-                    // (OBSERVED_ADDRESS tells us our external address as seen by the remote peer)
-                    // parking_lot::Mutex doesn't poison - always succeeds
-                    let mut discovery = discovery_manager.lock();
-                    let _ =
-                        discovery.accept_quic_discovered_address(local_session_id, observed_addr);
+                    // Feed the observed address to the local candidate
+                    // session only during the external bootstrap phase
+                    // (driven by `P2pEvent::BootstrapStatus`), and only once
+                    // per unique address. Once bootstrap is complete the
+                    // discovery session is no longer interesting to us.
+                    if !bootstrap_complete.load(std::sync::atomic::Ordering::Acquire)
+                        && fed_to_discovery.insert(observed_addr)
+                    {
+                        // parking_lot::Mutex doesn't poison - always succeeds
+                        let mut discovery = discovery_manager.lock();
+                        let _ = discovery
+                            .accept_quic_discovered_address(local_session_id, observed_addr);
+                    }
                 }
+            }
+
+            // Release the per-address dedup set once bootstrap is over.
+            // Further ticks short-circuit on the atomic load, so we no
+            // longer need this allocation.
+            if !dedup_released && bootstrap_complete.load(std::sync::atomic::Ordering::Acquire) {
+                fed_to_discovery.clear();
+                fed_to_discovery.shrink_to_fit();
+                dedup_released = true;
             }
 
             // 2. Send ADD_ADDRESS to all peers for newly discovered addresses
