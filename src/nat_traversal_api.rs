@@ -408,6 +408,12 @@ pub struct NatTraversalEndpoint {
     /// Server config cloned at endpoint creation time for building the
     /// relay endpoint in [`setup_proactive_relay`].
     relay_server_config: Arc<std::sync::Mutex<Option<crate::ServerConfig>>>,
+    /// Dedup set for `handle_relay_requests` tasks, keyed by
+    /// [`InnerConnection::stable_id`]. Each handler self-registers on entry
+    /// and self-removes on exit, so the same connection never gets more than
+    /// one handler running even when both the accept-side and dial-side
+    /// spawn paths fire for it. Shared across all spawn sites.
+    relay_handler_connections: Arc<dashmap::DashSet<usize>>,
     /// Whether symmetric NAT relay setup has been attempted (one-shot)
     relay_setup_attempted: Arc<std::sync::atomic::AtomicBool>,
     /// Flipped once the external bootstrap phase is over (set by
@@ -1608,6 +1614,7 @@ impl NatTraversalEndpoint {
             transport_registry,
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
             relay_server_config: Arc::new(std::sync::Mutex::new(relay_server_config)),
+            relay_handler_connections: Arc::new(dashmap::DashSet::new()),
             relay_setup_attempted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             bootstrap_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             relay_public_addr: Arc::new(std::sync::Mutex::new(None)),
@@ -2045,6 +2052,7 @@ impl NatTraversalEndpoint {
             transport_registry,
             peer_address_update_rx: TokioMutex::new(peer_addr_rx),
             relay_server_config: Arc::new(std::sync::Mutex::new(relay_server_config)),
+            relay_handler_connections: Arc::new(dashmap::DashSet::new()),
             relay_setup_attempted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             bootstrap_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             relay_public_addr: Arc::new(std::sync::Mutex::new(None)),
@@ -3070,6 +3078,7 @@ impl NatTraversalEndpoint {
         let connections_clone = self.connections.clone();
         let emitted_events_clone = self.emitted_established_events.clone();
         let relay_server_clone = self.relay_server.clone();
+        let relay_handler_connections_clone = self.relay_handler_connections.clone();
         let incoming_notify_clone = self.incoming_notify.clone();
         let accepted_addrs_tx_clone = self.accepted_addrs_tx.clone();
 
@@ -3081,6 +3090,7 @@ impl NatTraversalEndpoint {
                 connections_clone,
                 emitted_events_clone,
                 relay_server_clone,
+                relay_handler_connections_clone,
                 incoming_notify_clone,
                 accepted_addrs_tx_clone,
             )
@@ -3098,6 +3108,7 @@ impl NatTraversalEndpoint {
         connections: Arc<dashmap::DashMap<SocketAddr, InnerConnection>>,
         emitted_events: Arc<dashmap::DashSet<SocketAddr>>,
         relay_server: Option<Arc<MasqueRelayServer>>,
+        relay_handler_connections: Arc<dashmap::DashSet<usize>>,
         incoming_notify: Arc<tokio::sync::Notify>,
         accepted_addrs_tx: mpsc::UnboundedSender<SocketAddr>,
     ) {
@@ -3108,6 +3119,7 @@ impl NatTraversalEndpoint {
                     let connections = connections.clone();
                     let emitted_events = emitted_events.clone();
                     let relay_server = relay_server.clone();
+                    let relay_handler_connections = relay_handler_connections.clone();
                     let incoming_notify = incoming_notify.clone();
                     let accepted_addrs_tx = accepted_addrs_tx.clone();
                     tokio::spawn(async move {
@@ -3154,12 +3166,21 @@ impl NatTraversalEndpoint {
                                 }
 
                                 // Symmetric P2P: Spawn relay request handler for this connection
-                                // This allows any connected peer to use us as a relay
+                                // This allows any connected peer to use us as a relay.
+                                // The handler self-dedups via `relay_handler_connections`
+                                // keyed by stable_id, so racing spawn sites (accept vs.
+                                // dial-side insert) can't produce double handlers.
                                 if let Some(ref server) = relay_server {
                                     let conn_clone = connection.clone();
                                     let server_clone = Arc::clone(server);
+                                    let spawned_clone = Arc::clone(&relay_handler_connections);
                                     tokio::spawn(async move {
-                                        Self::handle_relay_requests(conn_clone, server_clone).await;
+                                        Self::handle_relay_requests(
+                                            conn_clone,
+                                            server_clone,
+                                            spawned_clone,
+                                        )
+                                        .await;
                                     });
                                 }
 
@@ -3180,16 +3201,76 @@ impl NatTraversalEndpoint {
         }
     }
 
+    /// Spawn a [`handle_relay_requests`](Self::handle_relay_requests) task
+    /// for `connection` unless the relay service is disabled. The handler
+    /// self-dedups via `spawned`, so calling this from both accept-side
+    /// and dial-side insert paths is safe.
+    fn spawn_relay_handler_task(
+        relay_server: &Option<Arc<MasqueRelayServer>>,
+        spawned: &Arc<dashmap::DashSet<usize>>,
+        connection: &InnerConnection,
+    ) {
+        let Some(server) = relay_server.as_ref() else {
+            return;
+        };
+        let conn = connection.clone();
+        let server = Arc::clone(server);
+        let spawned = Arc::clone(spawned);
+        tokio::spawn(async move {
+            Self::handle_relay_requests(conn, server, spawned).await;
+        });
+    }
+
     /// Handle relay requests from a connected peer (symmetric P2P)
     ///
     /// This listens for bidirectional streams and processes CONNECT-UDP Bind requests.
     /// Per ADR-004: All nodes are equal and participate in relaying with resource budgets.
+    ///
+    /// `spawned` is a shared dedup set keyed by [`InnerConnection::stable_id`].
+    /// The handler self-registers on entry and self-removes on exit so the
+    /// same underlying QUIC connection never ends up with two concurrent
+    /// handlers racing on `accept_bi` — callers can spawn this eagerly on
+    /// both the accept-side and dial-side connection-insert paths without
+    /// coordinating.
     async fn handle_relay_requests(
         connection: InnerConnection,
         relay_server: Arc<MasqueRelayServer>,
+        spawned: Arc<dashmap::DashSet<usize>>,
     ) {
+        let stable_id = connection.stable_id();
+        if !spawned.insert(stable_id) {
+            // Another handler is already running for this exact connection
+            // (e.g. the dial-side spawn beat the accept-side spawn, or vice
+            // versa). Quietly exit — racing two handlers on the same
+            // `accept_bi` would just waste a task for the connection's
+            // lifetime.
+            return;
+        }
+        // RAII guard: remove from the dedup set when the handler task
+        // returns for any reason (connection close, stream error, panic).
+        // Without this, a later reconnect reusing the same stable_id would
+        // find the slot occupied and skip spawning a fresh handler. The
+        // guard takes ownership of the Arc since no further code in this
+        // function needs to call `insert` again.
+        struct HandlerGuard {
+            spawned: Arc<dashmap::DashSet<usize>>,
+            id: usize,
+        }
+        impl Drop for HandlerGuard {
+            fn drop(&mut self) {
+                self.spawned.remove(&self.id);
+            }
+        }
+        let _guard = HandlerGuard {
+            spawned,
+            id: stable_id,
+        };
+
         let client_addr = connection.remote_address();
-        debug!("Started relay request handler for peer at {}", client_addr);
+        debug!(
+            "Started relay request handler for peer at {} (stable_id={})",
+            client_addr, stable_id
+        );
 
         loop {
             // Accept bidirectional streams for relay requests
@@ -3766,49 +3847,82 @@ impl NatTraversalEndpoint {
             self.connect_new_to_relay(relay_addr).await?
         };
 
-        // Open a bidirectional stream for the CONNECT-UDP handshake
-        let (mut send_stream, mut recv_stream) = connection.open_bi().await.map_err(|e| {
-            NatTraversalError::ConnectionFailed(format!("Failed to open relay stream: {}", e))
-        })?;
+        // Cap on the end-to-end CONNECT-UDP handshake (open_bi → write
+        // request → read_exact response). Without a cap, reusing a peer
+        // connection whose remote never spawned `handle_relay_requests`
+        // leaves `read_exact` blocked forever, and the reachability
+        // driver wedges with no progress. 10 s covers QUIC stream
+        // open + one round-trip with margin; on timeout the outer
+        // acquisition walk falls through to the next candidate.
+        const CONNECT_UDP_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-        // Send CONNECT-UDP Bind request with length prefix (stream stays open for data)
-        let request = ConnectUdpRequest::bind_any();
-        let request_bytes = request.encode();
-
-        debug!("Sending CONNECT-UDP Bind request to relay: {:?}", request);
-
-        // Length-prefixed framing: [4-byte BE length][payload]
-        let req_len = request_bytes.len() as u32;
-        send_stream
-            .write_all(&req_len.to_be_bytes())
-            .await
-            .map_err(|e| {
-                NatTraversalError::ConnectionFailed(format!("Failed to send request length: {}", e))
+        let handshake = async {
+            // Open a bidirectional stream for the CONNECT-UDP handshake
+            let (mut send_stream, mut recv_stream) = connection.open_bi().await.map_err(|e| {
+                NatTraversalError::ConnectionFailed(format!("Failed to open relay stream: {}", e))
             })?;
-        send_stream.write_all(&request_bytes).await.map_err(|e| {
-            NatTraversalError::ConnectionFailed(format!("Failed to send relay request: {}", e))
-        })?;
-        // Do NOT call finish() — stream stays open for data forwarding
 
-        // Read length-prefixed response
-        let mut resp_len_buf = [0u8; 4];
-        recv_stream
-            .read_exact(&mut resp_len_buf)
-            .await
-            .map_err(|e| {
-                NatTraversalError::ConnectionFailed(format!(
-                    "Failed to read relay response length: {}",
-                    e
-                ))
+            // Send CONNECT-UDP Bind request with length prefix (stream stays open for data)
+            let request = ConnectUdpRequest::bind_any();
+            let request_bytes = request.encode();
+
+            debug!("Sending CONNECT-UDP Bind request to relay: {:?}", request);
+
+            // Length-prefixed framing: [4-byte BE length][payload]
+            let req_len = request_bytes.len() as u32;
+            send_stream
+                .write_all(&req_len.to_be_bytes())
+                .await
+                .map_err(|e| {
+                    NatTraversalError::ConnectionFailed(format!(
+                        "Failed to send request length: {}",
+                        e
+                    ))
+                })?;
+            send_stream.write_all(&request_bytes).await.map_err(|e| {
+                NatTraversalError::ConnectionFailed(format!("Failed to send relay request: {}", e))
             })?;
-        let resp_len = u32::from_be_bytes(resp_len_buf) as usize;
-        let mut response_bytes = vec![0u8; resp_len];
-        recv_stream
-            .read_exact(&mut response_bytes)
-            .await
-            .map_err(|e| {
-                NatTraversalError::ConnectionFailed(format!("Failed to read relay response: {}", e))
-            })?;
+            // Do NOT call finish() — stream stays open for data forwarding
+
+            // Read length-prefixed response
+            let mut resp_len_buf = [0u8; 4];
+            recv_stream
+                .read_exact(&mut resp_len_buf)
+                .await
+                .map_err(|e| {
+                    NatTraversalError::ConnectionFailed(format!(
+                        "Failed to read relay response length: {}",
+                        e
+                    ))
+                })?;
+            let resp_len = u32::from_be_bytes(resp_len_buf) as usize;
+            let mut response_bytes = vec![0u8; resp_len];
+            recv_stream
+                .read_exact(&mut response_bytes)
+                .await
+                .map_err(|e| {
+                    NatTraversalError::ConnectionFailed(format!(
+                        "Failed to read relay response: {}",
+                        e
+                    ))
+                })?;
+
+            Ok::<_, NatTraversalError>((send_stream, recv_stream, response_bytes))
+        };
+
+        let (send_stream, recv_stream, response_bytes) =
+            match timeout(CONNECT_UDP_HANDSHAKE_TIMEOUT, handshake).await {
+                Ok(Ok(t)) => t,
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    warn!(
+                        "CONNECT-UDP handshake to relay {} timed out after {:?}; \
+                         walking to next candidate",
+                        relay_addr, CONNECT_UDP_HANDSHAKE_TIMEOUT
+                    );
+                    return Err(NatTraversalError::Timeout);
+                }
+            };
 
         let response = ConnectUdpResponse::decode(&mut bytes::Bytes::from(response_bytes))
             .map_err(|e| {
@@ -4009,6 +4123,7 @@ impl NatTraversalEndpoint {
         let connections = self.connections.clone();
         let emitted = self.emitted_established_events.clone();
         let relay_server = self.relay_server.clone();
+        let relay_handler_connections = self.relay_handler_connections.clone();
         let event_tx_opt = self.event_tx.clone();
         let shutdown = self.shutdown.clone();
         let incoming_notify = self.incoming_notify.clone();
@@ -4055,6 +4170,7 @@ impl NatTraversalEndpoint {
                 let connections2 = connections.clone();
                 let emitted2 = emitted.clone();
                 let relay_server2 = relay_server.clone();
+                let relay_handler_connections2 = relay_handler_connections.clone();
                 let event_tx2 = event_tx_opt.clone();
                 tokio::spawn(async move {
                     let connection = match connecting.await {
@@ -4100,8 +4216,14 @@ impl NatTraversalEndpoint {
                         if let Some(ref server) = relay_server2 {
                             let conn_clone = connection.clone();
                             let server_clone = Arc::clone(server);
+                            let spawned_clone = Arc::clone(&relay_handler_connections2);
                             tokio::spawn(async move {
-                                Self::handle_relay_requests(conn_clone, server_clone).await;
+                                Self::handle_relay_requests(
+                                    conn_clone,
+                                    server_clone,
+                                    spawned_clone,
+                                )
+                                .await;
                             });
                         }
 
@@ -4222,6 +4344,18 @@ impl NatTraversalEndpoint {
                 addr
             );
         }
+        // Symmetric P2P: spawn the relay-request handler so peers on the
+        // other side of this connection can open CONNECT-UDP bidi streams to
+        // us. The accept-side spawn fires elsewhere; this path covers
+        // outbound/dial-established connections that are handed back to us
+        // via this public API (e.g. hole-punch results, external relay
+        // rebind). Dedup via stable_id in `handle_relay_requests` ensures
+        // we don't double-spawn when both paths see the same connection.
+        Self::spawn_relay_handler_task(
+            &self.relay_server,
+            &self.relay_handler_connections,
+            &connection,
+        );
         self.connections.insert(addr, connection);
         info!(
             "add_connection: now have {} connections",
@@ -4606,6 +4740,7 @@ impl NatTraversalEndpoint {
         let connections = self.connections.clone();
         let emitted = self.emitted_established_events.clone();
         let relay_server = self.relay_server.clone();
+        let relay_handler_connections = self.relay_handler_connections.clone();
         let event_tx_opt = self.event_tx.clone();
         let shutdown = self.shutdown.clone();
 
@@ -4634,6 +4769,7 @@ impl NatTraversalEndpoint {
                 let connections2 = connections.clone();
                 let emitted2 = emitted.clone();
                 let relay_server2 = relay_server.clone();
+                let relay_handler_connections2 = relay_handler_connections.clone();
                 let event_tx2 = event_tx_opt.clone();
                 tokio::spawn(async move {
                     let connection = match connecting.await {
@@ -4671,8 +4807,14 @@ impl NatTraversalEndpoint {
                         if let Some(ref server) = relay_server2 {
                             let conn_clone = connection.clone();
                             let server_clone = Arc::clone(server);
+                            let spawned_clone = Arc::clone(&relay_handler_connections2);
                             tokio::spawn(async move {
-                                Self::handle_relay_requests(conn_clone, server_clone).await;
+                                Self::handle_relay_requests(
+                                    conn_clone,
+                                    server_clone,
+                                    spawned_clone,
+                                )
+                                .await;
                             });
                         }
 
@@ -5372,6 +5514,8 @@ impl NatTraversalEndpoint {
                         let connections = self.connections.clone();
                         let incoming_notify = self.incoming_notify.clone();
                         let accepted_addrs_tx = self.accepted_addrs_tx.clone();
+                        let relay_server = self.relay_server.clone();
+                        let relay_handler_connections = self.relay_handler_connections.clone();
                         let address = candidate.address;
 
                         tokio::spawn(async move {
@@ -5397,6 +5541,7 @@ impl NatTraversalEndpoint {
                                     // Store the connection, but don't overwrite an existing
                                     // live connection. The reader task may have already
                                     // registered the incoming connection from the same peer.
+                                    let mut inserted = false;
                                     if let Some(existing) = connections.get(&remote) {
                                         if existing.value().close_reason().is_none() {
                                             info!(
@@ -5407,9 +5552,22 @@ impl NatTraversalEndpoint {
                                         } else {
                                             drop(existing);
                                             connections.insert(remote, connection.clone());
+                                            inserted = true;
                                         }
                                     } else {
                                         connections.insert(remote, connection.clone());
+                                        inserted = true;
+                                    }
+                                    if inserted {
+                                        // Symmetric P2P: spawn the relay handler on this
+                                        // outbound hole-punch connection so the remote (which
+                                        // was the accept-side) can open CONNECT-UDP bidi
+                                        // streams back toward us. See `handle_relay_requests`.
+                                        Self::spawn_relay_handler_task(
+                                            &relay_server,
+                                            &relay_handler_connections,
+                                            &connection,
+                                        );
                                     }
 
                                     // Notify the P2pEndpoint forwarder so the connection is
@@ -6141,6 +6299,8 @@ impl NatTraversalEndpoint {
 
                     // Spawn task to handle connection and send coordination
                     let connections = self.connections.clone();
+                    let relay_server = self.relay_server.clone();
+                    let relay_handler_connections = self.relay_handler_connections.clone();
                     let external_addr = our_external_address;
 
                     tokio::spawn(async move {
@@ -6164,6 +6324,13 @@ impl NatTraversalEndpoint {
                                 // Store the connection keyed by SocketAddr
                                 // DashMap provides lock-free .insert()
                                 connections.insert(coordinator, connection.clone());
+                                // Symmetric P2P: ensure the coordinator (which accepted)
+                                // can open CONNECT-UDP bidi streams toward us too.
+                                Self::spawn_relay_handler_task(
+                                    &relay_server,
+                                    &relay_handler_connections,
+                                    &connection,
+                                );
 
                                 // Now send the PUNCH_ME_NOW via this new connection
                                 match connection.send_nat_punch_via_relay(
@@ -6859,6 +7026,16 @@ impl NatTraversalEndpoint {
         // Step 3: Now safe to insert into connections keyed by remote address
         let remote_address = connection.remote_address();
         self.connections.insert(remote_address, connection.clone());
+        // Symmetric P2P: this is a dial-side insert (we initiated via
+        // `endpoint.connect`), so spawn the relay handler to mirror what
+        // the accept-side does. Without this, a later
+        // `setup_proactive_relay` that reused this connection would hang
+        // because the remote has no `handle_relay_requests` running.
+        Self::spawn_relay_handler_task(
+            &self.relay_server,
+            &self.relay_handler_connections,
+            &connection,
+        );
 
         // Extract public key for event
         let public_key = Self::extract_public_key_from_connection(&connection);
