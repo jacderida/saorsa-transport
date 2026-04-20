@@ -22,7 +22,7 @@ use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
-use tracing::{Instrument, Span, debug_span, error};
+use tracing::{Instrument, Span, debug_span, error, warn};
 
 use super::{
     ConnectionEvent,
@@ -1191,6 +1191,7 @@ impl ConnectionRef {
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
                 binding_started: false,
+                last_send_error_log: None,
             }),
             shared: Shared::default(),
         }))
@@ -1278,6 +1279,10 @@ pub(crate) struct State {
     buffered_transmit: Option<crate::Transmit>,
     /// True once we've initiated automatic channel binding (if enabled)
     binding_started: bool,
+    /// Timestamp of the last rate-limited non-`WouldBlock` send error log,
+    /// used by [`State::drive_transmit`] to avoid spamming when the kernel
+    /// UDP send buffer is repeatedly full (`ENOBUFS` on macOS/BSD).
+    last_send_error_log: Option<Instant>,
 }
 
 impl State {
@@ -1326,7 +1331,21 @@ impl State {
             {
                 Ok(()) => false,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => true,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    // Non-`WouldBlock` UDP send errors — most notably
+                    // `ENOBUFS` (macOS/BSD transient kernel buffer
+                    // exhaustion), `EHOSTUNREACH`, `ENETUNREACH`,
+                    // and `EMSGSIZE` from oversized MTU probes — are
+                    // non-fatal. QUIC's own retransmits cover the loss,
+                    // so we log with rate-limiting and drop the
+                    // datagram rather than killing the connection
+                    // driver (which would leave the `Connection` a
+                    // zombie that `saorsa-core`'s transport_handle
+                    // keeps trying to reuse). Matches the
+                    // `quinn_udp::UdpSocketState::send` contract.
+                    log_transient_send_error(&mut self.last_send_error_log, &e, t.destination, now);
+                    false
+                }
             };
             if retry {
                 // We thought the socket was writable, but it wasn't. Retry so that either another
@@ -1631,3 +1650,35 @@ const MAX_TRANSMIT_DATAGRAMS: usize = 20;
 /// fill a full `sendmsg(2)` burst — matching tokio-quiche's
 /// `UDP_MAX_SEGMENT_COUNT` and reducing the syscall rate ~6× at line rate.
 const MAX_TRANSMIT_SEGMENTS: usize = 64;
+
+/// Minimum spacing between logged non-`WouldBlock` UDP send errors per
+/// connection. Matches `quinn_udp`'s `IO_ERROR_LOG_INTERVAL` and prevents a
+/// single burst of `ENOBUFS` (e.g. a concurrent-upload fan-out exhausting
+/// macOS' UDP send buffer) from flooding the log with one line per datagram.
+const TRANSIENT_SEND_ERROR_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Rate-limited logger for non-`WouldBlock` UDP send errors encountered in
+/// [`State::drive_transmit`].
+///
+/// Updates `last_log` when a message is emitted. See
+/// [`TRANSIENT_SEND_ERROR_LOG_INTERVAL`] for the spacing rationale.
+fn log_transient_send_error(
+    last_log: &mut Option<Instant>,
+    err: &io::Error,
+    destination: SocketAddr,
+    now: Instant,
+) {
+    let should_log = match *last_log {
+        Some(prev) => now.saturating_duration_since(prev) >= TRANSIENT_SEND_ERROR_LOG_INTERVAL,
+        None => true,
+    };
+    if should_log {
+        *last_log = Some(now);
+        warn!(
+            error = %err,
+            destination = %destination,
+            "UDP send error (non-fatal, datagram dropped); \
+             QUIC retransmit will cover the loss"
+        );
+    }
+}
