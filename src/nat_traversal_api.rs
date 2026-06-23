@@ -3926,13 +3926,32 @@ impl NatTraversalEndpoint {
         // using relay_addr, so that's the one that must be healthy.
         for entry in self.relay_sessions.iter() {
             if entry.value().public_address == Some(relay_addr) {
-                return entry.value().is_active();
+                let session = entry.value();
+                if session.is_active() {
+                    return true;
+                }
+                // [relay-drop-experiment] The relay's QUIC connection closed
+                // while the session was still our advertised relay. Log the
+                // session age and the QUIC-level close reason so a home-node
+                // run can distinguish a peer/relay-initiated close (deliberate
+                // rotation / application close) from an idle or transport-level
+                // drop (e.g. a NAT rebind breaking the path despite the 15s
+                // keepalive). `close_reason` is the quinn ConnectionError that
+                // tore the connection down (None would mean still-open, which
+                // `is_active` already handled above).
+                warn!(
+                    "[relay-drop-experiment] relay session for {} dropped after {:?}: quic_close_reason={:?}",
+                    relay_addr,
+                    session.established_at.elapsed(),
+                    session.connection.close_reason()
+                );
+                return false;
             }
         }
 
         // No matching session found
         warn!(
-            "Relay session for {} is dead — resetting for re-establishment",
+            "[relay-drop-experiment] Relay session for {} is dead (no matching session in table) — resetting for re-establishment",
             relay_addr
         );
         false
