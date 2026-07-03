@@ -366,15 +366,25 @@ pub enum DatagramResult {
     Error(RelayError),
 }
 
-/// Short hex prefix (first 8 bytes) of a 32-byte peer fingerprint, for
-/// greppable log correlation without dumping the whole identity.
-fn short_peer_hex(id: &RelayPeerId) -> String {
+/// Full 64-hex rendering of a 32-byte peer fingerprint. Used on
+/// reservation-lifecycle DEBUG lines (V2-568 measurement campaign) so the
+/// create→reclaim lifecycle and identity churn (same client IP, changing
+/// fingerprint) can be correlated on the whole identity rather than an 8-byte
+/// prefix.
+fn full_peer_hex(id: &RelayPeerId) -> String {
     use std::fmt::Write as _;
-    let mut s = String::with_capacity(16);
-    for b in &id[..8] {
+    let mut s = String::with_capacity(64);
+    for b in &id[..] {
         let _ = write!(s, "{b:02x}");
     }
     s
+}
+
+/// Render an optional client address for a structured `client` log field,
+/// falling back to an empty string when the closing session had no recorded
+/// client address (keeps the field present and greppable in ES).
+fn client_field(addr: Option<SocketAddr>) -> String {
+    addr.map(|a| a.to_string()).unwrap_or_default()
 }
 
 /// Per-session control handle for the stream-forwarding loop (ADR-011).
@@ -406,6 +416,11 @@ struct Reservation {
     /// UPnP mapping for the retained port, kept alive alongside the socket so
     /// NAT forwarding survives the lease. Shut down explicitly on release.
     upnp: Option<UpnpMappingService>,
+    /// The relay-client socket address of the session that created this
+    /// reservation, recorded so the create→reclaim lifecycle can be tied by
+    /// client IP and identity churn detected (V2-568). `None` only if the
+    /// closing session had no recorded client address.
+    client: Option<SocketAddr>,
     /// When the session using this port was released — the start of the lease,
     /// used for TTL expiry and least-recently-released eviction.
     released_at: Instant,
@@ -882,7 +897,7 @@ impl MasqueRelayServer {
                 tracing::debug!(
                     component = "relay_reservation",
                     event = "reclaim_hit",
-                    peer = %peer_id.map(|p| short_peer_hex(&p)).unwrap_or_default(),
+                    peer = %peer_id.map(|p| full_peer_hex(&p)).unwrap_or_default(),
                     port = port,
                     client = %client_addr,
                     "reusing stable relay port for reconnecting peer"
@@ -939,7 +954,7 @@ impl MasqueRelayServer {
                     tracing::debug!(
                         component = "relay_reservation",
                         event = "reclaim_miss",
-                        peer = %peer_id.map(|p| short_peer_hex(&p)).unwrap_or_default(),
+                        peer = %peer_id.map(|p| full_peer_hex(&p)).unwrap_or_default(),
                         port = bound_port,
                         client = %client_addr,
                         "no reusable reservation; bound a fresh relay port"
@@ -1801,7 +1816,9 @@ impl MasqueRelayServer {
         match lease {
             Some((peer_id, socket)) => {
                 let port = session.public_address().port();
-                self.lease_reservation(peer_id, port, socket, upnp).await;
+                let client = session.client_address();
+                self.lease_reservation(peer_id, client, port, socket, upnp)
+                    .await;
             }
             None => {
                 if let Some(svc) = upnp {
@@ -1822,6 +1839,7 @@ impl MasqueRelayServer {
     async fn lease_reservation(
         &self,
         peer_id: RelayPeerId,
+        client: Option<SocketAddr>,
         port: u16,
         udp_socket: Arc<UdpSocket>,
         upnp: Option<UpnpMappingService>,
@@ -1848,6 +1866,7 @@ impl MasqueRelayServer {
                     port,
                     udp_socket,
                     upnp,
+                    client,
                     released_at: now,
                 },
             );
@@ -1865,8 +1884,9 @@ impl MasqueRelayServer {
             tracing::info!(
                 component = "relay_reservation",
                 event = "reservation_evicted",
-                peer = %short_peer_hex(&evicted_key),
+                peer = %full_peer_hex(&evicted_key),
                 port = old.port,
+                client = %client_field(old.client),
                 "evicted least-recently-used relay-port reservation (cap reached)"
             );
         }
@@ -1880,8 +1900,9 @@ impl MasqueRelayServer {
         tracing::debug!(
             component = "relay_reservation",
             event = "reservation_created",
-            peer = %short_peer_hex(&peer_id),
+            peer = %full_peer_hex(&peer_id),
             port = port,
+            client = %client_field(client),
             "retained relay port as a leased reservation"
         );
     }
@@ -1916,8 +1937,9 @@ impl MasqueRelayServer {
             tracing::debug!(
                 component = "relay_reservation",
                 event = "reservation_expired",
-                peer = %short_peer_hex(&peer_id),
+                peer = %full_peer_hex(&peer_id),
                 port = res.port,
+                client = %client_field(res.client),
                 "released expired relay-port reservation"
             );
         }
@@ -1980,8 +2002,9 @@ impl MasqueRelayServer {
             tracing::debug!(
                 component = "relay_reservation",
                 event = "reservation_expired",
-                peer = %short_peer_hex(&peer_id),
+                peer = %full_peer_hex(&peer_id),
                 port = res.port,
+                client = %client_field(res.client),
                 "discarded stale/mismatched relay-port reservation on reclaim"
             );
         }
